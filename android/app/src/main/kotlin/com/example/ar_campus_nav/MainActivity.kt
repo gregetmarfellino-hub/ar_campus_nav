@@ -65,6 +65,10 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                             ?.toFloat()
                     val visualAnchorLabel =
                         call.argument<String>("visual_anchor_label")
+                    val visualAnchorRouteOffsetDegrees =
+                        (call.argument<Number>(
+                            "visual_anchor_route_offset_deg",
+                        ))?.toFloat()
                     val rawPoints =
                         call.argument<List<Map<String, Any?>>>("points") ?: emptyList()
 
@@ -92,6 +96,8 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                             visualAnchorPng = visualAnchorPng,
                             visualAnchorWidthMeters = visualAnchorWidthMeters,
                             visualAnchorLabel = visualAnchorLabel,
+                            visualAnchorRouteOffsetDegrees =
+                                visualAnchorRouteOffsetDegrees,
                         ),
                     )
                 }
