@@ -22,7 +22,7 @@ class ArQrPlacementPreviewRenderer {
     private var textureUniform = 0
     private var textureId = 0
 
-    private var pendingBitmap: Bitmap? = null
+    @Volatile private var pendingBitmap: Bitmap? = null
 
     private val positions: FloatBuffer = ByteBuffer
         .allocateDirect(4 * 3 * 4)
