@@ -570,7 +570,6 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
           yMeters: markerPoint.yMeters,
           upMeters: markerPoint.upMeters,
           pointIndex: markerPointIndex,
-          anchorFacingDegrees: anchorFacingDegrees,
         ),
       );
     });
@@ -751,6 +750,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
           yMeters: markerPoint.yMeters,
           upMeters: markerPoint.upMeters,
           pointIndex: markerPointIndex,
+          anchorFacingDegrees: anchorFacingDegrees,
         ),
       );
     });
