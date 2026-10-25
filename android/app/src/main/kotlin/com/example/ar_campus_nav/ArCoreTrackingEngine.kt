@@ -14,6 +14,7 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.google.ar.core.Anchor
 import com.google.ar.core.ArCoreApk
 import com.google.ar.core.Config
 import com.google.ar.core.Pose
@@ -67,8 +68,9 @@ class ArCoreTrackingEngine(
     private var trackingRightX = 1f
     private var trackingRightZ = 0f
 
-    // Navigation alignment frame: also gravity-horizontal.
-    private var navigationOriginPosition: FloatArray? = null
+    // Navigation alignment frame. The physical origin is a real ARCore
+    // Anchor; route basis vectors live in that anchor-local X/Z plane.
+    private var navigationWorldAnchor: Anchor? = null
     private var navigationForwardX = 0f
     private var navigationForwardZ = -1f
     private var navigationRightX = 1f
@@ -462,6 +464,27 @@ class ArCoreTrackingEngine(
                     return
                 }
 
+                val routeAnchor = navigationWorldAnchor
+                if (routeAnchor == null ||
+                    routeAnchor.trackingState != TrackingState.TRACKING
+                ) {
+                    setNavigationArrowVisible(false)
+                    setNavigationHud(
+                        if (routeAnchor?.trackingState == TrackingState.STOPPED) {
+                            "ANCHOR LOST — scan a known location before continuing."
+                        } else {
+                            "ANCHOR TRACKING PAUSED — stop walking and keep visible detail in frame."
+                        },
+                    )
+                    if (routeAnchor?.trackingState == TrackingState.STOPPED) {
+                        mainHandler.post {
+                            navigationReanchorButton?.visibility =
+                                android.view.View.VISIBLE
+                        }
+                    }
+                    return
+                }
+
                 if (!acceptNavigationPose(
                         currentPose = currentPose,
                         timestampNanos = frame.timestamp,
@@ -471,14 +494,15 @@ class ArCoreTrackingEngine(
                 }
 
                 val local = navigationLocalPosition(currentPose)
+                val worldBasis = navigationWorldBasis()
                 emitHorizontalPose(
                     currentPose = currentPose,
                     local = local,
                     timestampNanos = frame.timestamp,
-                    originForwardX = navigationForwardX,
-                    originForwardZ = navigationForwardZ,
-                    originRightX = navigationRightX,
-                    originRightZ = navigationRightZ,
+                    originForwardX = worldBasis.forwardX,
+                    originForwardZ = worldBasis.forwardZ,
+                    originRightX = worldBasis.rightX,
+                    originRightZ = worldBasis.rightZ,
                 )
 
                 val worldPoints = routeWorldPoints()
@@ -492,14 +516,7 @@ class ArCoreTrackingEngine(
                 if (worldPoints.isNotEmpty() &&
                     activeRouteIndex < worldPoints.size
                 ) {
-                    val routeY = navigationOriginPosition?.get(1)
-                        ?.minus(1.10f)
-                        ?: currentPose.ty().minus(1.10f)
-                    val userWorldPoint = floatArrayOf(
-                        currentPose.tx(),
-                        routeY,
-                        currentPose.tz(),
-                    )
+                    val userWorldPoint = navigationUserWorldPoint(local)
 
                     breadcrumbRenderer.draw(
                         camera,
@@ -585,10 +602,19 @@ class ArCoreTrackingEngine(
 
     private fun captureNavigationCalibrationStart(pose: Pose) {
         resetNavigationCalibration()
+        releaseNavigationAnchor()
 
-        val start = pose.translation.copyOf()
+        val activeSession = session ?: run {
+            setNavigationHud("ARCore session is not ready. Try again.")
+            return
+        }
+
+        val anchorPose = horizontalAnchorPose(pose)
+        val anchor = activeSession.createAnchor(anchorPose)
+        navigationWorldAnchor = anchor
+
+        val start = floatArrayOf(0f, 0f, 0f)
         navigationCalibrationStart = start
-        navigationOriginPosition = start.copyOf()
         navigationCalibrationSamples.add(start.copyOf())
         navigationCalibrationLastSample = start.copyOf()
 
@@ -618,11 +644,12 @@ class ArCoreTrackingEngine(
         timestampNanos: Long,
     ) {
         val start = navigationCalibrationStart ?: return
-        appendNavigationCalibrationSample(currentPose.translation)
+        val localTranslation = navigationAnchorLocalPoint(currentPose.translation)
+            ?: return
+        appendNavigationCalibrationSample(localTranslation)
 
-        val translation = currentPose.translation
-        val dx = translation[0] - start[0]
-        val dz = translation[2] - start[2]
+        val dx = localTranslation[0] - start[0]
+        val dz = localTranslation[2] - start[2]
         val displacement = sqrt(dx * dx + dz * dz)
 
         val ready =
@@ -747,7 +774,9 @@ class ArCoreTrackingEngine(
     }
 
     private fun completeNavigationCalibration(pose: Pose) {
-        appendNavigationCalibrationSample(pose.translation)
+        val localTranslation = navigationAnchorLocalPoint(pose.translation)
+            ?: return
+        appendNavigationCalibrationSample(localTranslation)
 
         val fit = navigationCalibrationFit()
         if (fit == null ||
@@ -765,8 +794,7 @@ class ArCoreTrackingEngine(
             return
         }
 
-        val start = navigationCalibrationStart ?: return
-        navigationOriginPosition = start.copyOf()
+        navigationCalibrationStart ?: return
         navigationForwardX = fit.forwardX
         navigationForwardZ = fit.forwardZ
         navigationRightX = -navigationForwardZ
@@ -802,7 +830,7 @@ class ArCoreTrackingEngine(
 
     private fun rejectNavigationCalibration(fit: CalibrationFit) {
         resetNavigationCalibration()
-        navigationOriginPosition = null
+        releaseNavigationAnchor()
         navigationAligned = false
 
         mainHandler.post {
@@ -856,7 +884,7 @@ class ArCoreTrackingEngine(
 
             if (navigationCalibrationStart != null) {
                 resetNavigationCalibration()
-                navigationOriginPosition = null
+                releaseNavigationAnchor()
                 mainHandler.post {
                     navigationAlignButton?.apply {
                         visibility = android.view.View.VISIBLE
@@ -1005,7 +1033,7 @@ class ArCoreTrackingEngine(
     }
 
     private fun clearNavigationFrame() {
-        navigationOriginPosition = null
+        releaseNavigationAnchor()
         navigationForwardX = 0f
         navigationForwardZ = -1f
         navigationRightX = 1f
@@ -1014,6 +1042,78 @@ class ArCoreTrackingEngine(
         resetNavigationContinuity()
     }
 
+    private data class NavigationWorldBasis(
+        val forwardX: Float,
+        val forwardZ: Float,
+        val rightX: Float,
+        val rightZ: Float,
+    )
+
+    private fun horizontalAnchorPose(cameraPose: Pose): Pose {
+        val forward = horizontalForward(cameraPose)
+        val yaw = atan2(-forward[0], -forward[2])
+        val half = yaw / 2f
+        return Pose(
+            cameraPose.translation.copyOf(),
+            floatArrayOf(0f, sin(half), 0f, cos(half)),
+        )
+    }
+
+    private fun releaseNavigationAnchor() {
+        try {
+            navigationWorldAnchor?.detach()
+        } catch (_: Exception) {
+        }
+        navigationWorldAnchor = null
+    }
+
+    private fun navigationAnchorLocalPoint(
+        worldPoint: FloatArray,
+    ): FloatArray? {
+        val anchor = navigationWorldAnchor ?: return null
+        if (anchor.trackingState == TrackingState.STOPPED) return null
+        return anchor.pose.inverse().transformPoint(worldPoint)
+    }
+
+    private fun navigationWorldBasis(): NavigationWorldBasis {
+        val anchor = navigationWorldAnchor
+            ?: return NavigationWorldBasis(0f, -1f, 1f, 0f)
+
+        val forwardWorld = anchor.pose.rotateVector(
+            floatArrayOf(navigationForwardX, 0f, navigationForwardZ),
+        )
+        val rightWorld = anchor.pose.rotateVector(
+            floatArrayOf(navigationRightX, 0f, navigationRightZ),
+        )
+
+        fun horizontalize(vector: FloatArray): FloatArray {
+            val length = sqrt(vector[0] * vector[0] + vector[2] * vector[2])
+            if (length < 0.0001f) return floatArrayOf(0f, 0f, -1f)
+            return floatArrayOf(vector[0] / length, 0f, vector[2] / length)
+        }
+
+        val forward = horizontalize(forwardWorld)
+        val right = horizontalize(rightWorld)
+        return NavigationWorldBasis(
+            forwardX = forward[0],
+            forwardZ = forward[2],
+            rightX = right[0],
+            rightZ = right[2],
+        )
+    }
+
+    private fun navigationUserWorldPoint(local: LocalPosition): FloatArray {
+        val anchor = navigationWorldAnchor
+            ?: return floatArrayOf(0f, -1.10f, 0f)
+        val anchorLocal = floatArrayOf(
+            navigationRightX * local.right +
+                navigationForwardX * local.forward,
+            -1.10f,
+            navigationRightZ * local.right +
+                navigationForwardZ * local.forward,
+        )
+        return anchor.pose.transformPoint(anchorLocal)
+    }
     private fun trackingLocalPosition(pose: Pose): LocalPosition {
         val origin = trackingOriginPosition ?: pose.translation
         return localPosition(
@@ -1027,14 +1127,17 @@ class ArCoreTrackingEngine(
     }
 
     private fun navigationLocalPosition(pose: Pose): LocalPosition {
-        val origin = navigationOriginPosition ?: pose.translation
-        return localPosition(
-            pose = pose,
-            origin = origin,
-            forwardX = navigationForwardX,
-            forwardZ = navigationForwardZ,
-            rightX = navigationRightX,
-            rightZ = navigationRightZ,
+        val anchorLocal = navigationAnchorLocalPoint(pose.translation)
+            ?: return LocalPosition(0f, 0f, 0f)
+
+        return LocalPosition(
+            right =
+                anchorLocal[0] * navigationRightX +
+                    anchorLocal[2] * navigationRightZ,
+            up = anchorLocal[1],
+            forward =
+                anchorLocal[0] * navigationForwardX +
+                    anchorLocal[2] * navigationForwardZ,
         )
     }
 
@@ -1224,22 +1327,19 @@ class ArCoreTrackingEngine(
     }
 
     private fun routeWorldPoints(): List<FloatArray> {
-        val origin = navigationOriginPosition ?: return emptyList()
+        val anchor = navigationWorldAnchor ?: return emptyList()
+        if (anchor.trackingState != TrackingState.TRACKING) return emptyList()
 
-        // Breadcrumbs sit on one horizontal plane below the phone's alignment
-        // height. Camera pitch/roll can change freely without tilting the route.
-        val routeY = origin[1] - 1.10f
-
+        val anchorPose = anchor.pose
         return navigationPoints.map { point ->
-            floatArrayOf(
-                origin[0] +
-                    navigationRightX * point.rightMeters +
+            val anchorLocal = floatArrayOf(
+                navigationRightX * point.rightMeters +
                     navigationForwardX * point.forwardMeters,
-                routeY,
-                origin[2] +
-                    navigationRightZ * point.rightMeters +
+                -1.10f,
+                navigationRightZ * point.rightMeters +
                     navigationForwardZ * point.forwardMeters,
             )
+            anchorPose.transformPoint(anchorLocal)
         }
     }
 
