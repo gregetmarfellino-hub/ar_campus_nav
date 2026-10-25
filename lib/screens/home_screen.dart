@@ -171,10 +171,13 @@ class _HomeScreenState extends State<HomeScreen> {
     final nodeId = _startNodeId;
     if (nodeId == null) return null;
 
+    AnchorPoint? fallback;
     for (final anchor in venue.anchors) {
-      if (anchor.nodeId == nodeId) return anchor;
+      if (anchor.nodeId != nodeId) continue;
+      if (anchor.visualPoseReady) return anchor;
+      fallback ??= anchor;
     }
-    return null;
+    return fallback;
   }
 
   Future<void> _openRoute(Destination destination) async {
@@ -325,12 +328,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   AnchorPoint? _anchorForNode(Venue venue, NavNode node) {
+    AnchorPoint? fallback;
     for (final anchor in venue.anchors) {
-      if (anchor.nodeId == node.id) {
-        return anchor;
-      }
+      if (anchor.nodeId != node.id) continue;
+      if (anchor.visualPoseReady) return anchor;
+      fallback ??= anchor;
     }
-    return null;
+    return fallback;
   }
 
   String _markerKind(Venue venue, NavNode node) {
