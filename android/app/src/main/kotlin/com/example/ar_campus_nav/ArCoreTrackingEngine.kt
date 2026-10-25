@@ -21,6 +21,9 @@ import com.google.ar.core.ArCoreApk
 import com.google.ar.core.AugmentedImage
 import com.google.ar.core.AugmentedImageDatabase
 import com.google.ar.core.Config
+import com.google.ar.core.Frame
+import com.google.ar.core.HitResult
+import com.google.ar.core.Plane
 import com.google.ar.core.Pose
 import com.google.ar.core.Session
 import com.google.ar.core.TrackingState
@@ -62,6 +65,17 @@ class ArCoreTrackingEngine(
     private var navigationAlignButton: Button? = null
     private var navigationReanchorButton: Button? = null
     private var navigationExitButton: Button? = null
+
+    // Temporary full-screen AR mode used while mapping to place a QR on a
+    // detected vertical wall. Normal spatial mapping keeps its GL view tiny
+    // so Flutter owns the UI; this mode expands the same live ARCore session.
+    private var qrPlacementOverlay: FrameLayout? = null
+    private var qrPlacementStatusText: TextView? = null
+    private var qrPlacementButton: Button? = null
+    @Volatile private var qrPlacementMode = false
+    @Volatile private var qrPlacementRequested = false
+    private var qrPlacementCompletion: ((Map<String, Any>?) -> Unit)? = null
+
     private var cameraTextureId: Int = 0
 
     // Tracking/mapping origin: gravity-horizontal frame.
@@ -236,7 +250,7 @@ class ArCoreTrackingEngine(
             val config = Config(newSession).apply {
                 focusMode = Config.FocusMode.AUTO
                 updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
-                planeFindingMode = Config.PlaneFindingMode.DISABLED
+                planeFindingMode = Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
                 lightEstimationMode = Config.LightEstimationMode.DISABLED
             }
             configureVisualImageDatabase(newSession, config)
@@ -297,6 +311,285 @@ class ArCoreTrackingEngine(
             navigationAligned = false
         }
         emitStatus("RESETTING_ORIGIN")
+    }
+
+    /**
+     * Temporarily promotes the mapping ARCore surface to full-screen and lets
+     * the user hit-test the center reticle against a real vertical plane.
+     *
+     * The returned coordinates are expressed in the same mapping-local frame
+     * Flutter already records (+right, +forward), so no camera-pose guessing is
+     * involved. The heading is the wall/QR outward normal in that local frame.
+     */
+    fun beginVisualQrPlacement(
+        onComplete: (Map<String, Any>?) -> Unit,
+    ): String? {
+        if (!started || session == null || surfaceView == null) {
+            return "ARCore spatial mapping is not running."
+        }
+        if (navigationMode) {
+            return "QR placement is only available while mapping."
+        }
+        if (qrPlacementMode) {
+            return "QR placement is already open."
+        }
+        if (trackingOriginPosition == null) {
+            return "Mapping origin is not ready yet. Wait for TRACKING, then try again."
+        }
+
+        qrPlacementCompletion = onComplete
+        qrPlacementRequested = false
+        qrPlacementMode = true
+        mainHandler.post { createQrPlacementOverlay() }
+        return null
+    }
+
+    private fun createQrPlacementOverlay() {
+        val glView = surfaceView ?: run {
+            finishQrPlacement(null)
+            return
+        }
+
+        (qrPlacementOverlay?.parent as? ViewGroup)?.removeView(qrPlacementOverlay)
+
+        glView.layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT,
+        )
+        glView.bringToFront()
+
+        val overlay = FrameLayout(activity)
+
+        val status = TextView(activity).apply {
+            text =
+                "PLACE VISUAL QR\nAim the center target at the vertical wall where the " +
+                    "physical 16 cm QR will be mounted."
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            background = roundedBackground(0xC0000000.toInt(), dp(18).toFloat())
+        }
+        qrPlacementStatusText = status
+        overlay.addView(
+            status,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                gravity = Gravity.TOP
+                setMargins(dp(20), dp(36), dp(20), 0)
+            },
+        )
+
+        val target = TextView(activity).apply {
+            text = "□"
+            textSize = 72f
+            gravity = Gravity.CENTER
+            setTextColor(0xFF3DDC97.toInt())
+            background = roundedBackground(0x33000000, dp(18).toFloat())
+        }
+        overlay.addView(
+            target,
+            FrameLayout.LayoutParams(dp(112), dp(112)).apply {
+                gravity = Gravity.CENTER
+            },
+        )
+
+        val controls = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+
+        val place = Button(activity).apply {
+            text = "PLACE QR"
+            textSize = 15f
+            setTextColor(Color.BLACK)
+            background = roundedBackground(0xFF3DDC97.toInt(), dp(24).toFloat())
+            setOnClickListener {
+                qrPlacementRequested = true
+                setQrPlacementStatus(
+                    "Checking the center target for a tracked vertical wall...",
+                )
+            }
+        }
+        qrPlacementButton = place
+
+        val cancel = Button(activity).apply {
+            text = "CANCEL"
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            background = roundedBackground(0xC0000000.toInt(), dp(24).toFloat())
+            setOnClickListener {
+                finishQrPlacement(null)
+            }
+        }
+
+        controls.addView(
+            place,
+            LinearLayout.LayoutParams(0, dp(58), 2f).apply {
+                marginEnd = dp(10)
+            },
+        )
+        controls.addView(
+            cancel,
+            LinearLayout.LayoutParams(0, dp(58), 1f),
+        )
+
+        overlay.addView(
+            controls,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                dp(58),
+            ).apply {
+                gravity = Gravity.BOTTOM
+                setMargins(dp(24), 0, dp(24), dp(42))
+            },
+        )
+
+        activity.addContentView(
+            overlay,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        qrPlacementOverlay = overlay
+    }
+
+    private fun handleQrPlacementFrame(
+        frame: Frame,
+        currentPose: Pose,
+    ) {
+        if (!qrPlacementRequested) return
+        qrPlacementRequested = false
+
+        val view = surfaceView ?: return
+        if (view.width <= 2 || view.height <= 2) {
+            setQrPlacementStatus("AR placement view is not ready yet. Try again.")
+            return
+        }
+
+        var selectedHit: HitResult? = null
+        var selectedPlane: Plane? = null
+
+        for (hit in frame.hitTest(view.width / 2f, view.height / 2f)) {
+            val plane = hit.trackable as? Plane ?: continue
+            if (
+                plane.type == Plane.Type.VERTICAL &&
+                plane.trackingState == TrackingState.TRACKING &&
+                plane.isPoseInPolygon(hit.hitPose)
+            ) {
+                selectedHit = hit
+                selectedPlane = plane
+                break
+            }
+        }
+
+        val hit = selectedHit
+        val plane = selectedPlane
+        if (hit == null || plane == null) {
+            setQrPlacementStatus(
+                "NO VERTICAL WALL YET — move the phone slowly so ARCore can map " +
+                    "the wall, then keep the target on it and tap PLACE QR again.",
+            )
+            return
+        }
+
+        val hitPose = hit.hitPose
+        val hitPosition = hitPose.translation
+
+        // For ARCore planes local +Y is the plane normal. Resolve the sign so
+        // the saved QR normal points out of the wall toward the scanning side.
+        var normal = plane.centerPose.getTransformedAxis(1, 1f)
+        val toCameraX = currentPose.tx() - hitPosition[0]
+        val toCameraY = currentPose.ty() - hitPosition[1]
+        val toCameraZ = currentPose.tz() - hitPosition[2]
+        val facingDot =
+            normal[0] * toCameraX +
+                normal[1] * toCameraY +
+                normal[2] * toCameraZ
+        if (facingDot < 0f) {
+            normal = floatArrayOf(-normal[0], -normal[1], -normal[2])
+        }
+
+        val horizontalLength = sqrt(
+            normal[0] * normal[0] + normal[2] * normal[2],
+        )
+        if (horizontalLength < 0.70f) {
+            setQrPlacementStatus(
+                "That surface is not vertical enough. Aim at an upright wall.",
+            )
+            return
+        }
+
+        val origin = trackingOriginPosition
+        if (origin == null) {
+            setQrPlacementStatus("Mapping origin was lost. Exit and restart mapping.")
+            return
+        }
+
+        val local = localPosition(
+            pose = hitPose,
+            origin = origin,
+            forwardX = trackingForwardX,
+            forwardZ = trackingForwardZ,
+            rightX = trackingRightX,
+            rightZ = trackingRightZ,
+        )
+
+        val outwardX = normal[0] / horizontalLength
+        val outwardZ = normal[2] / horizontalLength
+        val forwardComponent =
+            outwardX * trackingForwardX + outwardZ * trackingForwardZ
+        val rightComponent =
+            outwardX * trackingRightX + outwardZ * trackingRightZ
+
+        var facingDegrees = (
+            atan2(rightComponent, forwardComponent) *
+                180.0 /
+                Math.PI
+            ).toFloat()
+        facingDegrees %= 360f
+        if (facingDegrees < 0f) facingDegrees += 360f
+
+        finishQrPlacement(
+            mapOf(
+                "right_m" to local.right.toDouble(),
+                "forward_m" to local.forward.toDouble(),
+                "up_m" to local.up.toDouble(),
+                "facing_deg" to facingDegrees.toDouble(),
+            ),
+        )
+    }
+
+    private fun setQrPlacementStatus(text: String) {
+        mainHandler.post {
+            qrPlacementStatusText?.text = text
+        }
+    }
+
+    private fun finishQrPlacement(payload: Map<String, Any>?) {
+        if (!qrPlacementMode && qrPlacementCompletion == null) return
+
+        qrPlacementMode = false
+        qrPlacementRequested = false
+        val callback = qrPlacementCompletion
+        qrPlacementCompletion = null
+
+        mainHandler.post {
+            val overlay = qrPlacementOverlay
+            qrPlacementOverlay = null
+            qrPlacementStatusText = null
+            qrPlacementButton = null
+            (overlay?.parent as? ViewGroup)?.removeView(overlay)
+
+            surfaceView?.layoutParams = FrameLayout.LayoutParams(2, 2).apply {
+                gravity = Gravity.BOTTOM or Gravity.END
+            }
+
+            callback?.invoke(payload)
+        }
     }
 
     fun pause() {
@@ -402,8 +695,10 @@ class ArCoreTrackingEngine(
 
         session?.setCameraTextureName(cameraTextureId)
 
+        // Mapping normally renders into a hidden 2x2 surface, but QR wall
+        // placement can promote that same surface to full-screen at any time.
+        backgroundRenderer.createOnGlThread()
         if (navigationMode) {
-            backgroundRenderer.createOnGlThread()
             breadcrumbRenderer.createOnGlThread()
         }
     }
@@ -426,7 +721,7 @@ class ArCoreTrackingEngine(
             val frame = activeSession.update()
             val camera = frame.camera
 
-            if (navigationMode) {
+            if (navigationMode || qrPlacementMode) {
                 backgroundRenderer.draw(frame, cameraTextureId)
             }
 
@@ -436,6 +731,11 @@ class ArCoreTrackingEngine(
                     state = camera.trackingState.name,
                     reason = reason,
                 )
+                if (qrPlacementMode) {
+                    setQrPlacementStatus(
+                        "TRACKING PAUSED — move slowly and aim at a textured wall.",
+                    )
+                }
                 if (navigationMode) {
                     if (!navigationTrackingLost) {
                         navigationTrackingLost = true
@@ -455,6 +755,14 @@ class ArCoreTrackingEngine(
 
             val currentPose = camera.pose
             latestCameraPose = currentPose
+
+            if (qrPlacementMode) {
+                handleQrPlacementFrame(
+                    frame = frame,
+                    currentPose = currentPose,
+                )
+                return
+            }
 
             if (navigationMode && navigationTrackingLost) {
                 if (!handleNavigationTrackingRecovery(
