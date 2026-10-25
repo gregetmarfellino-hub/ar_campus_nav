@@ -201,7 +201,9 @@ class _RouteScreenState extends State<RouteScreen> {
               label: Text(
                 anchor == null
                     ? 'START AR MANUAL PREVIEW'
-                    : 'START AR FROM CONFIRMED LOCATION',
+                    : anchor.visualPoseReady
+                        ? 'START AR & LOCK QR'
+                        : 'START AR + MANUAL ALIGN',
               ),
               style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 15),
@@ -268,7 +270,9 @@ class _RouteScreenState extends State<RouteScreen> {
                 : 'Start at ${start.label}',
             subtitle: anchor == null
                 ? 'Start point selected manually.'
-                : 'Position confirmed by QR anchor.',
+                : anchor.visualPoseReady
+                    ? 'AR camera will confirm this visual QR pose.'
+                    : 'Legacy QR start; direction still needs calibration.',
             isLast: route.legs.isEmpty,
           ),
           for (var stepIndex = 0;
@@ -294,18 +298,30 @@ class _RouteScreenState extends State<RouteScreen> {
               borderRadius: BorderRadius.circular(16),
               border: Border.all(color: const Color(0x3372A7FF)),
             ),
-            child: const Row(
+            child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.explore_rounded, color: Color(0xFF72A7FF)),
-                SizedBox(width: 12),
+                const Icon(Icons.explore_rounded, color: Color(0xFF72A7FF)),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Spatial navigation uses ARCore only. Stand exactly at the '
-                    'selected start, tap SET START, then walk 1–2 m along the first '
-                    'real route segment and LOCK DIRECTION. Two physical points make '
-                    'the replay heading much more repeatable on longer routes.',
-                    style: TextStyle(color: Colors.white70, height: 1.45),
+                    anchor?.visualPoseReady == true
+                        ? 'Point the AR camera at the deployed 16 cm QR. '
+                            'ARCore will measure its physical position and '
+                            'orientation directly; no 2–3 m calibration walk '
+                            'is required.'
+                        : anchor != null
+                            ? 'This is a legacy position-only QR. ARCore still '
+                                'needs the manual 2–3 m direction calibration. '
+                                'Re-map the anchor with visual facing to remove '
+                                'that step.'
+                            : 'Manual preview assumes you are physically at the '
+                                'selected start and still requires the 2–3 m '
+                                'direction calibration.',
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      height: 1.45,
+                    ),
                   ),
                 ),
               ],
@@ -324,31 +340,49 @@ class _SpatialAlignmentCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final localized = anchor != null;
+    final value = anchor;
+    final visualReady = value?.visualPoseReady ?? false;
+    final hasAnchor = value != null;
+
+    final title = visualReady
+        ? 'VISUAL QR LOCALIZATION'
+        : hasAnchor
+            ? 'LEGACY QR + MANUAL DIRECTION'
+            : 'MANUAL PREVIEW MODE';
+    final color = visualReady
+        ? const Color(0xFF3DDC97)
+        : const Color(0xFFF9C74F);
+
+    final message = visualReady
+        ? 'Expected QR: ${value.label}. Open AR and point the camera at that '
+            'physical 16 cm marker. ARCore will lock both position and '
+            'direction from the marker pose.'
+        : hasAnchor
+            ? 'The QR identifies ${value.label}, but this older anchor has no '
+                'verified installation facing. Navigation falls back to the '
+                '2–3 m direction walk.'
+            : 'No physical anchor is selected. AR assumes you are standing '
+                'exactly on the selected map start and uses manual alignment.';
 
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: localized
+        color: visualReady
             ? const Color(0x143DDC97)
-            : const Color(0xFF111A2E),
+            : const Color(0x14F9C74F),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: localized
-              ? const Color(0x333DDC97)
-              : const Color(0x223B82F6),
-        ),
+        border: Border.all(color: color.withValues(alpha: 0.24)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(
-            localized
-                ? Icons.location_on_rounded
-                : Icons.science_outlined,
-            color: localized
-                ? const Color(0xFF3DDC97)
-                : const Color(0xFFF9C74F),
+            visualReady
+                ? Icons.center_focus_strong_rounded
+                : hasAnchor
+                    ? Icons.qr_code_2_rounded
+                    : Icons.science_outlined,
+            color: color,
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -356,13 +390,9 @@ class _SpatialAlignmentCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  localized
-                      ? 'ANCHOR-FIRST LOCALIZATION'
-                      : 'MANUAL PREVIEW MODE',
+                  title,
                   style: TextStyle(
-                    color: localized
-                        ? const Color(0xFF9AE6C5)
-                        : const Color(0xFFF9D976),
+                    color: color,
                     fontSize: 11,
                     fontWeight: FontWeight.w900,
                     letterSpacing: 0.8,
@@ -370,15 +400,7 @@ class _SpatialAlignmentCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  localized
-                      ? 'Position is confirmed at ${anchor!.label}. Stay at '
-                          'that physical QR marker when AR starts, set the '
-                          'anchor position, then walk 1–2 m along the first '
-                          'real route and lock direction.'
-                      : 'This start is not physically confirmed. AR will '
-                          'assume you are standing exactly on the selected '
-                          'map point, so the whole route can shift by the '
-                          'same amount if you start somewhere else.',
+                  message,
                   style: const TextStyle(
                     color: Colors.white60,
                     fontSize: 11,
@@ -436,7 +458,11 @@ class _AnchorCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  value == null ? 'Manual preview start' : 'Location confirmed',
+                  value == null
+                      ? 'Manual preview start'
+                      : value.visualPoseReady
+                          ? 'Visual QR target'
+                          : 'Legacy QR start',
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 2),
@@ -456,7 +482,13 @@ class _AnchorCard extends StatelessWidget {
           OutlinedButton.icon(
             onPressed: onScan,
             icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
-            label: Text(value == null ? 'SCAN LOCATION' : 'UPDATE LOCATION'),
+            label: Text(
+              value == null
+                  ? 'SCAN LOCATION'
+                  : value.visualPoseReady
+                      ? 'SCANNER FALLBACK'
+                      : 'UPDATE LOCATION',
+            ),
           ),
         ],
       ),
