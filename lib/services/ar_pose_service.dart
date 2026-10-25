@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 
@@ -106,6 +107,9 @@ class ArPoseService {
     required String startLabel,
     required bool anchorLocalized,
     required List<Map<String, dynamic>> points,
+    Uint8List? visualAnchorPng,
+    double? visualAnchorWidthMeters,
+    String? visualAnchorLabel,
   }) async {
     if (!platformSupported) return 'ANDROID_ONLY';
     return await _native.invokeMethod<String>(
@@ -115,6 +119,12 @@ class ArPoseService {
             'start_label': startLabel,
             'anchor_localized': anchorLocalized,
             'points': points,
+            if (visualAnchorPng != null)
+              'visual_anchor_png': visualAnchorPng,
+            if (visualAnchorWidthMeters != null)
+              'visual_anchor_width_m': visualAnchorWidthMeters,
+            if (visualAnchorLabel != null)
+              'visual_anchor_label': visualAnchorLabel,
           },
         ) ??
         'UNKNOWN';
