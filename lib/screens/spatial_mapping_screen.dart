@@ -10,6 +10,7 @@ import '../models/mapping_session.dart';
 import '../models/venue.dart';
 import '../services/anchor_codec.dart';
 import '../services/ar_pose_service.dart';
+import '../services/mapping_path_simplifier.dart';
 import '../services/mapping_storage.dart';
 import 'mapping_screen.dart';
 import 'qr_anchor_scanner_screen.dart';
@@ -35,6 +36,10 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
   static const int _stablePoseSamplesRequired = 10;
   static const int _recoveryPoseSamplesRequired = 6;
   static const int _uiRefreshIntervalMs = 100;
+  static const double _poseJumpBaseMeters = 0.35;
+  static const double _maxPlausibleWalkingSpeedMps = 3.0;
+  static const double _maxAcceptedPoseStepMeters = 1.50;
+  static const int _rejectedJumpPauseThreshold = 3;
 
   final ArPoseService _ar = const ArPoseService();
   final MappingStorage _storage = const MappingStorage();
@@ -58,6 +63,9 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
   int _stablePoseSamples = 0;
   int _recoveryPoseSamples = 0;
   int _lastUiRefreshMs = 0;
+  int _trackingInterruptions = 0;
+  int _rejectedPoseJumps = 0;
+  int _consecutiveRejectedPoseJumps = 0;
   double _recordedDistanceMeters = 0;
 
   String _trackingState = 'STOPPED';
@@ -199,6 +207,9 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         _trackingInterrupted = false;
         _stablePoseSamples = 0;
         _recoveryPoseSamples = 0;
+        _trackingInterruptions = 0;
+        _rejectedPoseJumps = 0;
+        _consecutiveRejectedPoseJumps = 0;
         _recordedDistanceMeters = 0;
         _starting = false;
         _trackingState = 'ACQUIRING';
@@ -232,6 +243,9 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       _stablePoseSamples = 0;
 
       if (_recording && pose.tracking == 'PAUSED') {
+        if (!_trackingInterrupted) {
+          _trackingInterruptions++;
+        }
         _trackingInterrupted = true;
         _recoveryPoseSamples = 0;
         _message =
@@ -315,6 +329,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
 
       _trackingInterrupted = false;
       _recoveryPoseSamples = 0;
+      _consecutiveRejectedPoseJumps = 0;
       _trackingState = 'TRACKING';
       _message = 'Tracking recovered. Continue walking.';
       _refreshUi(force: true);
@@ -325,8 +340,37 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
 
       if (_points.isEmpty) {
         _points.add(candidate);
+        _consecutiveRejectedPoseJumps = 0;
       } else {
-        final delta = _distance3d(_points.last, candidate);
+        final previous = _points.last;
+        final delta = _distance3d(previous, candidate);
+
+        if (!_isPlausiblePoseStep(previous, candidate, delta)) {
+          _rejectedPoseJumps++;
+          _consecutiveRejectedPoseJumps++;
+          _trackingState = 'POSE REJECTED';
+          _message =
+              'Impossible ARCore position jump rejected '
+              '(${delta.toStringAsFixed(1)} m). Keep walking smoothly and '
+              'keep visible detail in frame.';
+
+          if (_consecutiveRejectedPoseJumps >=
+              _rejectedJumpPauseThreshold) {
+            _trackingInterrupted = true;
+            _trackingInterruptions++;
+            _recoveryPoseSamples = 0;
+            _trackingState = 'POSITION UNCERTAIN';
+            _message =
+                'POSITION UNCERTAIN — stop walking. Repeated impossible '
+                'ARCore jumps were blocked before they could corrupt the map. '
+                'Wait for tracking to recover near the last trusted point.';
+          }
+
+          _refreshUi(force: true);
+          return;
+        }
+
+        _consecutiveRejectedPoseJumps = 0;
         if (delta >= _minimumSampleDistanceMeters) {
           _recordedDistanceMeters += delta;
           _points.add(candidate);
@@ -406,6 +450,32 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     final dy = b.yMeters - a.yMeters;
     final dz = b.upMeters - a.upMeters;
     return math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  bool _isPlausiblePoseStep(
+    MappingPoint previous,
+    MappingPoint candidate,
+    double deltaMeters,
+  ) {
+    final deltaMs = candidate.timestampMs - previous.timestampMs;
+    if (deltaMs <= 0) return true;
+
+    final deltaSeconds = deltaMs / 1000.0;
+    final allowed = math.min(
+      _maxAcceptedPoseStepMeters,
+      _poseJumpBaseMeters + _maxPlausibleWalkingSpeedMps * deltaSeconds,
+    );
+    return deltaMeters <= allowed;
+  }
+
+  String get _liveQualityLabel {
+    if (_trackingInterruptions >= 3 || _rejectedPoseJumps >= 5) {
+      return 'REVIEW';
+    }
+    if (_trackingInterruptions > 0 || _rejectedPoseJumps > 0) {
+      return 'CAUTION';
+    }
+    return 'GOOD';
   }
 
   double get _distanceMeters => _recordedDistanceMeters;
@@ -662,6 +732,12 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       return;
     }
 
+    final rawPointCount = _points.length;
+    final simplified = const MappingPathSimplifier().simplify(
+      points: _points,
+      markers: _markers,
+    );
+
     final now = DateTime.now();
     final session = MappingSession(
       id: 'spatial_floor_${_floor}_${now.millisecondsSinceEpoch}',
@@ -674,8 +750,11 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       originHeadingDegrees: 0,
       stepLengthMeters: 0,
       source: 'arcore_spatial',
-      points: List<MappingPoint>.unmodifiable(_points),
-      markers: List<MappingMarker>.unmodifiable(_markers),
+      points: simplified.points,
+      markers: simplified.markers,
+      rawPointCount: rawPointCount,
+      trackingInterruptions: _trackingInterruptions,
+      rejectedPoseJumps: _rejectedPoseJumps,
     );
 
     try {
@@ -700,8 +779,9 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         _savedJson = prettyJson;
         _pose = const ArPose(tracking: 'STOPPED');
         _message =
-            'Spatial mapping saved. Review it, then Apply or Merge it into '
-            'the active venue.';
+            'Spatial mapping saved: $rawPointCount raw samples → '
+            '${simplified.points.length} saved geometry points. '
+            'Review quality before applying or merging.';
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -725,6 +805,9 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       _trackingInterrupted = false;
       _arStarted = false;
       _trackingState = 'STOPPED';
+      _trackingInterruptions = 0;
+      _rejectedPoseJumps = 0;
+      _consecutiveRejectedPoseJumps = 0;
       _recordedDistanceMeters = 0;
       _points.clear();
       _markers.clear();
@@ -964,6 +1047,29 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                       child: _Metric(
                         label: 'MARKERS',
                         value: '${_markers.length}',
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _Metric(
+                        label: 'QUALITY',
+                        value: _liveQualityLabel,
+                      ),
+                    ),
+                    Expanded(
+                      child: _Metric(
+                        label: 'PAUSES',
+                        value: '$_trackingInterruptions',
+                      ),
+                    ),
+                    Expanded(
+                      child: _Metric(
+                        label: 'JUMPS BLOCKED',
+                        value: '$_rejectedPoseJumps',
                       ),
                     ),
                   ],
