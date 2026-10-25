@@ -80,7 +80,7 @@ void main() {
     );
   }
 
-  test('first spatial apply establishes heading metadata for start anchor', () {
+  test('legacy start anchor stays position-only unless facing was verified', () {
     final venue = service.applySession(
       venue: baseVenue(),
       session: spatialSession(id: 'first'),
@@ -88,8 +88,61 @@ void main() {
 
     final anchor = venue.anchorById('main_anchor');
 
-    expect(anchor.headingDegrees, isNotNull);
-    expect(anchor.headingDegrees!, closeTo(0, 1e-9));
+    expect(anchor.headingDegrees, isNull);
+    expect(anchor.visualPoseReady, isFalse);
+  });
+
+  test('visual QR marker at first point creates a pose-ready start anchor', () {
+    final session = MappingSession(
+      id: 'visual_start',
+      venueId: 'venue',
+      venueName: 'Venue',
+      floor: 1,
+      createdAt: DateTime.utc(2026, 1, 1),
+      startAnchorId: null,
+      startAnchorLabel: 'Recorded start',
+      originHeadingDegrees: 0,
+      stepLengthMeters: 0,
+      source: 'arcore_spatial',
+      points: const [
+        MappingPoint(
+          xMeters: 0,
+          yMeters: 0,
+          headingDegrees: 0,
+          stepIndex: 0,
+          timestampMs: 0,
+        ),
+        MappingPoint(
+          xMeters: 0,
+          yMeters: 3,
+          headingDegrees: 0,
+          stepIndex: 1,
+          timestampMs: 1000,
+        ),
+      ],
+      markers: const [
+        MappingMarker(
+          id: 'front_qr',
+          label: 'Front Entrance QR',
+          type: 'anchor',
+          floor: 1,
+          xMeters: 0,
+          yMeters: 0,
+          pointIndex: 0,
+          anchorFacingDegrees: 90,
+        ),
+      ],
+    );
+
+    final venue = service.applySession(
+      venue: baseVenue(),
+      session: session,
+    );
+
+    final anchor = venue.anchorById('front_qr');
+    expect(anchor.nodeId, startsWith('recorded_start_'));
+    expect(anchor.visualPoseReady, isTrue);
+    expect(anchor.headingDegrees, closeTo(90, 1e-9));
   });
 
   test('spatial merge uses two known anchors and reuses the target node', () {
