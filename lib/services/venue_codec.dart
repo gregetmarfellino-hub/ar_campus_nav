@@ -53,6 +53,7 @@ class VenueCodec {
             'node_id': anchor.nodeId,
             'floor': anchor.floor,
             'heading_degrees': anchor.headingDegrees,
+            'visual_heading_verified': anchor.visualHeadingVerified,
           },
       ],
     };
