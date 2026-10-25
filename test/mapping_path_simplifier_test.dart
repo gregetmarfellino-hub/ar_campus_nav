@@ -50,6 +50,35 @@ void main() {
     expect(result.markers.single.label, 'Room');
   });
 
+  test('QR facing metadata survives simplification and reindexing', () {
+    final points = <MappingPoint>[
+      point(0, 0, 0),
+      point(0, 1, 1),
+      point(0, 2, 2),
+    ];
+    const markers = <MappingMarker>[
+      MappingMarker(
+        id: 'qr',
+        label: 'Entrance QR',
+        type: 'anchor',
+        floor: 1,
+        xMeters: 0,
+        yMeters: 1,
+        pointIndex: 1,
+        anchorFacingDegrees: 135,
+      ),
+    ];
+
+    final result = simplifier.simplify(
+      points: points,
+      markers: markers,
+      toleranceMeters: 0.10,
+    );
+
+    expect(result.markers.single.anchorFacingDegrees, 135);
+    expect(result.markers.single.pointIndex, 1);
+  });
+
   test('meaningful curve survives simplification', () {
     final points = <MappingPoint>[
       point(0, 0, 0),
