@@ -486,6 +486,17 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
   }
 
 
+  double _qrOutwardFacingDegrees(ArPose pose) {
+    // Native emits a yaw-only quaternion relative to the mapping frame.
+    // Camera forward points toward the QR mounting surface, while the QR
+    // poster's outward normal points back toward the person scanning it.
+    final cameraFacing =
+        2.0 * math.atan2(pose.qy, pose.qw) * 180.0 / math.pi;
+    var outward = (cameraFacing + 180.0) % 360.0;
+    if (outward < 0) outward += 360.0;
+    return outward;
+  }
+
   Future<void> _addMarker(String type) async {
     if (!_recording || _trackingInterrupted || _points.isEmpty) return;
 
@@ -559,6 +570,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
           yMeters: markerPoint.yMeters,
           upMeters: markerPoint.upMeters,
           pointIndex: markerPointIndex,
+          anchorFacingDegrees: anchorFacingDegrees,
         ),
       );
     });
@@ -612,10 +624,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     if (!mounted || action == null) return;
 
     if (action == 'new') {
-      await _addNewAnchorMarker(
-        markerPoint: markerPoint,
-        markerPointIndex: markerPointIndex,
-      );
+      await _addNewAnchorMarker();
       return;
     }
 
@@ -661,26 +670,44 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     });
   }
 
-  Future<void> _addNewAnchorMarker({
-    required MappingPoint markerPoint,
-    required int markerPointIndex,
-  }) async {
+  Future<void> _addNewAnchorMarker() async {
+    if (!_recording ||
+        _trackingInterrupted ||
+        _points.isEmpty ||
+        !_pose.isTracking) {
+      return;
+    }
+
     var draftLabel = 'QR anchor checkpoint';
     final label = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Create new anchor'),
-        content: TextFormField(
-          initialValue: draftLabel,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Label'),
-          onChanged: (value) => draftLabel = value,
-          onFieldSubmitted: (value) {
-            final trimmed = value.trim();
-            if (trimmed.isNotEmpty) {
-              Navigator.of(dialogContext).pop(trimmed);
-            }
-          },
+        title: const Text('Create visual QR anchor'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Stand at the exact QR location and point the rear camera '
+              'squarely at the surface where the QR will be mounted. '
+              'The direction you are looking now becomes the installation '
+              'orientation used for one-scan AR localization.',
+              style: TextStyle(height: 1.4),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              initialValue: draftLabel,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: 'Label'),
+              onChanged: (value) => draftLabel = value,
+              onFieldSubmitted: (value) {
+                final trimmed = value.trim();
+                if (trimmed.isNotEmpty) {
+                  Navigator.of(dialogContext).pop(trimmed);
+                }
+              },
+            ),
+          ],
         ),
         actions: [
           TextButton(
@@ -700,7 +727,14 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       ),
     );
 
-    if (!mounted || label == null) return;
+    if (!mounted || label == null || _points.isEmpty || !_pose.isTracking) {
+      return;
+    }
+
+    final markerPoint = _points.last;
+    final markerPointIndex = _points.length - 1;
+    final anchorFacingDegrees = _qrOutwardFacingDegrees(_pose);
+
     final idBase = label
         .toLowerCase()
         .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
