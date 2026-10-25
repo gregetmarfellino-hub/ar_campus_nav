@@ -268,11 +268,25 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
         color: Color(0xFF000000),
       ),
     );
-    final bytes = await painter.toImageData(
-      VisualAnchorSpec.renderPixels.toDouble(),
-      format: ui.ImageByteFormat.png,
+    final size = VisualAnchorSpec.renderPixels;
+    final recorder = ui.PictureRecorder();
+    final canvas = ui.Canvas(recorder);
+    canvas.drawRect(
+      ui.Rect.fromLTWH(0, 0, size.toDouble(), size.toDouble()),
+      ui.Paint()..color = const Color(0xFFFFFFFF),
     );
-    return bytes?.buffer.asUint8List();
+    painter.paint(
+      canvas,
+      ui.Size(size.toDouble(), size.toDouble()),
+    );
+    final image = await recorder.endRecording().toImage(size, size);
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    image.dispose();
+    if (bytes == null) return null;
+    return bytes.buffer.asUint8List(
+      bytes.offsetInBytes,
+      bytes.lengthInBytes,
+    );
   }
 
   Future<bool> _startNavigation() async {
@@ -418,8 +432,12 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Location confirmed at ${anchor.label}. Tap SET START, walk '
-              '1–2 m along the next real path, then LOCK DIRECTION.',
+              anchor.visualPoseReady
+                  ? 'Location confirmed at ${anchor.label}. Point the AR '
+                      'camera at its 16 cm QR and hold steady for visual lock.'
+                  : 'Location confirmed at ${anchor.label}. Tap SET START, '
+                      'walk 2–3 m along the next real path, then '
+                      'LOCK DIRECTION.',
             ),
           ),
         );
