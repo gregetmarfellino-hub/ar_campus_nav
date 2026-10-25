@@ -758,7 +758,29 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     final idBase = label
         .toLowerCase()
         .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
-        .replaceAll(RegExp(r'^_+|_+
+        .replaceAll(RegExp(r'^_+|_+$'), '');
+
+    setState(() {
+      _markers.add(
+        MappingMarker(
+          id: '${idBase.isEmpty ? 'anchor' : idBase}_${_markers.length + 1}',
+          label: label,
+          type: 'anchor',
+          floor: _floor,
+          xMeters: placed.rightMeters,
+          yMeters: placed.forwardMeters,
+          upMeters: placed.upMeters,
+          pointIndex: markerPointIndex,
+          anchorFacingDegrees: placed.facingDegrees,
+        ),
+      );
+      _message =
+          'Visual QR placed on a tracked vertical wall at '
+          'R ${placed.rightMeters.toStringAsFixed(2)} m / '
+          'F ${placed.forwardMeters.toStringAsFixed(2)} m. '
+          'Mount the physical 16 cm QR at that exact wall position.';
+    });
+  }
   Future<void> _finishAndSave() async {
     if (!_recording || _points.length < 2 || _distanceMeters < 0.5) {
       ScaffoldMessenger.of(context).showSnackBar(
