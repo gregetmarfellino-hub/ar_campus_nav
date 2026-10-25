@@ -11,6 +11,27 @@ import 'venue_transform_2d.dart';
 class VenueMappingService {
   const VenueMappingService();
 
+  bool hasSpatialAlignment({
+    required Venue venue,
+    required MappingSession session,
+  }) {
+    if (!session.isSpatial) return true;
+
+    try {
+      final startAnchor = _requireStartAnchor(venue, session);
+      final originNode = _requireAnchorNode(venue, startAnchor);
+      _spatialTransform(
+        venue: venue,
+        session: session,
+        startAnchor: startAnchor,
+        originNode: originNode,
+      );
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Venue applySession({
     required Venue venue,
     required MappingSession session,
@@ -39,6 +60,7 @@ class VenueMappingService {
       startNodeId: startNodeId,
       startLabel: startLabel,
       startAnchor: startAnchor,
+      reuseReferencedAnchors: false,
     );
 
     final oldFloorNodeIds = venue.nodes
@@ -98,46 +120,23 @@ class VenueMappingService {
   }) {
     _validateSession(venue, session);
 
-    final startAnchor = _findAnchor(venue, session.startAnchorId);
-    if (startAnchor == null) {
-      throw StateError(
-        'Merge requires a start QR anchor that already exists in the venue.',
-      );
-    }
+    final startAnchor = _requireStartAnchor(venue, session);
+    final originNode = _requireAnchorNode(venue, startAnchor);
 
-    NavNode? originNode;
-    for (final node in venue.nodes) {
-      if (node.id == startAnchor.nodeId) {
-        originNode = node;
-        break;
-      }
-    }
-
-    if (originNode == null) {
-      throw StateError(
-        'The start anchor points to a node that is not in the current venue.',
-      );
-    }
-
-    if (session.isSpatial) {
-      // A single shared point fixes translation but NOT rotation. Previous
-      // versions silently merged ARCore sessions here, which could rotate an
-      // otherwise good hallway into the wrong direction. Spatial merge stays
-      // blocked until we have a second known point or another explicit
-      // orientation reference.
-      throw StateError(
-        'Spatial merge needs orientation alignment. One QR anchor fixes '
-        'position only; record/identify a second known anchor before merging.',
-      );
-    }
-
-    final transform = VenueTransform2D.fromPointAndHeading(
-      localX: session.points.first.xMeters,
-      localY: session.points.first.yMeters,
-      venueX: originNode.x,
-      venueY: originNode.y,
-      headingDegrees: session.originHeadingDegrees,
-    );
+    final transform = session.isSpatial
+        ? _spatialTransform(
+            venue: venue,
+            session: session,
+            startAnchor: startAnchor,
+            originNode: originNode,
+          )
+        : VenueTransform2D.fromPointAndHeading(
+            localX: session.points.first.xMeters,
+            localY: session.points.first.yMeters,
+            venueX: originNode.x,
+            venueY: originNode.y,
+            headingDegrees: session.originHeadingDegrees,
+          );
 
     final generated = _buildRecordedFloor(
       venue: venue,
@@ -146,6 +145,7 @@ class VenueMappingService {
       startNodeId: originNode.id,
       startLabel: originNode.label,
       startAnchor: startAnchor,
+      reuseReferencedAnchors: session.isSpatial,
     );
 
     final existingNodeIds = venue.nodes.map((node) => node.id).toSet();
@@ -210,6 +210,7 @@ class VenueMappingService {
     required String startNodeId,
     required String startLabel,
     required AnchorPoint? startAnchor,
+    required bool reuseReferencedAnchors,
   }) {
     final selected = _selectedPointIndices(session);
     final markerGroups = <int, List<MappingMarker>>{};
@@ -273,28 +274,54 @@ class VenueMappingService {
       final group = markerGroups[index] ?? const <MappingMarker>[];
       final primary = _primaryMarker(group);
 
-      final baseNodeId = primary == null
-          ? 'path_${genericCounter++}'
-          : _safe(primary.id);
-      final nodeId = _uniqueId(
-        'rec_${_safe(session.id)}_$baseNodeId',
-        usedNodeIds,
-      );
-      usedNodeIds.add(nodeId);
+      MappingMarker? referenceMarker;
+      if (reuseReferencedAnchors) {
+        for (final marker in group) {
+          if (marker.type == 'anchor' &&
+              marker.referenceAnchorId != null &&
+              marker.referenceAnchorId!.isNotEmpty) {
+            referenceMarker = marker;
+            break;
+          }
+        }
+      }
 
-      final label = primary?.label ?? 'Recorded path';
-      final type = _nodeType(primary?.type);
+      final referencedAnchor = referenceMarker == null
+          ? null
+          : _findAnchor(venue, referenceMarker.referenceAnchorId);
+      final referencedNode =
+          referencedAnchor == null ? null : _findNode(venue, referencedAnchor.nodeId);
 
-      nodes.add(
-        NavNode(
-          id: nodeId,
-          label: label,
-          floor: session.floor,
-          x: world.$1,
-          y: world.$2,
-          type: type,
-        ),
-      );
+      late final String nodeId;
+      if (referencedNode != null) {
+        // This point is the same physical place as an existing venue anchor.
+        // Reuse the node so the merged route connects into the existing graph
+        // instead of creating a duplicate location beside it.
+        nodeId = referencedNode.id;
+      } else {
+        final baseNodeId = primary == null
+            ? 'path_${genericCounter++}'
+            : _safe(primary.id);
+        nodeId = _uniqueId(
+          'rec_${_safe(session.id)}_$baseNodeId',
+          usedNodeIds,
+        );
+        usedNodeIds.add(nodeId);
+
+        final label = primary?.label ?? 'Recorded path';
+        final type = _nodeType(primary?.type);
+
+        nodes.add(
+          NavNode(
+            id: nodeId,
+            label: label,
+            floor: session.floor,
+            x: world.$1,
+            y: world.$2,
+            type: type,
+          ),
+        );
+      }
       nodeIdByIndex[index] = nodeId;
 
       for (final marker in group) {
@@ -316,6 +343,14 @@ class VenueMappingService {
         }
 
         if (marker.type == 'anchor') {
+          if (reuseReferencedAnchors &&
+              marker.referenceAnchorId != null &&
+              marker.referenceAnchorId!.isNotEmpty) {
+            // This marker only identifies a known physical anchor used for
+            // alignment. The venue already owns that anchor.
+            continue;
+          }
+
           final id = _uniqueId(
             _safe(marker.id),
             usedAnchorIds,
@@ -516,6 +551,133 @@ class VenueMappingService {
     if (id == null || id.isEmpty) return null;
     for (final anchor in venue.anchors) {
       if (anchor.id == id) return anchor;
+    }
+    return null;
+  }
+
+  AnchorPoint _requireStartAnchor(
+    Venue venue,
+    MappingSession session,
+  ) {
+    final startAnchor = _findAnchor(venue, session.startAnchorId);
+    if (startAnchor == null) {
+      throw StateError(
+        'Merge requires a start QR anchor that already exists in the venue.',
+      );
+    }
+    return startAnchor;
+  }
+
+  NavNode _requireAnchorNode(
+    Venue venue,
+    AnchorPoint anchor,
+  ) {
+    final node = _findNode(venue, anchor.nodeId);
+    if (node == null) {
+      throw StateError(
+        'Anchor "${anchor.label}" points to a node that is not in the '
+        'current venue.',
+      );
+    }
+    return node;
+  }
+
+  VenueTransform2D _spatialTransform({
+    required Venue venue,
+    required MappingSession session,
+    required AnchorPoint startAnchor,
+    required NavNode originNode,
+  }) {
+    MappingMarker? bestMarker;
+    AnchorPoint? bestAnchor;
+    NavNode? bestNode;
+    var bestBaseline = 0.0;
+
+    final localStart = session.points.first;
+
+    for (final marker in session.markers) {
+      final referenceId = marker.referenceAnchorId;
+      if (marker.type != 'anchor' ||
+          referenceId == null ||
+          referenceId.isEmpty ||
+          referenceId == startAnchor.id) {
+        continue;
+      }
+
+      final anchor = _findAnchor(venue, referenceId);
+      if (anchor == null || anchor.floor != session.floor) continue;
+
+      final node = _findNode(venue, anchor.nodeId);
+      if (node == null) continue;
+
+      final localDx = marker.xMeters - localStart.xMeters;
+      final localDy = marker.yMeters - localStart.yMeters;
+      final localDistance = math.sqrt(localDx * localDx + localDy * localDy);
+
+      final venueDx = node.x - originNode.x;
+      final venueDy = node.y - originNode.y;
+      final venueDistance = math.sqrt(venueDx * venueDx + venueDy * venueDy);
+
+      final baseline = math.min(localDistance, venueDistance);
+      if (baseline > bestBaseline) {
+        bestBaseline = baseline;
+        bestMarker = marker;
+        bestAnchor = anchor;
+        bestNode = node;
+      }
+    }
+
+    if (bestMarker == null || bestAnchor == null || bestNode == null) {
+      throw StateError(
+        'Spatial merge needs a second known anchor on Floor '
+        '${session.floor}. During mapping, stand at another existing anchor '
+        'and mark it as "Reference existing".',
+      );
+    }
+
+    const minimumBaselineMeters = 0.75;
+    if (bestBaseline < minimumBaselineMeters) {
+      throw StateError(
+        'The two known anchors are too close together for reliable spatial '
+        'alignment. Use anchors at least '
+        '${minimumBaselineMeters.toStringAsFixed(2)} m apart.',
+      );
+    }
+
+    final localDx = bestMarker.xMeters - localStart.xMeters;
+    final localDy = bestMarker.yMeters - localStart.yMeters;
+    final localDistance = math.sqrt(localDx * localDx + localDy * localDy);
+    final venueDx = bestNode.x - originNode.x;
+    final venueDy = bestNode.y - originNode.y;
+    final venueDistance = math.sqrt(venueDx * venueDx + venueDy * venueDy);
+
+    final spacingError = (localDistance - venueDistance).abs();
+    final allowedSpacingError = math.max(0.75, venueDistance * 0.20);
+    if (spacingError > allowedSpacingError) {
+      throw StateError(
+        'Known-anchor spacing does not match the active venue closely enough '
+        '(${localDistance.toStringAsFixed(1)} m recorded vs '
+        '${venueDistance.toStringAsFixed(1)} m expected). Recheck the '
+        'selected anchor or remap this section.',
+      );
+    }
+
+    return VenueTransform2D.fromPointPairs(
+      localAX: localStart.xMeters,
+      localAY: localStart.yMeters,
+      localBX: bestMarker.xMeters,
+      localBY: bestMarker.yMeters,
+      venueAX: originNode.x,
+      venueAY: originNode.y,
+      venueBX: bestNode.x,
+      venueBY: bestNode.y,
+      minimumBaselineMeters: minimumBaselineMeters,
+    );
+  }
+
+  NavNode? _findNode(Venue venue, String id) {
+    for (final node in venue.nodes) {
+      if (node.id == id) return node;
     }
     return null;
   }
