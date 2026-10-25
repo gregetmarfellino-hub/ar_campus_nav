@@ -169,6 +169,7 @@ class MappingPathSimplifier {
           upMeters: marker.upMeters,
           pointIndex: newIndex,
           referenceAnchorId: marker.referenceAnchorId,
+          anchorFacingDegrees: marker.anchorFacingDegrees,
         );
       }),
     );
