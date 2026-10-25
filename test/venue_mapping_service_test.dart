@@ -145,6 +145,63 @@ void main() {
     expect(anchor.headingDegrees, closeTo(90, 1e-9));
   });
 
+  test('visual QR node keeps the exact AR wall hit position', () {
+    final session = MappingSession(
+      id: 'wall_qr',
+      venueId: 'venue',
+      venueName: 'Venue',
+      floor: 1,
+      createdAt: DateTime.utc(2026, 1, 1),
+      startAnchorId: null,
+      startAnchorLabel: 'Recorded start',
+      originHeadingDegrees: 0,
+      stepLengthMeters: 0,
+      source: 'arcore_spatial',
+      points: const [
+        MappingPoint(
+          xMeters: 0,
+          yMeters: 0,
+          headingDegrees: 0,
+          stepIndex: 0,
+          timestampMs: 0,
+        ),
+        MappingPoint(
+          xMeters: 0,
+          yMeters: 3,
+          headingDegrees: 0,
+          stepIndex: 1,
+          timestampMs: 1000,
+        ),
+      ],
+      markers: const [
+        MappingMarker(
+          id: 'wall_qr',
+          label: 'Wall QR',
+          type: 'anchor',
+          floor: 1,
+          xMeters: 0.40,
+          yMeters: -0.20,
+          upMeters: 1.45,
+          pointIndex: 0,
+          anchorFacingDegrees: 90,
+        ),
+      ],
+    );
+
+    final venue = service.applySession(
+      venue: baseVenue(),
+      session: session,
+    );
+
+    final anchor = venue.anchorById('wall_qr');
+    final node = venue.nodeById(anchor.nodeId);
+
+    expect(anchor.visualPoseReady, isTrue);
+    expect(anchor.headingDegrees, closeTo(90, 1e-9));
+    expect(node.x, closeTo(0.40, 1e-9));
+    expect(node.y, closeTo(0.20, 1e-9));
+  });
+
   test('spatial merge uses two known anchors and reuses the target node', () {
     const venue = Venue(
       id: 'venue',
