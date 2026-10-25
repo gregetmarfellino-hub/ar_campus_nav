@@ -127,10 +127,11 @@ class _AnchorQrScreenState extends State<AnchorQrScreen> {
                       SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'Install this QR at the exact mapped location. Keep '
-                          'the QR upright and do not rotate or move it after '
-                          'deployment. The black/white QR image itself must be '
-                          '16 cm wide so ARCore can recover metric scale.',
+                          'Install the QR center where the rear camera was '
+                          'held when this anchor was mapped. Keep it upright '
+                          'with the same facing and do not move it afterward. '
+                          'The black/white QR image itself must be 16 cm wide '
+                          'so ARCore can recover metric scale.',
                           style: TextStyle(
                             color: Colors.white70,
                             height: 1.45,
