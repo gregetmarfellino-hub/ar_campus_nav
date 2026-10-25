@@ -101,6 +101,35 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                         ),
                     )
                 }
+                "placeVisualQrAnchor" -> {
+                    val qrPng = call.argument<ByteArray>("qr_png")
+                    val widthMeters =
+                        (call.argument<Number>("qr_width_m"))?.toFloat()
+
+                    if (qrPng == null || qrPng.isEmpty() ||
+                        widthMeters == null || widthMeters <= 0f
+                    ) {
+                        result.error(
+                            "INVALID_QR_PLACEMENT",
+                            "QR bitmap and physical width are required.",
+                            null,
+                        )
+                    } else {
+                        val error = arEngine().beginVisualQrPlacement(
+                            qrPng = qrPng,
+                            widthMeters = widthMeters,
+                        ) { placement ->
+                            result.success(placement)
+                        }
+                        if (error != null) {
+                            result.error(
+                                "QR_PLACEMENT_UNAVAILABLE",
+                                error,
+                                null,
+                            )
+                        }
+                    }
+                }
                 "resetArOrigin" -> {
                     arEngine().resetOrigin()
                     result.success(null)
