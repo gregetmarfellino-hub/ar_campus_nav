@@ -53,6 +53,7 @@ class ArCoreTrackingEngine(
     private val mainHandler = Handler(Looper.getMainLooper())
     private val backgroundRenderer = ArCameraBackgroundRenderer()
     private val breadcrumbRenderer = ArBreadcrumbRenderer()
+    private val qrPlacementRenderer = ArQrPlacementPreviewRenderer()
 
     private var session: Session? = null
     private var surfaceView: GLSurfaceView? = null
@@ -62,6 +63,22 @@ class ArCoreTrackingEngine(
     private var navigationAlignButton: Button? = null
     private var navigationReanchorButton: Button? = null
     private var navigationExitButton: Button? = null
+
+    // Free-floating visual QR placement used by the spatial mapper. The QR is
+    // a real 3D AR billboard, not a wall/plane hit. While placement is open it
+    // floats a configurable distance along the live camera ray; pressing PLACE
+    // freezes that exact metric pose into the mapping-local frame.
+    private var qrPlacementOverlay: FrameLayout? = null
+    private var qrPlacementStatusText: TextView? = null
+    private var qrPlacementDistanceText: TextView? = null
+    private var qrPlacementButton: Button? = null
+    @Volatile private var qrPlacementMode = false
+    @Volatile private var qrPlacementRequested = false
+    @Volatile private var qrPlacementDistanceMeters = 1.0f
+    private var qrPlacementBitmap: Bitmap? = null
+    private var qrPlacementWidthMeters = 0.16f
+    private var qrPlacementCompletion: ((Map<String, Any>?) -> Unit)? = null
+
     private var cameraTextureId: Int = 0
 
     // Tracking/mapping origin: gravity-horizontal frame.
@@ -299,6 +316,305 @@ class ArCoreTrackingEngine(
         emitStatus("RESETTING_ORIGIN")
     }
 
+    fun beginVisualQrPlacement(
+        qrPng: ByteArray,
+        widthMeters: Float,
+        onComplete: (Map<String, Any>?) -> Unit,
+    ): String? {
+        if (!started || session == null || surfaceView == null) {
+            return "ARCore spatial mapping is not running."
+        }
+        if (navigationMode) {
+            return "QR placement is only available while mapping."
+        }
+        if (qrPlacementMode) {
+            return "QR placement is already open."
+        }
+        if (trackingOriginPosition == null) {
+            return "Mapping origin is not ready yet. Wait for TRACKING, then try again."
+        }
+
+        val bitmap = BitmapFactory.decodeByteArray(qrPng, 0, qrPng.size)
+            ?: return "The QR preview image could not be decoded."
+        if (widthMeters <= 0f) {
+            bitmap.recycle()
+            return "QR width must be positive."
+        }
+
+        qrPlacementBitmap?.recycle()
+        qrPlacementBitmap = bitmap
+        qrPlacementWidthMeters = widthMeters
+        qrPlacementDistanceMeters = 1.0f
+        qrPlacementCompletion = onComplete
+        qrPlacementRequested = false
+        qrPlacementMode = true
+        qrPlacementRenderer.setBitmap(bitmap)
+
+        mainHandler.post { createQrPlacementOverlay() }
+        return null
+    }
+
+    private fun createQrPlacementOverlay() {
+        val glView = surfaceView ?: run {
+            finishQrPlacement(null)
+            return
+        }
+
+        (qrPlacementOverlay?.parent as? ViewGroup)?.removeView(qrPlacementOverlay)
+
+        glView.layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT,
+        )
+        glView.bringToFront()
+
+        val overlay = FrameLayout(activity)
+
+        val status = TextView(activity).apply {
+            text =
+                "PLACE QR IN 3D\nMove/aim the phone to position the floating QR. " +
+                    "It does not need a wall or detected plane."
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            background = roundedBackground(0xC0000000.toInt(), dp(18).toFloat())
+        }
+        qrPlacementStatusText = status
+        overlay.addView(
+            status,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                gravity = Gravity.TOP
+                setMargins(dp(20), dp(36), dp(20), 0)
+            },
+        )
+
+        val distanceRow = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            background = roundedBackground(0xB8000000.toInt(), dp(22).toFloat())
+            setPadding(dp(8), dp(4), dp(8), dp(4))
+        }
+
+        val nearer = Button(activity).apply {
+            text = "−"
+            textSize = 22f
+            setTextColor(Color.WHITE)
+            background = roundedBackground(0x33000000, dp(18).toFloat())
+            setOnClickListener { adjustQrPlacementDistance(-0.20f) }
+        }
+        val distance = TextView(activity).apply {
+            text = "1.0 m"
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+        }
+        qrPlacementDistanceText = distance
+        val farther = Button(activity).apply {
+            text = "+"
+            textSize = 20f
+            setTextColor(Color.WHITE)
+            background = roundedBackground(0x33000000, dp(18).toFloat())
+            setOnClickListener { adjustQrPlacementDistance(0.20f) }
+        }
+
+        distanceRow.addView(
+            nearer,
+            LinearLayout.LayoutParams(dp(58), dp(48)),
+        )
+        distanceRow.addView(
+            distance,
+            LinearLayout.LayoutParams(dp(110), dp(48)),
+        )
+        distanceRow.addView(
+            farther,
+            LinearLayout.LayoutParams(dp(58), dp(48)),
+        )
+
+        overlay.addView(
+            distanceRow,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                dp(56),
+            ).apply {
+                gravity = Gravity.CENTER_HORIZONTAL or Gravity.BOTTOM
+                bottomMargin = dp(118)
+            },
+        )
+
+        val controls = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+
+        val place = Button(activity).apply {
+            text = "PLACE QR HERE"
+            textSize = 15f
+            setTextColor(Color.BLACK)
+            background = roundedBackground(0xFF3DDC97.toInt(), dp(24).toFloat())
+            setOnClickListener {
+                qrPlacementRequested = true
+                qrPlacementStatusText?.text = "Saving this exact 3D QR pose..."
+            }
+        }
+        qrPlacementButton = place
+
+        val cancel = Button(activity).apply {
+            text = "CANCEL"
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            background = roundedBackground(0xC0000000.toInt(), dp(24).toFloat())
+            setOnClickListener { finishQrPlacement(null) }
+        }
+
+        controls.addView(
+            place,
+            LinearLayout.LayoutParams(0, dp(58), 2f).apply {
+                marginEnd = dp(10)
+            },
+        )
+        controls.addView(
+            cancel,
+            LinearLayout.LayoutParams(0, dp(58), 1f),
+        )
+
+        overlay.addView(
+            controls,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                dp(58),
+            ).apply {
+                gravity = Gravity.BOTTOM
+                setMargins(dp(24), 0, dp(24), dp(42))
+            },
+        )
+
+        activity.addContentView(
+            overlay,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        qrPlacementOverlay = overlay
+    }
+
+    private fun adjustQrPlacementDistance(deltaMeters: Float) {
+        qrPlacementDistanceMeters =
+            (qrPlacementDistanceMeters + deltaMeters).coerceIn(0.40f, 3.00f)
+        qrPlacementDistanceText?.text =
+            String.format(java.util.Locale.US, "%.1f m", qrPlacementDistanceMeters)
+    }
+
+    private fun handleQrPlacementFrame(
+        currentPose: Pose,
+        camera: com.google.ar.core.Camera,
+    ) {
+        val cameraForward = currentPose.getTransformedAxis(2, -1f)
+        val cameraPosition = currentPose.translation
+        val distance = qrPlacementDistanceMeters
+
+        val center = floatArrayOf(
+            cameraPosition[0] + cameraForward[0] * distance,
+            cameraPosition[1] + cameraForward[1] * distance,
+            cameraPosition[2] + cameraForward[2] * distance,
+        )
+
+        // Keep the QR upright regardless of phone pitch/roll. Its outward
+        // normal faces back toward the user at placement time.
+        val horizontal = horizontalForward(currentPose)
+        val outwardX = -horizontal[0]
+        val outwardZ = -horizontal[2]
+        val rightAxis = floatArrayOf(outwardZ, 0f, -outwardX)
+        val upAxis = floatArrayOf(0f, 1f, 0f)
+
+        qrPlacementRenderer.draw(
+            camera = camera,
+            center = center,
+            rightAxis = rightAxis,
+            upAxis = upAxis,
+            sizeMeters = qrPlacementWidthMeters,
+        )
+
+        if (!qrPlacementRequested) return
+        qrPlacementRequested = false
+
+        val origin = trackingOriginPosition ?: run {
+            mainHandler.post {
+                qrPlacementStatusText?.text =
+                    "Mapping origin is unavailable. Cancel and restart mapping."
+            }
+            return
+        }
+
+        val targetPose = Pose.makeTranslation(
+            center[0],
+            center[1],
+            center[2],
+        )
+        val local = localPosition(
+            pose = targetPose,
+            origin = origin,
+            forwardX = trackingForwardX,
+            forwardZ = trackingForwardZ,
+            rightX = trackingRightX,
+            rightZ = trackingRightZ,
+        )
+
+        val forwardComponent =
+            outwardX * trackingForwardX + outwardZ * trackingForwardZ
+        val rightComponent =
+            outwardX * trackingRightX + outwardZ * trackingRightZ
+
+        var facingDegrees = (
+            atan2(rightComponent, forwardComponent) *
+                180.0 /
+                Math.PI
+            ).toFloat()
+        facingDegrees %= 360f
+        if (facingDegrees < 0f) facingDegrees += 360f
+
+        finishQrPlacement(
+            mapOf(
+                "right_m" to local.right.toDouble(),
+                "forward_m" to local.forward.toDouble(),
+                "up_m" to local.up.toDouble(),
+                "facing_deg" to facingDegrees.toDouble(),
+            ),
+        )
+    }
+
+    private fun finishQrPlacement(payload: Map<String, Any>?) {
+        if (!qrPlacementMode && qrPlacementCompletion == null) return
+
+        qrPlacementMode = false
+        qrPlacementRequested = false
+        val callback = qrPlacementCompletion
+        qrPlacementCompletion = null
+
+        mainHandler.post {
+            val overlay = qrPlacementOverlay
+            qrPlacementOverlay = null
+            qrPlacementStatusText = null
+            qrPlacementDistanceText = null
+            qrPlacementButton = null
+            (overlay?.parent as? ViewGroup)?.removeView(overlay)
+
+            surfaceView?.layoutParams = FrameLayout.LayoutParams(2, 2).apply {
+                gravity = Gravity.BOTTOM or Gravity.END
+            }
+
+            qrPlacementRenderer.setBitmap(null)
+            qrPlacementBitmap?.recycle()
+            qrPlacementBitmap = null
+
+            callback?.invoke(payload)
+        }
+    }
+
     fun pause() {
         if (!started) return
         surfaceView?.onPause()
@@ -327,6 +643,8 @@ class ArCoreTrackingEngine(
         pause()
 
         val oldOverlay = navigationOverlay
+        val oldQrPlacementOverlay = qrPlacementOverlay
+        val pendingQrPlacement = qrPlacementCompletion
         val oldView = surfaceView
         navigationOverlay = null
         navigationStatusText = null
@@ -334,13 +652,25 @@ class ArCoreTrackingEngine(
         navigationAlignButton = null
         navigationReanchorButton = null
         navigationExitButton = null
+        qrPlacementOverlay = null
+        qrPlacementStatusText = null
+        qrPlacementDistanceText = null
+        qrPlacementButton = null
+        qrPlacementCompletion = null
+        qrPlacementMode = false
+        qrPlacementRequested = false
         surfaceView = null
 
         val removeViews = Runnable {
             (oldOverlay?.parent as? ViewGroup)?.removeView(oldOverlay)
+            (oldQrPlacementOverlay?.parent as? ViewGroup)?.removeView(oldQrPlacementOverlay)
             if (oldOverlay == null) {
                 (oldView?.parent as? ViewGroup)?.removeView(oldView)
             }
+            qrPlacementRenderer.setBitmap(null)
+            qrPlacementBitmap?.recycle()
+            qrPlacementBitmap = null
+            pendingQrPlacement?.invoke(null)
         }
         if (Looper.myLooper() == Looper.getMainLooper()) {
             removeViews.run()
@@ -402,8 +732,9 @@ class ArCoreTrackingEngine(
 
         session?.setCameraTextureName(cameraTextureId)
 
+        backgroundRenderer.createOnGlThread()
+        qrPlacementRenderer.createOnGlThread()
         if (navigationMode) {
-            backgroundRenderer.createOnGlThread()
             breadcrumbRenderer.createOnGlThread()
         }
     }
@@ -426,7 +757,7 @@ class ArCoreTrackingEngine(
             val frame = activeSession.update()
             val camera = frame.camera
 
-            if (navigationMode) {
+            if (navigationMode || qrPlacementMode) {
                 backgroundRenderer.draw(frame, cameraTextureId)
             }
 
@@ -436,6 +767,13 @@ class ArCoreTrackingEngine(
                     state = camera.trackingState.name,
                     reason = reason,
                 )
+                if (qrPlacementMode) {
+                    mainHandler.post {
+                        qrPlacementButton?.isEnabled = false
+                        qrPlacementStatusText?.text =
+                            "TRACKING PAUSED — move slowly until ARCore recovers."
+                    }
+                }
                 if (navigationMode) {
                     if (!navigationTrackingLost) {
                         navigationTrackingLost = true
@@ -455,6 +793,17 @@ class ArCoreTrackingEngine(
 
             val currentPose = camera.pose
             latestCameraPose = currentPose
+
+            if (qrPlacementMode) {
+                mainHandler.post {
+                    qrPlacementButton?.isEnabled = true
+                }
+                handleQrPlacementFrame(
+                    currentPose = currentPose,
+                    camera = camera,
+                )
+                return
+            }
 
             if (navigationMode && navigationTrackingLost) {
                 if (!handleNavigationTrackingRecovery(
