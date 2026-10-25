@@ -201,8 +201,10 @@ class _MappingReviewScreenState extends State<MappingReviewScreen> {
             children: [
               Expanded(
                 child: _Metric(
-                  value: '${session.points.length - 1}',
-                  label: 'Steps',
+                  value: session.isSpatial
+                      ? '${session.points.length}'
+                      : '${session.points.length - 1}',
+                  label: session.isSpatial ? 'Geometry pts' : 'Steps',
                 ),
               ),
               Expanded(
@@ -239,6 +241,27 @@ class _MappingReviewScreenState extends State<MappingReviewScreen> {
                 label: 'Origin heading',
                 value: '${session.originHeadingDegrees.toStringAsFixed(0)}°',
               ),
+              if (session.isSpatial)
+                _InfoRow(
+                  label: 'Mapping quality',
+                  value: session.qualityLabel,
+                ),
+              if (session.isSpatial)
+                _InfoRow(
+                  label: 'Geometry reduction',
+                  value: '${session.effectiveRawPointCount} raw → '
+                      '${session.points.length} saved',
+                ),
+              if (session.isSpatial)
+                _InfoRow(
+                  label: 'Tracking pauses',
+                  value: '${session.trackingInterruptions}',
+                ),
+              if (session.isSpatial)
+                _InfoRow(
+                  label: 'Pose jumps blocked',
+                  value: '${session.rejectedPoseJumps}',
+                ),
             ],
           ),
           const SizedBox(height: 18),
