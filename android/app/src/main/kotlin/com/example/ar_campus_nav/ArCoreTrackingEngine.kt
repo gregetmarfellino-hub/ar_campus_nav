@@ -75,6 +75,7 @@ class ArCoreTrackingEngine(
     @Volatile private var qrPlacementMode = false
     @Volatile private var qrPlacementRequested = false
     @Volatile private var qrPlacementDistanceMeters = 1.0f
+    private var qrPlacementTrackingReady = false
     private var qrPlacementBitmap: Bitmap? = null
     private var qrPlacementWidthMeters = 0.16f
     private var qrPlacementCompletion: ((Map<String, Any>?) -> Unit)? = null
@@ -347,6 +348,7 @@ class ArCoreTrackingEngine(
         qrPlacementDistanceMeters = 1.0f
         qrPlacementCompletion = onComplete
         qrPlacementRequested = false
+        qrPlacementTrackingReady = false
         qrPlacementMode = true
         qrPlacementRenderer.setBitmap(bitmap)
 
@@ -587,11 +589,28 @@ class ArCoreTrackingEngine(
         )
     }
 
+    private fun setQrPlacementTrackingReady(ready: Boolean) {
+        if (qrPlacementTrackingReady == ready) return
+        qrPlacementTrackingReady = ready
+
+        mainHandler.post {
+            qrPlacementButton?.isEnabled = ready
+            if (ready) {
+                qrPlacementStatusText?.text =
+                    "QR READY — move/aim the phone, adjust distance, then tap PLACE QR HERE."
+            } else {
+                qrPlacementStatusText?.text =
+                    "TRACKING PAUSED — move slowly until ARCore recovers."
+            }
+        }
+    }
+
     private fun finishQrPlacement(payload: Map<String, Any>?) {
         if (!qrPlacementMode && qrPlacementCompletion == null) return
 
         qrPlacementMode = false
         qrPlacementRequested = false
+        qrPlacementTrackingReady = false
         val callback = qrPlacementCompletion
         qrPlacementCompletion = null
 
@@ -659,6 +678,7 @@ class ArCoreTrackingEngine(
         qrPlacementCompletion = null
         qrPlacementMode = false
         qrPlacementRequested = false
+        qrPlacementTrackingReady = false
         surfaceView = null
 
         val removeViews = Runnable {
@@ -768,11 +788,7 @@ class ArCoreTrackingEngine(
                     reason = reason,
                 )
                 if (qrPlacementMode) {
-                    mainHandler.post {
-                        qrPlacementButton?.isEnabled = false
-                        qrPlacementStatusText?.text =
-                            "TRACKING PAUSED — move slowly until ARCore recovers."
-                    }
+                    setQrPlacementTrackingReady(false)
                 }
                 if (navigationMode) {
                     if (!navigationTrackingLost) {
@@ -795,9 +811,7 @@ class ArCoreTrackingEngine(
             latestCameraPose = currentPose
 
             if (qrPlacementMode) {
-                mainHandler.post {
-                    qrPlacementButton?.isEnabled = true
-                }
+                setQrPlacementTrackingReady(true)
                 handleQrPlacementFrame(
                     currentPose = currentPose,
                     camera = camera,
