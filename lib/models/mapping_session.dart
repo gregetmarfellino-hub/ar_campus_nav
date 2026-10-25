@@ -141,6 +141,9 @@ class MappingSession {
     required this.points,
     required this.markers,
     this.source = 'step_compass',
+    this.rawPointCount = 0,
+    this.trackingInterruptions = 0,
+    this.rejectedPoseJumps = 0,
   });
 
   final String id;
@@ -164,7 +167,28 @@ class MappingSession {
   final List<MappingPoint> points;
   final List<MappingMarker> markers;
 
+  /// Number of raw accepted ARCore geometry samples before save-time
+  /// simplification. Legacy sessions and old JSON default to points.length.
+  final int rawPointCount;
+
+  /// Number of times ARCore tracking paused while a recording was live.
+  final int trackingInterruptions;
+
+  /// Impossible pose jumps rejected by the mapper before they could corrupt
+  /// route geometry.
+  final int rejectedPoseJumps;
+
   bool get isSpatial => source == 'arcore_spatial';
+
+  int get effectiveRawPointCount =>
+      rawPointCount > 0 ? rawPointCount : points.length;
+
+  String get qualityLabel {
+    if (!isSpatial) return 'LEGACY';
+    if (trackingInterruptions >= 3 || rejectedPoseJumps >= 5) return 'REVIEW';
+    if (trackingInterruptions > 0 || rejectedPoseJumps > 0) return 'CAUTION';
+    return 'GOOD';
+  }
 
   double get totalDistanceMeters {
     if (points.length < 2) return 0;
@@ -212,6 +236,9 @@ class MappingSession {
         'origin_heading_deg': originHeadingDegrees,
         'step_length_m': stepLengthMeters,
         'source': source,
+        'raw_point_count': effectiveRawPointCount,
+        'tracking_interruptions': trackingInterruptions,
+        'rejected_pose_jumps': rejectedPoseJumps,
         'points': points.map((point) => point.toJson()).toList(growable: false),
         'markers': markers.map((marker) => marker.toJson()).toList(growable: false),
       };
@@ -229,6 +256,11 @@ class MappingSession {
           (json['origin_heading_deg'] as num?)?.toDouble() ?? 0,
       stepLengthMeters: (json['step_length_m'] as num?)?.toDouble() ?? 0,
       source: json['source'] as String? ?? 'step_compass',
+      rawPointCount: (json['raw_point_count'] as num?)?.toInt() ?? 0,
+      trackingInterruptions:
+          (json['tracking_interruptions'] as num?)?.toInt() ?? 0,
+      rejectedPoseJumps:
+          (json['rejected_pose_jumps'] as num?)?.toInt() ?? 0,
       points: (json['points'] as List<dynamic>)
           .map((item) => MappingPoint.fromJson(item as Map<String, dynamic>))
           .toList(growable: false),
