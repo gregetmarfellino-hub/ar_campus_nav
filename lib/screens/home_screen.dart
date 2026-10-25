@@ -125,7 +125,11 @@ class _HomeScreenState extends State<HomeScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          'Test location set: ${selected.label}. Valid only if you are physically at that anchor.',
+          selected.visualPoseReady
+              ? 'AR start target set: ${selected.label}. AR will confirm '
+                  'the physical QR pose when guidance opens.'
+              : 'Legacy start target set: ${selected.label}. Manual '
+                  'direction alignment is still required.',
         ),
       ),
     );
@@ -163,16 +167,32 @@ class _HomeScreenState extends State<HomeScreen> {
 
 
 
+  AnchorPoint? _anchorForStartNode(Venue venue) {
+    final nodeId = _startNodeId;
+    if (nodeId == null) return null;
+
+    for (final anchor in venue.anchors) {
+      if (anchor.nodeId == nodeId) return anchor;
+    }
+    return null;
+  }
+
   Future<void> _openRoute(Destination destination) async {
     final venue = _venue;
     if (venue == null) return;
 
-    if (_activeAnchor == null) {
+    // A visual-ready anchor does NOT need the old standalone scanner first.
+    // It is only an expected physical target here; ARCore confirms its pose
+    // inside the AR camera when navigation starts.
+    var routeAnchor = _activeAnchor ?? _anchorForStartNode(venue);
+
+    if (routeAnchor == null || !routeAnchor.visualPoseReady) {
       final choice = await showModalBottomSheet<String>(
         context: context,
         showDragHandle: true,
         backgroundColor: const Color(0xFF111A2E),
         builder: (sheetContext) {
+          final selected = routeAnchor;
           return SafeArea(
             top: false,
             child: Padding(
@@ -189,7 +209,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       SizedBox(width: 10),
                       Text(
-                        'CONFIRM YOUR LOCATION',
+                        'CHOOSE LOCALIZATION',
                         style: TextStyle(
                           fontWeight: FontWeight.w900,
                           letterSpacing: 0.7,
@@ -198,12 +218,16 @@ class _HomeScreenState extends State<HomeScreen> {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  const Text(
-                    'For accurate AR placement, scan a location QR while '
-                    'standing at that physical marker. Manual preview still '
-                    'works, but the whole route may shift if your real start '
-                    'does not match the selected map point.',
-                    style: TextStyle(
+                  Text(
+                    selected == null
+                        ? 'This start has no visual-ready QR. Use the legacy '
+                            'scanner to choose a known location, or continue '
+                            'with manual preview.'
+                        : 'The selected QR is a legacy position-only anchor. '
+                            'It can identify the location, but AR still needs '
+                            'manual direction calibration until this anchor is '
+                            're-mapped with visual facing.',
+                    style: const TextStyle(
                       color: Colors.white70,
                       height: 1.45,
                     ),
@@ -215,7 +239,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       onPressed: () =>
                           Navigator.of(sheetContext).pop('scan'),
                       icon: const Icon(Icons.qr_code_scanner_rounded),
-                      label: const Text('SCAN LOCATION'),
+                      label: const Text('SCAN LEGACY LOCATION'),
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -240,10 +264,13 @@ class _HomeScreenState extends State<HomeScreen> {
       if (choice == 'scan') {
         final confirmed = await _scanAnchor();
         if (!mounted || !confirmed) return;
+        routeAnchor = _activeAnchor;
+      } else {
+        routeAnchor = _activeAnchor;
       }
     }
 
-    final startNodeId = _activeAnchor?.nodeId ?? _startNodeId;
+    final startNodeId = routeAnchor?.nodeId ?? _startNodeId;
     if (startNodeId == null) return;
 
     try {
@@ -261,7 +288,7 @@ class _HomeScreenState extends State<HomeScreen> {
             venue: venue,
             destination: destination,
             initialRoute: route,
-            initialAnchor: _activeAnchor,
+            initialAnchor: routeAnchor,
           ),
         ),
       );
@@ -349,7 +376,10 @@ class _HomeScreenState extends State<HomeScreen> {
         content: Text(
           anchor == null
               ? 'Start point set: ${node.label}'
-              : 'Test location set from anchor: ${node.label}',
+              : anchor.visualPoseReady
+                  ? 'AR start target: ${node.label}. The AR camera will '
+                      'confirm its QR pose.'
+                  : 'Legacy AR start target: ${node.label}.',
         ),
       ),
     );
@@ -452,7 +482,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     label: Text(
                       kind == 'QR anchor'
-                          ? 'TEST AS CURRENT LOCATION'
+                          ? 'USE AS AR START'
                           : 'SET AS START POINT',
                     ),
                   ),
