@@ -486,15 +486,21 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
   }
 
 
-  double _qrOutwardFacingDegrees(ArPose pose) {
-    // Native emits a yaw-only quaternion relative to the mapping frame.
-    // Camera forward points toward the QR mounting surface, while the QR
-    // poster's outward normal points back toward the person scanning it.
-    final cameraFacing =
-        2.0 * math.atan2(pose.qy, pose.qw) * 180.0 / math.pi;
-    var outward = (cameraFacing + 180.0) % 360.0;
-    if (outward < 0) outward += 360.0;
-    return outward;
+  int _nearestPointIndex(double xMeters, double yMeters) {
+    var bestIndex = 0;
+    var bestDistanceSquared = double.infinity;
+
+    for (var i = 0; i < _points.length; i++) {
+      final dx = _points[i].xMeters - xMeters;
+      final dy = _points[i].yMeters - yMeters;
+      final distanceSquared = dx * dx + dy * dy;
+      if (distanceSquared < bestDistanceSquared) {
+        bestDistanceSquared = distanceSquared;
+        bestIndex = i;
+      }
+    }
+
+    return bestIndex;
   }
 
   Future<void> _addMarker(String type) async {
@@ -681,17 +687,16 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     final label = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Create visual QR anchor'),
+        title: const Text('Place visual QR anchor'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Move the rear camera as close as practical to the future '
-              'QR center on the wall, facing the wall squarely. The camera '
-              'position becomes the QR venue coordinate, and the opposite '
-              'viewing direction becomes the poster\'s outward orientation. '
-              'Mount the QR at that same spot and orientation later.',
+              'After naming this anchor, the live AR camera opens. Aim the '
+              'center target at the real vertical wall where the 16 cm QR '
+              'will be mounted, then tap PLACE QR. ARCore stores the wall hit '
+              'position and outward-facing direction directly.',
               style: TextStyle(height: 1.4),
             ),
             const SizedBox(height: 16),
@@ -714,14 +719,15 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
             onPressed: () => Navigator.of(dialogContext).pop(),
             child: const Text('Cancel'),
           ),
-          FilledButton(
+          FilledButton.icon(
             onPressed: () {
               final value = draftLabel.trim();
               if (value.isNotEmpty) {
                 Navigator.of(dialogContext).pop(value);
               }
             },
-            child: const Text('Add'),
+            icon: const Icon(Icons.view_in_ar_rounded),
+            label: const Text('Open AR placement'),
           ),
         ],
       ),
@@ -731,14 +737,764 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       return;
     }
 
-    final markerPoint = _points.last;
-    final markerPointIndex = _points.length - 1;
-    final anchorFacingDegrees = _qrOutwardFacingDegrees(_pose);
+    VisualQrPlacement? placement;
+    try {
+      placement = await _ar.placeVisualQrAnchor();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _message = 'Could not place visual QR: $error';
+      });
+      return;
+    }
 
+    if (!mounted || placement == null || _points.isEmpty) return;
+
+    final markerPointIndex = _nearestPointIndex(
+      placement.rightMeters,
+      placement.forwardMeters,
+    );
     final idBase = label
         .toLowerCase()
         .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
-        .replaceAll(RegExp(r'^_+|_+$'), '');
+        .replaceAll(RegExp(r'^_+|_+
+  Future<void> _finishAndSave() async {
+    if (!_recording || _points.length < 2 || _distanceMeters < 0.5) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Walk at least about 0.5 m before saving.'),
+        ),
+      );
+      return;
+    }
+
+    final rawPointCount = _points.length;
+    final simplified = const MappingPathSimplifier().simplify(
+      points: _points,
+      markers: _markers,
+    );
+
+    final now = DateTime.now();
+    final session = MappingSession(
+      id: 'spatial_floor_${_floor}_${now.millisecondsSinceEpoch}',
+      venueId: widget.venue.id,
+      venueName: widget.venue.name,
+      floor: _floor,
+      createdAt: now,
+      startAnchorId: _startAnchor?.id,
+      startAnchorLabel: _startAnchor?.label,
+      originHeadingDegrees: 0,
+      stepLengthMeters: 0,
+      source: 'arcore_spatial',
+      points: simplified.points,
+      markers: simplified.markers,
+      rawPointCount: rawPointCount,
+      trackingInterruptions: _trackingInterruptions,
+      rejectedPoseJumps: _rejectedPoseJumps,
+    );
+
+    try {
+      final path = await _storage.save(session);
+      final prettyJson = const JsonEncoder.withIndent(' ').convert(
+        session.toJson(),
+      );
+
+      if (_arStarted) {
+        await _ar.stop();
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _arming = false;
+        _awaitingFreshOrigin = false;
+        _recording = false;
+        _trackingInterrupted = false;
+        _arStarted = false;
+        _trackingState = 'STOPPED';
+        _savedPath = path;
+        _savedJson = prettyJson;
+        _pose = const ArPose(tracking: 'STOPPED');
+        _message =
+            'Spatial mapping saved: $rawPointCount raw samples → '
+            '${simplified.points.length} saved geometry points. '
+            'Review quality before applying or merging.';
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('ARCore spatial mapping saved offline.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _message = 'Could not save mapping: $error');
+    }
+  }
+
+  Future<void> _discardRecording() async {
+    if (_arStarted) {
+      await _ar.stop();
+    }
+    if (!mounted) return;
+    setState(() {
+      _arming = false;
+      _awaitingFreshOrigin = false;
+      _recording = false;
+      _trackingInterrupted = false;
+      _arStarted = false;
+      _trackingState = 'STOPPED';
+      _trackingInterruptions = 0;
+      _rejectedPoseJumps = 0;
+      _consecutiveRejectedPoseJumps = 0;
+      _recordedDistanceMeters = 0;
+      _points.clear();
+      _markers.clear();
+      _pose = const ArPose(tracking: 'STOPPED');
+      _message = 'Spatial recording discarded.';
+    });
+  }
+
+  Future<void> _copyJson() async {
+    final value = _savedJson;
+    if (value == null) return;
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Mapping JSON copied.')),
+    );
+  }
+
+  Future<void> _openLegacyMapper() async {
+    if (_mappingActive || _starting) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => MappingScreen(
+          venue: widget.venue,
+          initialAnchor: _startAnchor,
+        ),
+      ),
+    );
+  }
+
+  Widget _markerButton(String type, IconData icon) {
+    return OutlinedButton.icon(
+      onPressed: (!_recording || _trackingInterrupted || _points.isEmpty)
+          ? null
+          : () => _addMarker(type),
+      icon: Icon(icon, size: 18),
+      label: Text(
+        switch (type) {
+          'destination' => 'Destination',
+          'stairs' => 'Stairs',
+          'anchor' => 'QR anchor',
+          _ => 'Waypoint',
+        },
+      ),
+    );
+  }
+
+  BoxDecoration _cardDecoration() {
+    return BoxDecoration(
+      color: const Color(0xFF111A2E),
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: const Color(0x223B82F6)),
+    );
+  }
+
+  Widget _section(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 4, bottom: 8),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: Colors.white54,
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 1.2,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          'Spatial Mapper',
+          style: TextStyle(fontWeight: FontWeight.w900),
+        ),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(18, 8, 18, 32),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF182641), Color(0xFF111A2E)],
+              ),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: const Color(0x3372A7FF)),
+            ),
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'ARCORE SPATIAL MAPPING',
+                  style: TextStyle(
+                    color: Color(0xFF9DBEF7),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.1,
+                  ),
+                ),
+                SizedBox(height: 10),
+                Text(
+                  'Walk the real path once.',
+                  style: TextStyle(
+                    fontSize: 25,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                SizedBox(height: 8),
+                Text(
+                  'ARCore records the phone position directly in meters. '
+                  'No compass heading or step-length integration is used to '
+                  'shape a spatial recording.',
+                  style: TextStyle(color: Colors.white60, height: 1.45),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          _section('START / FLOOR'),
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String?>(
+                  key: ValueKey(_startAnchor?.id),
+                  initialValue: _startAnchor?.id,
+                  decoration: const InputDecoration(
+                    labelText: 'Start anchor',
+                    prefixIcon: Icon(Icons.qr_code_2_rounded),
+                  ),
+                  items: [
+                    const DropdownMenuItem<String?>(
+                      value: null,
+                      child: Text('No QR anchor / local origin'),
+                    ),
+                    for (final anchor in widget.venue.anchors)
+                      DropdownMenuItem<String?>(
+                        value: anchor.id,
+                        child: Text(anchor.label),
+                      ),
+                  ],
+                  onChanged: _mappingActive || _starting
+                      ? null
+                      : (value) {
+                          if (value == null) {
+                            setState(() => _startAnchor = null);
+                            return;
+                          }
+                          final anchor = widget.venue.anchors.firstWhere(
+                            (item) => item.id == value,
+                          );
+                          setState(() {
+                            _startAnchor = anchor;
+                            _floor = anchor.floor;
+                          });
+                        },
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton.filledTonal(
+                tooltip: 'Scan start anchor',
+                onPressed: _mappingActive || _starting ? null : _scanStartAnchor,
+                icon: const Icon(Icons.qr_code_scanner_rounded),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          DropdownButtonFormField<int>(
+            key: ValueKey(_floor),
+            initialValue: _floor,
+            decoration: const InputDecoration(
+              labelText: 'Floor layer',
+              prefixIcon: Icon(Icons.layers_rounded),
+            ),
+            items: [
+              for (final floor in widget.venue.floors)
+                DropdownMenuItem(
+                  value: floor,
+                  child: Text('Floor $floor'),
+                ),
+              if (!widget.venue.floors.contains(_floor))
+                DropdownMenuItem(
+                  value: _floor,
+                  child: Text('Floor $_floor'),
+                ),
+            ],
+            onChanged: _mappingActive || _starting
+                ? null
+                : (value) {
+                    if (value != null) setState(() => _floor = value);
+                  },
+          ),
+          const SizedBox(height: 18),
+          _section('SPATIAL TRACKING'),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: _cardDecoration(),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: _Metric(
+                        label: 'ARCORE',
+                        value: _availability.replaceAll('_', ' '),
+                      ),
+                    ),
+                    Expanded(
+                      child: _Metric(
+                        label: 'TRACKING',
+                        value: _trackingState.replaceAll('_', ' '),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _Metric(
+                        label: 'DISTANCE',
+                        value: '${_distanceMeters.toStringAsFixed(1)} m',
+                      ),
+                    ),
+                    Expanded(
+                      child: _Metric(
+                        label: 'SAMPLES',
+                        value: '${_points.length}',
+                      ),
+                    ),
+                    Expanded(
+                      child: _Metric(
+                        label: 'MARKERS',
+                        value: '${_markers.length}',
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _Metric(
+                        label: 'QUALITY',
+                        value: _liveQualityLabel,
+                      ),
+                    ),
+                    Expanded(
+                      child: _Metric(
+                        label: 'PAUSES',
+                        value: '$_trackingInterruptions',
+                      ),
+                    ),
+                    Expanded(
+                      child: _Metric(
+                        label: 'JUMPS BLOCKED',
+                        value: '$_rejectedPoseJumps',
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'X ${_pose.x.toStringAsFixed(2)} m  •  '
+                        'Forward ${_pose.forward.toStringAsFixed(2)} m  •  '
+                        'Up ${_pose.y.toStringAsFixed(2)} m',
+                        style: const TextStyle(
+                          color: Colors.white60,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Height Δ ${_heightDeltaMeters.toStringAsFixed(2)} m  •  '
+                        'Position geometry: ARCore',
+                        style: const TextStyle(
+                          color: Colors.white38,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  height: 310,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0E1729),
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: CustomPaint(
+                      painter: _SpatialPathPainter(
+                        points: List<MappingPoint>.unmodifiable(_points),
+                        markers: List<MappingMarker>.unmodifiable(_markers),
+                        current: Offset(_pose.x, _pose.forward),
+                      ),
+                      child: const SizedBox.expand(),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Top-down position trace · turning in place rotates the '
+                  'camera but does not create a path; physically walking a curve does.',
+                  style: TextStyle(color: Colors.white38, fontSize: 11),
+                ),
+                if (_message != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    _message!,
+                    style: const TextStyle(
+                      color: Color(0xFFF9D976),
+                      fontSize: 11,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 14),
+                if (!_mappingActive)
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _starting ? null : _startSpatialRecording,
+                      icon: _starting
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.view_in_ar_rounded),
+                      label: Text(
+                        _starting
+                            ? 'STARTING ARCORE...'
+                            : 'START SPATIAL MAPPING',
+                      ),
+                    ),
+                  )
+                else if (!_recording) ...[
+                  const Text(
+                    'DO NOT WALK YET. Mapping begins only after ARCore has a '
+                    'stable visual lock and the local origin is reset.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Color(0xFFF9D976),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _discardRecording,
+                      icon: const Icon(Icons.close_rounded),
+                      label: const Text('CANCEL'),
+                    ),
+                  ),
+                ] else ...[
+                  Text(
+                    _trackingInterrupted
+                        ? 'STOP WALKING until tracking recovers.'
+                        : 'Recording is live. Walk naturally and add semantic '
+                            'markers only at real locations.',
+                    style: TextStyle(
+                      color: _trackingInterrupted
+                          ? const Color(0xFFF9D976)
+                          : Colors.white54,
+                      fontSize: 11,
+                      fontWeight: _trackingInterrupted
+                          ? FontWeight.w800
+                          : FontWeight.normal,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _markerButton('waypoint', Icons.add_road_rounded),
+                      _markerButton('destination', Icons.flag_rounded),
+                      _markerButton('stairs', Icons.stairs_rounded),
+                      _markerButton('anchor', Icons.qr_code_2_rounded),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: _discardRecording,
+                          icon: const Icon(Icons.delete_outline_rounded),
+                          label: const Text('DISCARD'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 2,
+                        child: FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _green,
+                            foregroundColor: Colors.black,
+                          ),
+                          onPressed: _trackingInterrupted
+                              ? null
+                              : _finishAndSave,
+                          icon: const Icon(Icons.save_rounded),
+                          label: const Text('FINISH & SAVE'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (_savedPath != null) ...[
+            const SizedBox(height: 18),
+            _section('SAVED OFFLINE'),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0x143DDC97),
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: const Color(0x333DDC97)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.check_circle_rounded, color: _green),
+                      SizedBox(width: 8),
+                      Text(
+                        'ARCore mapping saved',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  SelectableText(
+                    _savedPath!,
+                    style: const TextStyle(
+                      color: Colors.white54,
+                      fontSize: 10,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: _copyJson,
+                    icon: const Icon(Icons.copy_rounded),
+                    label: const Text('Copy mapping JSON'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 18),
+          _section('LEGACY / DEBUG'),
+          OutlinedButton.icon(
+            onPressed: _mappingActive || _starting ? null : _openLegacyMapper,
+            icon: const Icon(Icons.directions_walk_rounded),
+            label: const Text('OPEN STEP + COMPASS MAPPER'),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Legacy mapping is kept only for fallback/testing. New venue '
+            'geometry should be captured with ARCore Spatial Mapping.',
+            style: TextStyle(
+              color: Colors.white38,
+              fontSize: 11,
+              height: 1.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Metric extends StatelessWidget {
+  const _Metric({
+    required this.label,
+    required this.value,
+  });
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 3),
+      child: Column(
+        children: [
+          Text(
+            value,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white38,
+              fontSize: 8,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.6,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SpatialPathPainter extends CustomPainter {
+  const _SpatialPathPainter({
+    required this.points,
+    required this.markers,
+    required this.current,
+  });
+
+  final List<MappingPoint> points;
+  final List<MappingMarker> markers;
+  final Offset current;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final grid = Paint()
+      ..color = const Color(0x123A4B68)
+      ..strokeWidth = 1;
+
+    for (var x = 20.0; x < size.width; x += 40) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), grid);
+    }
+    for (var y = 20.0; y < size.height; y += 40) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), grid);
+    }
+
+    final worldPoints = <Offset>[
+      Offset.zero,
+      ...points.map((p) => Offset(p.xMeters, p.yMeters)),
+      current,
+    ];
+
+    var minX = worldPoints.first.dx;
+    var maxX = worldPoints.first.dx;
+    var minY = worldPoints.first.dy;
+    var maxY = worldPoints.first.dy;
+
+    for (final p in worldPoints.skip(1)) {
+      minX = math.min(minX, p.dx);
+      maxX = math.max(maxX, p.dx);
+      minY = math.min(minY, p.dy);
+      maxY = math.max(maxY, p.dy);
+    }
+
+    const pad = 40.0;
+    final spanX = math.max(2.0, maxX - minX);
+    final spanY = math.max(2.0, maxY - minY);
+    final scale = math.min(
+      (size.width - pad * 2) / spanX,
+      (size.height - pad * 2) / spanY,
+    );
+
+    final centerWorld = Offset((minX + maxX) / 2, (minY + maxY) / 2);
+    final centerScreen = Offset(size.width / 2, size.height / 2);
+
+    Offset project(Offset p) {
+      final dx = (p.dx - centerWorld.dx) * scale;
+      final dy = (p.dy - centerWorld.dy) * scale;
+      return Offset(centerScreen.dx + dx, centerScreen.dy - dy);
+    }
+
+    if (points.length > 1) {
+      final path = Path();
+      final first = project(Offset(points.first.xMeters, points.first.yMeters));
+      path.moveTo(first.dx, first.dy);
+      for (final point in points.skip(1)) {
+        final p = project(Offset(point.xMeters, point.yMeters));
+        path.lineTo(p.dx, p.dy);
+      }
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = const Color(0xFF56C7FF)
+          ..strokeWidth = 5
+          ..style = PaintingStyle.stroke
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round,
+      );
+    }
+
+    final origin = project(Offset.zero);
+    canvas.drawCircle(origin, 7, Paint()..color = const Color(0xFF3DDC97));
+
+    for (final marker in markers) {
+      final p = project(Offset(marker.xMeters, marker.yMeters));
+      final color = switch (marker.type) {
+        'destination' => const Color(0xFFFF6B8A),
+        'stairs' => const Color(0xFFF9C74F),
+        'anchor' => const Color(0xFF3DDC97),
+        _ => const Color(0xFFCBA6F7),
+      };
+      canvas.drawCircle(p, 7, Paint()..color = color);
+    }
+
+    final currentPoint = project(current);
+    canvas.drawCircle(
+      currentPoint,
+      9,
+      Paint()..color = const Color(0xFFFF6B8A),
+    );
+    canvas.drawCircle(
+      currentPoint,
+      14,
+      Paint()
+        ..color = const Color(0x66FF6B8A)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _SpatialPathPainter oldDelegate) => true;
+}
+), '');
 
     setState(() {
       _markers.add(
@@ -747,13 +1503,18 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
           label: label,
           type: 'anchor',
           floor: _floor,
-          xMeters: markerPoint.xMeters,
-          yMeters: markerPoint.yMeters,
-          upMeters: markerPoint.upMeters,
+          xMeters: placement!.rightMeters,
+          yMeters: placement.forwardMeters,
+          upMeters: placement.upMeters,
           pointIndex: markerPointIndex,
-          anchorFacingDegrees: anchorFacingDegrees,
+          anchorFacingDegrees: placement.facingDegrees,
         ),
       );
+      _message =
+          'Visual QR placed on a tracked vertical wall at '
+          'R ${placement.rightMeters.toStringAsFixed(2)} m / '
+          'F ${placement.forwardMeters.toStringAsFixed(2)} m. '
+          'Mount the physical 16 cm QR at that exact wall position.';
     });
   }
 
