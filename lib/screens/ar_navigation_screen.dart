@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../models/anchor_point.dart';
 import '../models/destination.dart';
@@ -10,6 +13,7 @@ import '../models/venue.dart';
 import '../services/ar_pose_service.dart';
 import '../services/anchor_codec.dart';
 import '../services/route_engine.dart';
+import '../services/visual_anchor_spec.dart';
 import 'qr_anchor_scanner_screen.dart';
 
 class ArNavigationResult {
@@ -88,6 +92,15 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
           return;
         }
 
+        if (pose.tracking == 'VISUAL_ANCHOR_LOCKED') {
+          setState(() {
+            _status =
+                'Visual QR locked. Position + direction are anchored to the '
+                'physical marker.';
+          });
+          return;
+        }
+
         if (pose.tracking == 'ARRIVED') {
           setState(() {
             _arrived = true;
@@ -124,11 +137,36 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
     });
   }
 
-  List<Map<String, dynamic>> _routeLocalPoints() {
+  List<Map<String, dynamic>> _routeLocalPoints({
+    AnchorPoint? visualAnchor,
+  }) {
     final nodes = _route.nodes;
     if (nodes.length < 2) return const [];
 
     final start = nodes.first;
+
+    if (visualAnchor != null &&
+        visualAnchor.visualPoseReady &&
+        visualAnchor.nodeId == start.id) {
+      final heading =
+          visualAnchor.headingDegrees! * math.pi / 180.0;
+      final forwardX = math.sin(heading);
+      final forwardY = -math.cos(heading);
+      final rightX = math.cos(heading);
+      final rightY = math.sin(heading);
+
+      return [
+        for (final node in nodes)
+          {
+            'right': (node.x - start.x) * rightX +
+                (node.y - start.y) * rightY,
+            'forward': (node.x - start.x) * forwardX +
+                (node.y - start.y) * forwardY,
+            'label': node.label,
+            'semantic': node.type != 'path',
+          },
+      ];
+    }
 
     // Use a short PREFIX trajectory, not one fragile start->sample vector.
     // This mirrors native Pass 8.5 calibration: both sides estimate the
@@ -211,10 +249,42 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
     ];
   }
 
+  Future<Uint8List?> _visualAnchorPng(AnchorPoint anchor) async {
+    final payload = _anchorCodec.encode(
+      venue: widget.venue,
+      anchor: anchor,
+    );
+    final painter = QrPainter(
+      data: payload,
+      version: QrVersions.auto,
+      errorCorrectionLevel: QrErrorCorrectLevel.L,
+      gapless: true,
+      eyeStyle: const QrEyeStyle(
+        eyeShape: QrEyeShape.square,
+        color: Color(0xFF000000),
+      ),
+      dataModuleStyle: const QrDataModuleStyle(
+        dataModuleShape: QrDataModuleShape.square,
+        color: Color(0xFF000000),
+      ),
+    );
+    final bytes = await painter.toImageData(
+      VisualAnchorSpec.renderPixels.toDouble(),
+      format: ui.ImageByteFormat.png,
+    );
+    return bytes?.buffer.asUint8List();
+  }
+
   Future<bool> _startNavigation() async {
     if (!mounted) return false;
 
-    final points = _routeLocalPoints();
+    final visualAnchor = _anchor != null &&
+            _anchor!.visualPoseReady &&
+            _route.nodes.isNotEmpty &&
+            _route.nodes.first.id == _anchor!.nodeId
+        ? _anchor
+        : null;
+    final points = _routeLocalPoints(visualAnchor: visualAnchor);
     if (points.length < 2) {
       setState(() {
         _status = 'This route does not contain enough spatial points.';
@@ -235,23 +305,33 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
     }
 
     try {
+      final visualPng =
+          visualAnchor == null ? null : await _visualAnchorPng(visualAnchor);
       final result = await _ar.startNavigation(
         destinationName: widget.destination.name,
         startLabel: _route.nodes.first.label,
         anchorLocalized: _anchor != null,
         points: points,
+        visualAnchorPng: visualPng,
+        visualAnchorWidthMeters: visualAnchor == null
+            ? null
+            : VisualAnchorSpec.qrWidthMeters,
+        visualAnchorLabel: visualAnchor?.label,
       );
       if (!mounted) return false;
 
       setState(() {
         _status = switch (result) {
-          'STARTED' => _anchor == null
-              ? 'Manual preview: stand exactly at the selected map start, '
-                  'tap SET START, walk 2–3 m along the first real path, then '
-                  'LOCK DIRECTION.'
-              : 'Location confirmed at ${_anchor!.label}. Stay at the physical '
-                  'QR marker, set that anchor position, walk 1–2 m along the '
-                  'next real path, then LOCK DIRECTION.',
+          'STARTED' => visualAnchor != null
+              ? 'Visual localization ready. Point the AR camera at the '
+                  '16 cm ${visualAnchor.label} QR and hold it steady until '
+                  'the app locks position + direction.'
+              : _anchor == null
+                  ? 'Manual preview: stand exactly at the selected map start, '
+                      'tap SET START, walk 2–3 m along the first real path, then '
+                      'LOCK DIRECTION.'
+                  : 'This anchor is position-only. Use manual alignment now, '
+                      'or re-map it as a visual QR anchor for one-scan pose.',
           'INSTALL_REQUESTED' =>
             'Install/update Google Play Services for AR, then retry.',
           _ => 'ARCore: $result',
@@ -438,10 +518,9 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
                 ),
                 const SizedBox(height: 22),
                 const Text(
-                  'QR localization fixes translation by tying ARCore to a '
-                  'known venue coordinate. A short 2–3 m calibration walk still '
-                  'fixes horizontal direction. Without a QR, manual preview '
-                  'assumes you are standing exactly at the selected start.',
+                  'Visual-ready QR anchors localize both translation and '
+                  'horizontal direction directly in AR. Legacy anchors fall '
+                  'back to the manual 2–3 m direction calibration.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Colors.white38,
