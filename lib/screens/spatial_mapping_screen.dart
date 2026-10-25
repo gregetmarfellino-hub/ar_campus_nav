@@ -907,7 +907,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         switch (type) {
           'destination' => 'Destination',
           'stairs' => 'Stairs',
-          'anchor' => 'QR anchor',
+          'anchor' => 'Anchor options',
           _ => 'Waypoint',
         },
       ),
@@ -1265,7 +1265,14 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                       _markerButton('waypoint', Icons.add_road_rounded),
                       _markerButton('destination', Icons.flag_rounded),
                       _markerButton('stairs', Icons.stairs_rounded),
-                      _markerButton('anchor', Icons.qr_code_2_rounded),
+                      FilledButton.tonalIcon(
+                        onPressed: _trackingInterrupted
+                            ? null
+                            : _addNewAnchorMarker,
+                        icon: const Icon(Icons.view_in_ar_rounded, size: 18),
+                        label: const Text('PLACE QR ON WALL'),
+                      ),
+                      _markerButton('anchor', Icons.link_rounded),
                     ],
                   ),
                   const SizedBox(height: 12),
