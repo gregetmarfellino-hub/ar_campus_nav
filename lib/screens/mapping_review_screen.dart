@@ -171,7 +171,10 @@ class _MappingReviewScreenState extends State<MappingReviewScreen> {
   Widget build(BuildContext context) {
     final session = widget.session;
     final canMerge =
-        !_loading && _document != null && _document!.usesRecordedMeters;
+        !_loading &&
+        _document != null &&
+        _document!.usesRecordedMeters &&
+        !session.isSpatial;
     final alreadyApplied =
         _document?.appliedSessionIds.contains(session.id) ?? false;
 
@@ -295,11 +298,15 @@ class _MappingReviewScreenState extends State<MappingReviewScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            canMerge
-                ? 'Merge aligns this recording to its existing start QR anchor '
-                    'and keeps the current venue geometry.'
-                : 'Apply one recording first. That establishes the real '
-                    'meter-based coordinate frame used by later merges.',
+            session.isSpatial
+                ? 'Spatial recordings are not merged from one QR point alone. '
+                    'A second known point or another explicit orientation '
+                    'reference is required so the venue cannot rotate silently.'
+                : canMerge
+                    ? 'Merge aligns this recording to its existing start QR '
+                        'anchor and keeps the current venue geometry.'
+                    : 'Apply one recording first. That establishes the real '
+                        'meter-based coordinate frame used by later merges.',
             style: const TextStyle(
               color: Colors.white38,
               fontSize: 10,
