@@ -228,10 +228,17 @@ class VenueMappingService {
     final usedAnchorIds = <String>{};
     final usedDestinationIds = <String>{};
 
-    final startPoint = _worldPoint(
-      session.points.first,
-      transform,
-    );
+    final startGroup = markerGroups[selected.first] ?? const <MappingMarker>[];
+    final startVisualAnchor = _visualAnchorMarker(startGroup);
+    final startPoint = startVisualAnchor == null
+        ? _worldPoint(
+            session.points.first,
+            transform,
+          )
+        : transform.applyPoint(
+            startVisualAnchor.xMeters,
+            startVisualAnchor.yMeters,
+          );
 
     nodes.add(
       NavNode(
@@ -260,9 +267,8 @@ class VenueMappingService {
     }
 
     // Semantic markers at the first recorded point belong to the start node.
-    // This is how a brand-new venue can define its very first visual QR anchor
-    // without walking away from the entrance first.
-    final startGroup = markerGroups[selected.first] ?? const <MappingMarker>[];
+    // A visual QR marker can carry an exact wall hit position that differs
+    // from the phone's walking sample; the start node above already uses it.
     for (final marker in startGroup) {
       if (marker.type == 'destination' || marker.type == 'stairs') {
         final id = _uniqueId(
@@ -316,11 +322,17 @@ class VenueMappingService {
 
     for (final index in selected.skip(1)) {
       final point = session.points[index];
-      final world = _worldPoint(
-        point,
-        transform,
-      );
       final group = markerGroups[index] ?? const <MappingMarker>[];
+      final visualAnchor = _visualAnchorMarker(group);
+      final world = visualAnchor == null
+          ? _worldPoint(
+              point,
+              transform,
+            )
+          : transform.applyPoint(
+              visualAnchor.xMeters,
+              visualAnchor.yMeters,
+            );
       final primary = _primaryMarker(group);
 
       MappingMarker? referenceMarker;
@@ -582,6 +594,15 @@ class VenueMappingService {
       vector.$1,
       vector.$2,
     );
+  }
+
+  MappingMarker? _visualAnchorMarker(List<MappingMarker> markers) {
+    for (final marker in markers) {
+      if (marker.type == 'anchor' && marker.anchorFacingDegrees != null) {
+        return marker;
+      }
+    }
+    return null;
   }
 
   MappingMarker? _primaryMarker(List<MappingMarker> markers) {
