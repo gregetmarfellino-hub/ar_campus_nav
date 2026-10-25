@@ -110,6 +110,7 @@ class ArPoseService {
     Uint8List? visualAnchorPng,
     double? visualAnchorWidthMeters,
     String? visualAnchorLabel,
+    double? visualAnchorRouteOffsetDegrees,
   }) async {
     if (!platformSupported) return 'ANDROID_ONLY';
     return await _native.invokeMethod<String>(
@@ -125,6 +126,9 @@ class ArPoseService {
               'visual_anchor_width_m': visualAnchorWidthMeters,
             if (visualAnchorLabel != null)
               'visual_anchor_label': visualAnchorLabel,
+            if (visualAnchorRouteOffsetDegrees != null)
+              'visual_anchor_route_offset_deg':
+                  visualAnchorRouteOffsetDegrees,
           },
         ) ??
         'UNKNOWN';
