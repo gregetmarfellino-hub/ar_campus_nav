@@ -824,7 +824,7 @@ class ArCoreTrackingEngine(
             ) +
                 " • ${"%.1f".format(fit.displacementMeters)} m sample • " +
                 "${(fit.straightness * 100f).toInt()}% straight.\\n" +
-                "Transform locked. Follow the green target.",
+                "ARCore anchor locked. Follow the green target.",
         )
     }
 
