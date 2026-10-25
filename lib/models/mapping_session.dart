@@ -84,6 +84,7 @@ class MappingMarker {
     required this.pointIndex,
     this.upMeters = 0,
     this.referenceAnchorId,
+    this.anchorFacingDegrees,
   });
 
   final String id;
@@ -99,6 +100,10 @@ class MappingMarker {
   /// scanned a known location QR instead of creating a new anchor.
   final String? referenceAnchorId;
 
+  /// Mapping-local heading of the QR poster's outward-facing normal.
+  /// Captured only when the mapper explicitly records QR installation facing.
+  final double? anchorFacingDegrees;
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'label': label,
@@ -110,6 +115,8 @@ class MappingMarker {
         'point_index': pointIndex,
         if (referenceAnchorId != null)
           'reference_anchor_id': referenceAnchorId,
+        if (anchorFacingDegrees != null)
+          'anchor_facing_degrees': anchorFacingDegrees,
       };
 
   factory MappingMarker.fromJson(Map<String, dynamic> json) {
@@ -123,6 +130,8 @@ class MappingMarker {
       upMeters: (json['up_m'] as num?)?.toDouble() ?? 0,
       pointIndex: (json['point_index'] as num).toInt(),
       referenceAnchorId: json['reference_anchor_id'] as String?,
+      anchorFacingDegrees:
+          (json['anchor_facing_degrees'] as num?)?.toDouble(),
     );
   }
 }
