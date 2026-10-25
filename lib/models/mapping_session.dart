@@ -83,6 +83,7 @@ class MappingMarker {
     required this.yMeters,
     required this.pointIndex,
     this.upMeters = 0,
+    this.referenceAnchorId,
   });
 
   final String id;
@@ -94,6 +95,10 @@ class MappingMarker {
   final double upMeters;
   final int pointIndex;
 
+  /// Existing venue anchor represented by this marker, when the mapper
+  /// scanned a known location QR instead of creating a new anchor.
+  final String? referenceAnchorId;
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'label': label,
@@ -103,6 +108,8 @@ class MappingMarker {
         'y_m': yMeters,
         'up_m': upMeters,
         'point_index': pointIndex,
+        if (referenceAnchorId != null)
+          'reference_anchor_id': referenceAnchorId,
       };
 
   factory MappingMarker.fromJson(Map<String, dynamic> json) {
@@ -115,6 +122,7 @@ class MappingMarker {
       yMeters: (json['y_m'] as num).toDouble(),
       upMeters: (json['up_m'] as num?)?.toDouble() ?? 0,
       pointIndex: (json['point_index'] as num).toInt(),
+      referenceAnchorId: json['reference_anchor_id'] as String?,
     );
   }
 }
