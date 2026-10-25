@@ -137,41 +137,16 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
     });
   }
 
-  List<Map<String, dynamic>> _routeLocalPoints({
-    AnchorPoint? visualAnchor,
-  }) {
+  ({
+    double forwardX,
+    double forwardY,
+    double rightX,
+    double rightY,
+  })? _routeFrameBasis() {
     final nodes = _route.nodes;
-    if (nodes.length < 2) return const [];
+    if (nodes.length < 2) return null;
 
     final start = nodes.first;
-
-    if (visualAnchor != null &&
-        visualAnchor.visualPoseReady &&
-        visualAnchor.nodeId == start.id) {
-      final heading =
-          visualAnchor.headingDegrees! * math.pi / 180.0;
-      final forwardX = math.sin(heading);
-      final forwardY = -math.cos(heading);
-      final rightX = math.cos(heading);
-      final rightY = math.sin(heading);
-
-      return [
-        for (final node in nodes)
-          {
-            'right': (node.x - start.x) * rightX +
-                (node.y - start.y) * rightY,
-            'forward': (node.x - start.x) * forwardX +
-                (node.y - start.y) * forwardY,
-            'label': node.label,
-            'semantic': node.type != 'path',
-          },
-      ];
-    }
-
-    // Use a short PREFIX trajectory, not one fragile start->sample vector.
-    // This mirrors native Pass 8.5 calibration: both sides estimate the
-    // dominant initial direction from multiple points, so small mapping wobble
-    // does not rotate a long replay by several meters.
     const preferredFitMeters = 2.5;
     final prefix = <({double x, double y})>[
       (x: start.x, y: start.y),
@@ -195,7 +170,7 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
     final endDx = end.x - start.x;
     final endDy = end.y - start.y;
     final endDistance = math.sqrt(endDx * endDx + endDy * endDy);
-    if (endDistance < 0.0001) return const [];
+    if (endDistance < 0.0001) return null;
 
     var meanX = 0.0;
     var meanY = 0.0;
@@ -224,29 +199,54 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
 
     var forwardX = math.cos(angle);
     var forwardY = math.sin(angle);
-
-    // PCA returns an unsigned axis. Point it from route start toward the
-    // beginning of the recorded route.
     if (forwardX * endDx + forwardY * endDy < 0) {
       forwardX = -forwardX;
       forwardY = -forwardY;
     }
 
-    // Right basis is 90 degrees clockwise from forward in the venue plane.
-    final rightX = -forwardY;
-    final rightY = forwardX;
+    return (
+      forwardX: forwardX,
+      forwardY: forwardY,
+      rightX: -forwardY,
+      rightY: forwardX,
+    );
+  }
+
+  List<Map<String, dynamic>> _routeLocalPoints() {
+    final nodes = _route.nodes;
+    if (nodes.length < 2) return const [];
+
+    final basis = _routeFrameBasis();
+    if (basis == null) return const [];
+    final start = nodes.first;
 
     return [
       for (final node in nodes)
         {
-          'right': (node.x - start.x) * rightX +
-              (node.y - start.y) * rightY,
-          'forward': (node.x - start.x) * forwardX +
-              (node.y - start.y) * forwardY,
+          'right': (node.x - start.x) * basis.rightX +
+              (node.y - start.y) * basis.rightY,
+          'forward': (node.x - start.x) * basis.forwardX +
+              (node.y - start.y) * basis.forwardY,
           'label': node.label,
           'semantic': node.type != 'path',
         },
     ];
+  }
+
+  double? _visualAnchorRouteOffsetDegrees(AnchorPoint anchor) {
+    if (!anchor.visualPoseReady) return null;
+    final basis = _routeFrameBasis();
+    if (basis == null) return null;
+
+    var routeHeading =
+        math.atan2(basis.forwardX, -basis.forwardY) * 180.0 / math.pi;
+    routeHeading %= 360.0;
+    if (routeHeading < 0) routeHeading += 360.0;
+
+    var delta = routeHeading - anchor.headingDegrees!;
+    while (delta > 180.0) delta -= 360.0;
+    while (delta <= -180.0) delta += 360.0;
+    return delta;
   }
 
   Future<Uint8List?> _visualAnchorPng(AnchorPoint anchor) async {
@@ -298,7 +298,7 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
             _route.nodes.first.id == _anchor!.nodeId
         ? _anchor
         : null;
-    final points = _routeLocalPoints(visualAnchor: visualAnchor);
+    final points = _routeLocalPoints();
     if (points.length < 2) {
       setState(() {
         _status = 'This route does not contain enough spatial points.';
@@ -331,6 +331,9 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
             ? null
             : VisualAnchorSpec.qrWidthMeters,
         visualAnchorLabel: visualAnchor?.label,
+        visualAnchorRouteOffsetDegrees: visualAnchor == null
+            ? null
+            : _visualAnchorRouteOffsetDegrees(visualAnchor),
       );
       if (!mounted) return false;
 
