@@ -252,15 +252,64 @@ class VenueMappingService {
           label: startAnchor.label,
           nodeId: startNodeId,
           floor: session.floor,
-          headingDegrees: startAnchor.headingDegrees ??
-              _headingAtIndex(
-                session,
-                selected.first,
-                transform,
-              ),
+          headingDegrees: startAnchor.headingDegrees,
+          visualHeadingVerified: startAnchor.visualHeadingVerified,
         ),
       );
       usedAnchorIds.add(startAnchor.id);
+    }
+
+    // Semantic markers at the first recorded point belong to the start node.
+    // This is how a brand-new venue can define its very first visual QR anchor
+    // without walking away from the entrance first.
+    final startGroup = markerGroups[selected.first] ?? const <MappingMarker>[];
+    for (final marker in startGroup) {
+      if (marker.type == 'destination' || marker.type == 'stairs') {
+        final id = _uniqueId(
+          'dest_${_safe(marker.id)}',
+          usedDestinationIds,
+        );
+        usedDestinationIds.add(id);
+        destinations.add(
+          Destination(
+            id: id,
+            name: marker.label,
+            nodeId: startNodeId,
+            category: marker.type == 'stairs' ? 'stairs' : 'place',
+            description: 'Recorded on Floor ${session.floor}',
+          ),
+        );
+      }
+
+      if (marker.type == 'anchor') {
+        if (reuseReferencedAnchors &&
+            marker.referenceAnchorId != null &&
+            marker.referenceAnchorId!.isNotEmpty) {
+          continue;
+        }
+
+        // If this recording already started from the same known anchor, do not
+        // duplicate it merely because an anchor marker also exists at index 0.
+        if (startAnchor != null && marker.id == startAnchor.id) {
+          continue;
+        }
+
+        final id = _uniqueId(
+          _safe(marker.id),
+          usedAnchorIds,
+        );
+        usedAnchorIds.add(id);
+        anchors.add(
+          AnchorPoint(
+            id: id,
+            label: marker.label,
+            nodeId: startNodeId,
+            floor: session.floor,
+            headingDegrees: _markerAnchorHeading(marker, transform),
+            visualHeadingVerified: marker.anchorFacingDegrees != null,
+          ),
+        );
+      }
     }
 
     var genericCounter = 1;
@@ -362,11 +411,8 @@ class VenueMappingService {
               label: marker.label,
               nodeId: nodeId,
               floor: session.floor,
-              headingDegrees: _headingAtIndex(
-                session,
-                index,
-                transform,
-              ),
+              headingDegrees: _markerAnchorHeading(marker, transform),
+              visualHeadingVerified: marker.anchorFacingDegrees != null,
             ),
           );
         }
@@ -467,6 +513,24 @@ class VenueMappingService {
     return transform.applyPoint(
       point.xMeters,
       point.yMeters,
+    );
+  }
+
+  double? _markerAnchorHeading(
+    MappingMarker marker,
+    VenueTransform2D transform,
+  ) {
+    final localHeading = marker.anchorFacingDegrees;
+    if (localHeading == null) return null;
+
+    final radians = localHeading * math.pi / 180.0;
+    final localDx = math.sin(radians);
+    final localDy = math.cos(radians);
+    final venueVector = transform.applyVector(localDx, localDy);
+
+    return VenueTransform2D.venueVectorHeadingDegrees(
+      venueVector.$1,
+      venueVector.$2,
     );
   }
 
