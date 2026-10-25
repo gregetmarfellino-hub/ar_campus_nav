@@ -74,6 +74,37 @@ class ArPose {
   }
 }
 
+class VisualQrPlacement {
+  const VisualQrPlacement({
+    required this.rightMeters,
+    required this.forwardMeters,
+    required this.upMeters,
+    required this.facingDegrees,
+  });
+
+  final double rightMeters;
+  final double forwardMeters;
+  final double upMeters;
+  final double facingDegrees;
+
+  factory VisualQrPlacement.fromMap(Map<dynamic, dynamic> map) {
+    double number(String key) {
+      final value = map[key];
+      if (value is! num) {
+        throw FormatException('Missing visual QR placement field: $key');
+      }
+      return value.toDouble();
+    }
+
+    return VisualQrPlacement(
+      rightMeters: number('right_m'),
+      forwardMeters: number('forward_m'),
+      upMeters: number('up_m'),
+      facingDegrees: number('facing_deg'),
+    );
+  }
+}
+
 class ArPoseService {
   const ArPoseService();
 
@@ -95,6 +126,16 @@ class ArPoseService {
   Future<String> start() async {
     if (!platformSupported) return 'ANDROID_ONLY';
     return await _native.invokeMethod<String>('startArTracking') ?? 'UNKNOWN';
+  }
+
+  Future<VisualQrPlacement?> placeVisualQrAnchor() async {
+    if (!platformSupported) return null;
+    final result = await _native.invokeMethod<dynamic>('placeVisualQrAnchor');
+    if (result == null) return null;
+    if (result is! Map) {
+      throw const FormatException('Invalid visual QR placement result.');
+    }
+    return VisualQrPlacement.fromMap(result);
   }
 
   Future<void> resetOrigin() async {
