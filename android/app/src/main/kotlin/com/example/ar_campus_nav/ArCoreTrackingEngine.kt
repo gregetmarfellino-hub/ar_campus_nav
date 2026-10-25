@@ -620,6 +620,8 @@ class ArCoreTrackingEngine(
         pause()
 
         val oldOverlay = navigationOverlay
+        val oldQrPlacementOverlay = qrPlacementOverlay
+        val pendingQrPlacement = qrPlacementCompletion
         val oldView = surfaceView
         navigationOverlay = null
         navigationStatusText = null
@@ -627,13 +629,21 @@ class ArCoreTrackingEngine(
         navigationAlignButton = null
         navigationReanchorButton = null
         navigationExitButton = null
+        qrPlacementOverlay = null
+        qrPlacementStatusText = null
+        qrPlacementButton = null
+        qrPlacementCompletion = null
+        qrPlacementMode = false
+        qrPlacementRequested = false
         surfaceView = null
 
         val removeViews = Runnable {
             (oldOverlay?.parent as? ViewGroup)?.removeView(oldOverlay)
+            (oldQrPlacementOverlay?.parent as? ViewGroup)?.removeView(oldQrPlacementOverlay)
             if (oldOverlay == null) {
                 (oldView?.parent as? ViewGroup)?.removeView(oldView)
             }
+            pendingQrPlacement?.invoke(null)
         }
         if (Looper.myLooper() == Looper.getMainLooper()) {
             removeViews.run()
