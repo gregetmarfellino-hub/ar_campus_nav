@@ -102,6 +102,7 @@ class ArCoreTrackingEngine(
     private var navigationVisualAnchorBitmap: Bitmap? = null
     private var navigationVisualAnchorWidthMeters = 0f
     private var navigationVisualAnchorLabel = ""
+    private var navigationVisualRouteOffsetDegrees = 0f
     private var navigationVisualAnchorEnabled = false
     private var navigationVisualSetupWarning: String? = null
     private var navigationVisualSampleCount = 0
@@ -183,6 +184,7 @@ class ArCoreTrackingEngine(
         visualAnchorPng: ByteArray? = null,
         visualAnchorWidthMeters: Float? = null,
         visualAnchorLabel: String? = null,
+        visualAnchorRouteOffsetDegrees: Float? = null,
     ): String {
         if (points.size < 2) return "ROUTE_TOO_SHORT"
 
@@ -195,6 +197,7 @@ class ArCoreTrackingEngine(
             png = visualAnchorPng,
             widthMeters = visualAnchorWidthMeters,
             label = visualAnchorLabel,
+            routeOffsetDegrees = visualAnchorRouteOffsetDegrees,
         )
         navigationAligned = false
         alignmentRequested = false
@@ -635,6 +638,7 @@ class ArCoreTrackingEngine(
         png: ByteArray?,
         widthMeters: Float?,
         label: String?,
+        routeOffsetDegrees: Float?,
     ) {
         clearVisualAnchorConfiguration()
 
@@ -656,6 +660,7 @@ class ArCoreTrackingEngine(
         navigationVisualAnchorBitmap = bitmap
         navigationVisualAnchorWidthMeters = widthMeters
         navigationVisualAnchorLabel = label ?: navigationStartLabel
+        navigationVisualRouteOffsetDegrees = routeOffsetDegrees ?: 0f
         navigationVisualAnchorEnabled = true
         resetVisualAnchorSamples()
     }
@@ -688,6 +693,7 @@ class ArCoreTrackingEngine(
         navigationVisualAnchorBitmap = null
         navigationVisualAnchorWidthMeters = 0f
         navigationVisualAnchorLabel = ""
+        navigationVisualRouteOffsetDegrees = 0f
         navigationVisualAnchorEnabled = false
         navigationVisualSetupWarning = null
         resetVisualAnchorSamples()
@@ -783,14 +789,20 @@ class ArCoreTrackingEngine(
         averageForwardX /= forwardLength
         averageForwardZ /= forwardLength
 
+        val routeForward = rotateHorizontalHeading(
+            x = averageForwardX,
+            z = averageForwardZ,
+            degreesClockwise = navigationVisualRouteOffsetDegrees,
+        )
+
         val anchorPose = horizontalPoseFromForward(
             position = floatArrayOf(
                 averageX,
                 currentPose.ty(),
                 averageZ,
             ),
-            forwardX = averageForwardX,
-            forwardZ = averageForwardZ,
+            forwardX = routeForward[0],
+            forwardZ = routeForward[1],
         )
 
         releaseNavigationAnchor()
@@ -819,6 +831,20 @@ class ArCoreTrackingEngine(
         emitStatus("VISUAL_ANCHOR_LOCKED")
         resetVisualAnchorSamples()
         return true
+    }
+
+    private fun rotateHorizontalHeading(
+        x: Float,
+        z: Float,
+        degreesClockwise: Float,
+    ): FloatArray {
+        val radians = Math.toRadians(degreesClockwise.toDouble())
+        val c = kotlin.math.cos(radians).toFloat()
+        val sn = kotlin.math.sin(radians).toFloat()
+        return floatArrayOf(
+            x * c - z * sn,
+            x * sn + z * c,
+        )
     }
 
     private fun horizontalPoseFromForward(
