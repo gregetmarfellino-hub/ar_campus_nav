@@ -185,7 +185,7 @@ class MappingSession {
 
   String get qualityLabel {
     if (!isSpatial) return 'LEGACY';
-    if (trackingInterruptions >= 3 || rejectedPoseJumps >= 5) return 'REVIEW';
+    if (trackingInterruptions >= 3 || rejectedPoseJumps >= 3) return 'REVIEW';
     if (trackingInterruptions > 0 || rejectedPoseJumps > 0) return 'CAUTION';
     return 'GOOD';
   }
