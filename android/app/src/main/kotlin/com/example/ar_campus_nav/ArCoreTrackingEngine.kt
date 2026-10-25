@@ -1,6 +1,8 @@
 package com.example.ar_campus_nav
 
 import android.app.Activity
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.opengl.GLES11Ext
@@ -16,6 +18,8 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.google.ar.core.Anchor
 import com.google.ar.core.ArCoreApk
+import com.google.ar.core.AugmentedImage
+import com.google.ar.core.AugmentedImageDatabase
 import com.google.ar.core.Config
 import com.google.ar.core.Pose
 import com.google.ar.core.Session
@@ -92,6 +96,22 @@ class ArCoreTrackingEngine(
     private var navigationAligned = false
     private var alignmentRequested = false
 
+    // Visual QR localization. Flutter supplies the exact QR bitmap shown to
+    // users plus its physical printed width. ARCore detects that same planar
+    // image and gives us a metric 6DoF pose.
+    private var navigationVisualAnchorBitmap: Bitmap? = null
+    private var navigationVisualAnchorWidthMeters = 0f
+    private var navigationVisualAnchorLabel = ""
+    private var navigationVisualAnchorEnabled = false
+    private var navigationVisualSetupWarning: String? = null
+    private var navigationVisualSampleCount = 0
+    private var navigationVisualPositionX = 0f
+    private var navigationVisualPositionZ = 0f
+    private var navigationVisualForwardX = 0f
+    private var navigationVisualForwardZ = 0f
+    private val navigationVisualSamplesRequired = 6
+    private val navigationVisualImageName = "ar_nav_visual_anchor"
+
     // Pass 8.5 robust alignment.
     // Translation is fixed at Point A, but direction is no longer inferred from
     // one fragile A->B vector. We collect a short ARCore trajectory and fit its
@@ -151,6 +171,7 @@ class ArCoreTrackingEngine(
 
     fun start(): String {
         navigationMode = false
+        clearVisualAnchorConfiguration()
         return startSession()
     }
 
@@ -159,6 +180,9 @@ class ArCoreTrackingEngine(
         points: List<RoutePoint>,
         startLabel: String = "Route start",
         anchorLocalized: Boolean = false,
+        visualAnchorPng: ByteArray? = null,
+        visualAnchorWidthMeters: Float? = null,
+        visualAnchorLabel: String? = null,
     ): String {
         if (points.size < 2) return "ROUTE_TOO_SHORT"
 
@@ -167,6 +191,11 @@ class ArCoreTrackingEngine(
         navigationStartLabel = startLabel
         navigationAnchorLocalized = anchorLocalized
         navigationPoints = points
+        configureVisualAnchor(
+            png = visualAnchorPng,
+            widthMeters = visualAnchorWidthMeters,
+            label = visualAnchorLabel,
+        )
         navigationAligned = false
         alignmentRequested = false
         resetNavigationCalibration()
@@ -207,6 +236,7 @@ class ArCoreTrackingEngine(
                 planeFindingMode = Config.PlaneFindingMode.DISABLED
                 lightEstimationMode = Config.LightEstimationMode.DISABLED
             }
+            configureVisualImageDatabase(newSession, config)
             newSession.configure(config)
             session = newSession
 
@@ -336,6 +366,7 @@ class ArCoreTrackingEngine(
         resetNavigationContinuity()
         navigationArrivalShown = false
         navigationPoints = emptyList()
+        clearVisualAnchorConfiguration()
         emitStatus("STOPPED")
     }
 
@@ -439,6 +470,16 @@ class ArCoreTrackingEngine(
             lastCameraTrackingReason = null
 
             if (navigationMode) {
+                if (!navigationAligned &&
+                    navigationVisualAnchorEnabled &&
+                    navigationCalibrationStart == null
+                ) {
+                    tryLockVisualAnchor(
+                        activeSession = activeSession,
+                        currentPose = currentPose,
+                    )
+                }
+
                 if (alignmentRequested) {
                     if (navigationCalibrationStart == null) {
                         captureNavigationCalibrationStart(currentPose)
@@ -588,6 +629,209 @@ class ArCoreTrackingEngine(
         trackingForwardZ = -1f
         trackingRightX = 1f
         trackingRightZ = 0f
+    }
+
+    private fun configureVisualAnchor(
+        png: ByteArray?,
+        widthMeters: Float?,
+        label: String?,
+    ) {
+        clearVisualAnchorConfiguration()
+
+        if (png == null ||
+            png.isEmpty() ||
+            widthMeters == null ||
+            widthMeters <= 0f
+        ) {
+            return
+        }
+
+        val bitmap = BitmapFactory.decodeByteArray(png, 0, png.size)
+        if (bitmap == null) {
+            navigationVisualSetupWarning =
+                "Visual QR image could not be decoded; manual alignment is available."
+            return
+        }
+
+        navigationVisualAnchorBitmap = bitmap
+        navigationVisualAnchorWidthMeters = widthMeters
+        navigationVisualAnchorLabel = label ?: navigationStartLabel
+        navigationVisualAnchorEnabled = true
+        resetVisualAnchorSamples()
+    }
+
+    private fun configureVisualImageDatabase(
+        activeSession: Session,
+        config: Config,
+    ) {
+        val bitmap = navigationVisualAnchorBitmap ?: return
+        if (!navigationVisualAnchorEnabled) return
+
+        try {
+            val database = AugmentedImageDatabase(activeSession)
+            database.addImage(
+                navigationVisualImageName,
+                bitmap,
+                navigationVisualAnchorWidthMeters,
+            )
+            config.augmentedImageDatabase = database
+        } catch (error: Exception) {
+            navigationVisualAnchorEnabled = false
+            navigationVisualSetupWarning =
+                "ARCore could not register this QR as a visual target " +
+                    "(${error.javaClass.simpleName}). Use manual alignment."
+        }
+    }
+
+    private fun clearVisualAnchorConfiguration() {
+        navigationVisualAnchorBitmap?.recycle()
+        navigationVisualAnchorBitmap = null
+        navigationVisualAnchorWidthMeters = 0f
+        navigationVisualAnchorLabel = ""
+        navigationVisualAnchorEnabled = false
+        navigationVisualSetupWarning = null
+        resetVisualAnchorSamples()
+    }
+
+    private fun resetVisualAnchorSamples() {
+        navigationVisualSampleCount = 0
+        navigationVisualPositionX = 0f
+        navigationVisualPositionZ = 0f
+        navigationVisualForwardX = 0f
+        navigationVisualForwardZ = 0f
+    }
+
+    private fun tryLockVisualAnchor(
+        activeSession: Session,
+        currentPose: Pose,
+    ): Boolean {
+        if (!navigationVisualAnchorEnabled || navigationAligned) return false
+
+        val target = activeSession
+            .getAllTrackables(AugmentedImage::class.java)
+            .firstOrNull { image ->
+                image.name == navigationVisualImageName &&
+                    image.trackingState == TrackingState.TRACKING &&
+                    image.trackingMethod ==
+                        AugmentedImage.TrackingMethod.FULL_TRACKING
+            }
+            ?: run {
+                resetVisualAnchorSamples()
+                return false
+            }
+
+        val imagePose = target.centerPose
+        val position = imagePose.translation
+
+        // ARCore Augmented Images lie in their local X/Z plane. Local +Y is
+        // the image normal. Flip it, if necessary, so "forward" always points
+        // out of the poster toward the person currently scanning it.
+        var normal = imagePose.getTransformedAxis(1, 1f)
+        val toCameraX = currentPose.tx() - position[0]
+        val toCameraY = currentPose.ty() - position[1]
+        val toCameraZ = currentPose.tz() - position[2]
+        val facingDot =
+            normal[0] * toCameraX +
+                normal[1] * toCameraY +
+                normal[2] * toCameraZ
+        if (facingDot < 0f) {
+            normal = floatArrayOf(-normal[0], -normal[1], -normal[2])
+        }
+
+        val horizontalLength = sqrt(
+            normal[0] * normal[0] + normal[2] * normal[2],
+        )
+        if (horizontalLength < 0.35f) {
+            resetVisualAnchorSamples()
+            setNavigationHud(
+                "QR detected, but it is not vertical enough for reliable " +
+                    "horizontal orientation. Mount/hold it upright.",
+            )
+            return false
+        }
+
+        val forwardX = normal[0] / horizontalLength
+        val forwardZ = normal[2] / horizontalLength
+
+        navigationVisualSampleCount++
+        navigationVisualPositionX += position[0]
+        navigationVisualPositionZ += position[2]
+        navigationVisualForwardX += forwardX
+        navigationVisualForwardZ += forwardZ
+
+        if (navigationVisualSampleCount < navigationVisualSamplesRequired) {
+            setNavigationHud(
+                "QR DETECTED — hold steady " +
+                    "$navigationVisualSampleCount/$navigationVisualSamplesRequired",
+            )
+            return false
+        }
+
+        val sampleCount = navigationVisualSampleCount.toFloat()
+        val averageX = navigationVisualPositionX / sampleCount
+        val averageZ = navigationVisualPositionZ / sampleCount
+        var averageForwardX = navigationVisualForwardX / sampleCount
+        var averageForwardZ = navigationVisualForwardZ / sampleCount
+        val forwardLength = sqrt(
+            averageForwardX * averageForwardX +
+                averageForwardZ * averageForwardZ,
+        )
+        if (forwardLength < 0.20f) {
+            resetVisualAnchorSamples()
+            return false
+        }
+        averageForwardX /= forwardLength
+        averageForwardZ /= forwardLength
+
+        val anchorPose = horizontalPoseFromForward(
+            position = floatArrayOf(
+                averageX,
+                currentPose.ty(),
+                averageZ,
+            ),
+            forwardX = averageForwardX,
+            forwardZ = averageForwardZ,
+        )
+
+        releaseNavigationAnchor()
+        navigationWorldAnchor = activeSession.createAnchor(anchorPose)
+
+        // Flutter expressed route points in a frame whose +forward axis is
+        // the verified venue heading of this QR's outward normal.
+        navigationForwardX = 0f
+        navigationForwardZ = -1f
+        navigationRightX = 1f
+        navigationRightZ = 0f
+        navigationAligned = true
+        navigationVisualAnchorEnabled = false
+        resetNavigationCalibration()
+        resetNavigationContinuity()
+        navigationLastAcceptedPosition = currentPose.translation.copyOf()
+
+        val local = navigationLocalPosition(currentPose)
+        activeRouteIndex = nearestNavigationPointIndex(local)
+
+        setNavigationAlignedUi()
+        setNavigationHud(
+            "VISUAL QR LOCKED: ${navigationVisualAnchorLabel.ifBlank { navigationStartLabel }}\n" +
+                "Position + direction measured from the physical marker.",
+        )
+        emitStatus("VISUAL_ANCHOR_LOCKED")
+        resetVisualAnchorSamples()
+        return true
+    }
+
+    private fun horizontalPoseFromForward(
+        position: FloatArray,
+        forwardX: Float,
+        forwardZ: Float,
+    ): Pose {
+        val yaw = atan2(-forwardX, -forwardZ)
+        val half = yaw / 2f
+        return Pose(
+            position.copyOf(),
+            floatArrayOf(0f, sin(half), 0f, cos(half)),
+        )
     }
 
     private data class CalibrationFit(
@@ -1415,11 +1659,17 @@ class ArCoreTrackingEngine(
         )
 
         val statusText = TextView(activity).apply {
-            text = if (navigationAnchorLocalized) {
-                "Location confirmed: $navigationStartLabel\n" +
-                    "Stay at the physical QR marker, then set its AR position."
-            } else {
-                "Manual preview: stand exactly at the selected mapped start."
+            text = when {
+                navigationVisualAnchorEnabled ->
+                    "VISUAL LOCALIZATION\nPoint the camera at the upright " +
+                        "16 cm $navigationVisualAnchorLabel QR and hold steady."
+                navigationVisualSetupWarning != null ->
+                    navigationVisualSetupWarning
+                navigationAnchorLocalized ->
+                    "Legacy location anchor: $navigationStartLabel\n" +
+                        "Visual orientation is unavailable; use manual alignment."
+                else ->
+                    "Manual preview: stand exactly at the selected mapped start."
             }
             setTextColor(Color.WHITE)
             textSize = 15f
@@ -1445,10 +1695,10 @@ class ArCoreTrackingEngine(
         }
 
         val align = Button(activity).apply {
-            text = if (navigationAnchorLocalized) {
-                "SET QR POSITION"
-            } else {
-                "SET START"
+            text = when {
+                navigationVisualAnchorEnabled -> "MANUAL FALLBACK"
+                navigationAnchorLocalized -> "SET QR POSITION"
+                else -> "SET START"
             }
             textSize = 14f
             setTextColor(Color.BLACK)
@@ -1457,6 +1707,10 @@ class ArCoreTrackingEngine(
                 dp(22).toFloat(),
             )
             setOnClickListener {
+                if (navigationVisualAnchorEnabled) {
+                    navigationVisualAnchorEnabled = false
+                    resetVisualAnchorSamples()
+                }
                 alignmentRequested = true
                 if (navigationCalibrationStart == null) {
                     setNavigationHud(
