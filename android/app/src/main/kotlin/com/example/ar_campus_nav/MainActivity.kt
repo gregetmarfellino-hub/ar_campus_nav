@@ -58,6 +58,13 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                         call.argument<String>("start_label") ?: "Route start"
                     val anchorLocalized =
                         call.argument<Boolean>("anchor_localized") ?: false
+                    val visualAnchorPng =
+                        call.argument<ByteArray>("visual_anchor_png")
+                    val visualAnchorWidthMeters =
+                        (call.argument<Number>("visual_anchor_width_m"))
+                            ?.toFloat()
+                    val visualAnchorLabel =
+                        call.argument<String>("visual_anchor_label")
                     val rawPoints =
                         call.argument<List<Map<String, Any?>>>("points") ?: emptyList()
 
@@ -82,6 +89,9 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                             points = points,
                             startLabel = startLabel,
                             anchorLocalized = anchorLocalized,
+                            visualAnchorPng = visualAnchorPng,
+                            visualAnchorWidthMeters = visualAnchorWidthMeters,
+                            visualAnchorLabel = visualAnchorLabel,
                         ),
                     )
                 }
