@@ -92,6 +92,124 @@ void main() {
     expect(anchor.headingDegrees!, closeTo(0, 1e-9));
   });
 
+  test('spatial merge uses two known anchors and reuses the target node', () {
+    const venue = Venue(
+      id: 'venue',
+      name: 'Venue',
+      description: 'test',
+      defaultStartNodeId: 'start',
+      floors: [1],
+      nodes: [
+        NavNode(
+          id: 'start',
+          label: 'Anchor A',
+          floor: 1,
+          x: 0,
+          y: 0,
+          type: 'anchor',
+        ),
+        NavNode(
+          id: 'anchor_b_node',
+          label: 'Anchor B',
+          floor: 1,
+          x: 5,
+          y: 0,
+          type: 'anchor',
+        ),
+      ],
+      edges: [],
+      destinations: [],
+      anchors: [
+        AnchorPoint(
+          id: 'main_anchor',
+          label: 'Anchor A',
+          nodeId: 'start',
+          floor: 1,
+        ),
+        AnchorPoint(
+          id: 'anchor_b',
+          label: 'Anchor B',
+          nodeId: 'anchor_b_node',
+          floor: 1,
+        ),
+      ],
+    );
+
+    final session = MappingSession(
+      id: 'merge_two_anchor',
+      venueId: 'venue',
+      venueName: 'Venue',
+      floor: 1,
+      createdAt: DateTime.utc(2026, 1, 1),
+      startAnchorId: 'main_anchor',
+      startAnchorLabel: 'Anchor A',
+      originHeadingDegrees: 0,
+      stepLengthMeters: 0,
+      source: 'arcore_spatial',
+      points: const [
+        MappingPoint(
+          xMeters: 0,
+          yMeters: 0,
+          headingDegrees: 0,
+          stepIndex: 0,
+          timestampMs: 0,
+        ),
+        MappingPoint(
+          xMeters: 0,
+          yMeters: 2.5,
+          headingDegrees: 0,
+          stepIndex: 1,
+          timestampMs: 1000,
+        ),
+        MappingPoint(
+          xMeters: 0,
+          yMeters: 5,
+          headingDegrees: 0,
+          stepIndex: 2,
+          timestampMs: 2000,
+        ),
+      ],
+      markers: const [
+        MappingMarker(
+          id: 'anchor_b_ref',
+          label: 'Anchor B',
+          type: 'anchor',
+          floor: 1,
+          xMeters: 0,
+          yMeters: 5,
+          pointIndex: 2,
+          referenceAnchorId: 'anchor_b',
+        ),
+      ],
+    );
+
+    expect(
+      service.hasSpatialAlignment(venue: venue, session: session),
+      isTrue,
+    );
+
+    final merged = service.mergeSession(
+      venue: venue,
+      session: session,
+    );
+
+    expect(merged.anchors.length, 2);
+    expect(
+      merged.nodes.where((node) => node.id == 'anchor_b_node').length,
+      1,
+    );
+    expect(
+      merged.edges.any((edge) => edge.to == 'anchor_b_node'),
+      isTrue,
+    );
+
+    final middle = merged.nodes.firstWhere(
+      (node) => node.id.startsWith('rec_merge_two_anchor_path_'),
+    );
+    expect(middle.x, closeTo(2.5, 1e-9));
+    expect(middle.y, closeTo(0, 1e-9));
+  });
+
   test('spatial merge refuses one-point orientation ambiguity', () {
     final active = service.applySession(
       venue: baseVenue(),
@@ -107,7 +225,7 @@ void main() {
         isA<StateError>().having(
           (error) => error.message,
           'message',
-          contains('orientation alignment'),
+          contains('second known anchor'),
         ),
       ),
     );
