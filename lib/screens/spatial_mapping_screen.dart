@@ -469,7 +469,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
   }
 
   String get _liveQualityLabel {
-    if (_trackingInterruptions >= 3 || _rejectedPoseJumps >= 5) {
+    if (_trackingInterruptions >= 3 || _rejectedPoseJumps >= 3) {
       return 'REVIEW';
     }
     if (_trackingInterruptions > 0 || _rejectedPoseJumps > 0) {
