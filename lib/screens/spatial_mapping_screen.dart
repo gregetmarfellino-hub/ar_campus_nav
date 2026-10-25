@@ -687,10 +687,11 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'Stand at the exact QR location and point the rear camera '
-              'squarely at the surface where the QR will be mounted. '
-              'The direction you are looking now becomes the installation '
-              'orientation used for one-scan AR localization.',
+              'Move the rear camera as close as practical to the future '
+              'QR center on the wall, facing the wall squarely. The camera '
+              'position becomes the QR venue coordinate, and the opposite '
+              'viewing direction becomes the poster\'s outward orientation. '
+              'Mount the QR at that same spot and orientation later.',
               style: TextStyle(height: 1.4),
             ),
             const SizedBox(height: 16),
