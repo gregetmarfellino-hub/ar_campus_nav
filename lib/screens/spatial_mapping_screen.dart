@@ -749,10 +749,11 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     }
 
     if (!mounted || placement == null || _points.isEmpty) return;
+    final placed = placement;
 
     final markerPointIndex = _nearestPointIndex(
-      placement.rightMeters,
-      placement.forwardMeters,
+      placed.rightMeters,
+      placed.forwardMeters,
     );
     final idBase = label
         .toLowerCase()
@@ -1503,17 +1504,17 @@ class _SpatialPathPainter extends CustomPainter {
           label: label,
           type: 'anchor',
           floor: _floor,
-          xMeters: placement!.rightMeters,
-          yMeters: placement.forwardMeters,
-          upMeters: placement.upMeters,
+          xMeters: placed.rightMeters,
+          yMeters: placed.forwardMeters,
+          upMeters: placed.upMeters,
           pointIndex: markerPointIndex,
-          anchorFacingDegrees: placement.facingDegrees,
+          anchorFacingDegrees: placed.facingDegrees,
         ),
       );
       _message =
           'Visual QR placed on a tracked vertical wall at '
-          'R ${placement.rightMeters.toStringAsFixed(2)} m / '
-          'F ${placement.forwardMeters.toStringAsFixed(2)} m. '
+          'R ${placed.rightMeters.toStringAsFixed(2)} m / '
+          'F ${placed.forwardMeters.toStringAsFixed(2)} m. '
           'Mount the physical 16 cm QR at that exact wall position.';
     });
   }
