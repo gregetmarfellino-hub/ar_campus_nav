@@ -14,7 +14,6 @@ import 'spatial_mapping_screen.dart';
 import 'mapping_sessions_screen.dart';
 import 'qr_anchor_scanner_screen.dart';
 import 'route_screen.dart';
-import 'world_tracking_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -163,13 +162,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
 
-  Future<void> _openWorldTrackingLab() async {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => const WorldTrackingScreen(),
-      ),
-    );
-  }
 
   Future<void> _openRoute(Destination destination) async {
     final venue = _venue;
@@ -631,15 +623,7 @@ class _HomeScreenState extends State<HomeScreen> {
             label: const Text('REVIEW SAVED MAPPINGS'),
           ),
         ),
-        const SizedBox(height: 8),
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton.icon(
-            onPressed: _openWorldTrackingLab,
-            icon: const Icon(Icons.view_in_ar_rounded),
-            label: const Text('AR WORLD TRACKING LAB'),
-          ),
-        ),
+
         const SizedBox(height: 18),
         Text(
           activeAnchor == null ? 'LOCATION' : 'YOU ARE HERE',
