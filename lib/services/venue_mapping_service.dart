@@ -6,6 +6,7 @@ import '../models/mapping_session.dart';
 import '../models/nav_edge.dart';
 import '../models/nav_node.dart';
 import '../models/venue.dart';
+import 'venue_transform_2d.dart';
 
 class VenueMappingService {
   const VenueMappingService();
@@ -23,11 +24,18 @@ class VenueMappingService {
         session.startAnchorLabel ??
         'Recorded start';
 
+    // The first applied recording defines the persistent venue frame. Its
+    // local origin becomes venue (0, 0); any legacy heading metadata is still
+    // respected. ARCore spatial sessions currently use 0 degrees here, which
+    // intentionally means their first local frame becomes the venue frame.
+    final transform = VenueTransform2D.atOrigin(
+      headingDegrees: session.originHeadingDegrees,
+    );
+
     final generated = _buildRecordedFloor(
       venue: venue,
       session: session,
-      originX: 0,
-      originY: 0,
+      transform: transform,
       startNodeId: startNodeId,
       startLabel: startLabel,
       startAnchor: startAnchor,
@@ -111,11 +119,30 @@ class VenueMappingService {
       );
     }
 
+    if (session.isSpatial) {
+      // A single shared point fixes translation but NOT rotation. Previous
+      // versions silently merged ARCore sessions here, which could rotate an
+      // otherwise good hallway into the wrong direction. Spatial merge stays
+      // blocked until we have a second known point or another explicit
+      // orientation reference.
+      throw StateError(
+        'Spatial merge needs orientation alignment. One QR anchor fixes '
+        'position only; record/identify a second known anchor before merging.',
+      );
+    }
+
+    final transform = VenueTransform2D.fromPointAndHeading(
+      localX: session.points.first.xMeters,
+      localY: session.points.first.yMeters,
+      venueX: originNode.x,
+      venueY: originNode.y,
+      headingDegrees: session.originHeadingDegrees,
+    );
+
     final generated = _buildRecordedFloor(
       venue: venue,
       session: session,
-      originX: originNode.x,
-      originY: originNode.y,
+      transform: transform,
       startNodeId: originNode.id,
       startLabel: originNode.label,
       startAnchor: startAnchor,
@@ -179,8 +206,7 @@ class VenueMappingService {
   _GeneratedFloor _buildRecordedFloor({
     required Venue venue,
     required MappingSession session,
-    required double originX,
-    required double originY,
+    required VenueTransform2D transform,
     required String startNodeId,
     required String startLabel,
     required AnchorPoint? startAnchor,
@@ -203,9 +229,7 @@ class VenueMappingService {
 
     final startPoint = _worldPoint(
       session.points.first,
-      session.originHeadingDegrees,
-      originX,
-      originY,
+      transform,
     );
 
     nodes.add(
@@ -227,7 +251,12 @@ class VenueMappingService {
           label: startAnchor.label,
           nodeId: startNodeId,
           floor: session.floor,
-          headingDegrees: startAnchor.headingDegrees,
+          headingDegrees: startAnchor.headingDegrees ??
+              _headingAtIndex(
+                session,
+                selected.first,
+                transform,
+              ),
         ),
       );
       usedAnchorIds.add(startAnchor.id);
@@ -239,9 +268,7 @@ class VenueMappingService {
       final point = session.points[index];
       final world = _worldPoint(
         point,
-        session.originHeadingDegrees,
-        originX,
-        originY,
+        transform,
       );
       final group = markerGroups[index] ?? const <MappingMarker>[];
       final primary = _primaryMarker(group);
@@ -300,7 +327,11 @@ class VenueMappingService {
               label: marker.label,
               nodeId: nodeId,
               floor: session.floor,
-              headingDegrees: null,
+              headingDegrees: _headingAtIndex(
+                session,
+                index,
+                transform,
+              ),
             ),
           );
         }
@@ -396,20 +427,62 @@ class VenueMappingService {
 
   (double, double) _worldPoint(
     MappingPoint point,
-    double originHeadingDegrees,
-    double originX,
-    double originY,
+    VenueTransform2D transform,
   ) {
-    final theta = originHeadingDegrees * math.pi / 180.0;
-    final east =
-        point.xMeters * math.cos(theta) + point.yMeters * math.sin(theta);
-    final south =
-        point.xMeters * math.sin(theta) - point.yMeters * math.cos(theta);
+    return transform.applyPoint(
+      point.xMeters,
+      point.yMeters,
+    );
+  }
 
-    // Venue coordinates intentionally use screen/map convention:
-    // +x = east/right, +y = south/down. This keeps recorded-meter venues
-    // compatible with DirectionGuidance and the bundled sample graph.
-    return (originX + east, originY + south);
+  double? _headingAtIndex(
+    MappingSession session,
+    int index,
+    VenueTransform2D transform,
+  ) {
+    if (session.points.length < 2) return null;
+
+    final safeIndex = index.clamp(0, session.points.length - 1).toInt();
+    final origin = session.points[safeIndex];
+    const minimumBaselineMeters = 0.35;
+
+    MappingPoint? target;
+
+    for (var i = safeIndex + 1; i < session.points.length; i++) {
+      final candidate = session.points[i];
+      final dx = candidate.xMeters - origin.xMeters;
+      final dy = candidate.yMeters - origin.yMeters;
+      if (math.sqrt(dx * dx + dy * dy) >= minimumBaselineMeters) {
+        target = candidate;
+        break;
+      }
+    }
+
+    if (target == null) {
+      for (var i = safeIndex - 1; i >= 0; i--) {
+        final candidate = session.points[i];
+        final dx = origin.xMeters - candidate.xMeters;
+        final dy = origin.yMeters - candidate.yMeters;
+        if (math.sqrt(dx * dx + dy * dy) >= minimumBaselineMeters) {
+          // At the end of a route, use the incoming direction.
+          final vector = transform.applyVector(dx, dy);
+          return VenueTransform2D.venueVectorHeadingDegrees(
+            vector.$1,
+            vector.$2,
+          );
+        }
+      }
+      return null;
+    }
+
+    final vector = transform.applyVector(
+      target.xMeters - origin.xMeters,
+      target.yMeters - origin.yMeters,
+    );
+    return VenueTransform2D.venueVectorHeadingDegrees(
+      vector.$1,
+      vector.$2,
+    );
   }
 
   MappingMarker? _primaryMarker(List<MappingMarker> markers) {
