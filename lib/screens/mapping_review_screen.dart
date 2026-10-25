@@ -170,11 +170,18 @@ class _MappingReviewScreenState extends State<MappingReviewScreen> {
   @override
   Widget build(BuildContext context) {
     final session = widget.session;
+    final spatialAlignmentReady =
+        session.isSpatial &&
+        _document != null &&
+        _mappingService.hasSpatialAlignment(
+          venue: _document!.venue,
+          session: session,
+        );
     final canMerge =
         !_loading &&
         _document != null &&
         _document!.usesRecordedMeters &&
-        !session.isSpatial;
+        (!session.isSpatial || spatialAlignmentReady);
     final alreadyApplied =
         _document?.appliedSessionIds.contains(session.id) ?? false;
 
@@ -258,7 +265,10 @@ class _MappingReviewScreenState extends State<MappingReviewScreen> {
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                   subtitle: Text(
-                    '${marker.type.toUpperCase()} · Floor ${marker.floor}',
+                    marker.referenceAnchorId == null
+                        ? '${marker.type.toUpperCase()} · Floor ${marker.floor}'
+                        : 'KNOWN ANCHOR · Floor ${marker.floor} · '
+                            '${marker.referenceAnchorId}',
                   ),
                 ),
               ),
@@ -299,9 +309,13 @@ class _MappingReviewScreenState extends State<MappingReviewScreen> {
           const SizedBox(height: 8),
           Text(
             session.isSpatial
-                ? 'Spatial recordings are not merged from one QR point alone. '
-                    'A second known point or another explicit orientation '
-                    'reference is required so the venue cannot rotate silently.'
+                ? spatialAlignmentReady
+                    ? 'Two known anchors are available. Merge will solve one '
+                        'rigid rotation + translation and connect this route '
+                        'into the existing venue graph.'
+                    : 'Spatial merge needs two known anchors. Start from one '
+                        'existing anchor, then mark another existing anchor '
+                        'while recording using QR anchor → Reference existing.'
                 : canMerge
                     ? 'Merge aligns this recording to its existing start QR '
                         'anchor and keeps the current venue geometry.'
