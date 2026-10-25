@@ -101,6 +101,18 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                         ),
                     )
                 }
+                "placeVisualQrAnchor" -> {
+                    val error = arEngine().beginVisualQrPlacement { placement ->
+                        result.success(placement)
+                    }
+                    if (error != null) {
+                        result.error(
+                            "QR_PLACEMENT_UNAVAILABLE",
+                            error,
+                            null,
+                        )
+                    }
+                }
                 "resetArOrigin" -> {
                     arEngine().resetOrigin()
                     result.success(null)
