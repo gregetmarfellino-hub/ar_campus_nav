@@ -354,7 +354,7 @@ class _SpatialAlignmentCard extends StatelessWidget {
         : const Color(0xFFF9C74F);
 
     final message = visualReady
-        ? 'Expected QR: ${value.label}. Open AR and point the camera at that '
+        ? 'Expected QR: ${value!.label}. Open AR and point the camera at that '
             'physical 16 cm marker. ARCore will lock both position and '
             'direction from the marker pose.'
         : hasAnchor
