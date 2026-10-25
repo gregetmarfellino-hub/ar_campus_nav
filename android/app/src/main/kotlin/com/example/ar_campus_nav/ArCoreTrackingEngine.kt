@@ -56,6 +56,7 @@ class ArCoreTrackingEngine(
     private val mainHandler = Handler(Looper.getMainLooper())
     private val backgroundRenderer = ArCameraBackgroundRenderer()
     private val breadcrumbRenderer = ArBreadcrumbRenderer()
+    private val wallQrPreviewRenderer = ArWallQrPreviewRenderer()
 
     private var session: Session? = null
     private var surfaceView: GLSurfaceView? = null
@@ -74,6 +75,7 @@ class ArCoreTrackingEngine(
     private var qrPlacementButton: Button? = null
     @Volatile private var qrPlacementMode = false
     @Volatile private var qrPlacementRequested = false
+    private var qrPlacementWallReady = false
     private var qrPlacementCompletion: ((Map<String, Any>?) -> Unit)? = null
 
     private var cameraTextureId: Int = 0
@@ -339,6 +341,7 @@ class ArCoreTrackingEngine(
 
         qrPlacementCompletion = onComplete
         qrPlacementRequested = false
+        qrPlacementWallReady = false
         qrPlacementMode = true
         mainHandler.post { createQrPlacementOverlay() }
         return null
@@ -362,8 +365,8 @@ class ArCoreTrackingEngine(
 
         val status = TextView(activity).apply {
             text =
-                "PLACE VISUAL QR\nAim the center target at the vertical wall where the " +
-                    "physical 16 cm QR will be mounted."
+                "PLACE VISUAL QR\nMove the phone slowly while aiming at the wall. " +
+                    "A green 16 cm square will appear when ARCore has a valid vertical plane."
             setTextColor(Color.WHITE)
             textSize = 16f
             gravity = Gravity.CENTER
@@ -406,10 +409,12 @@ class ArCoreTrackingEngine(
             textSize = 15f
             setTextColor(Color.BLACK)
             background = roundedBackground(0xFF3DDC97.toInt(), dp(24).toFloat())
+            isEnabled = false
+            alpha = 0.45f
             setOnClickListener {
                 qrPlacementRequested = true
                 setQrPlacementStatus(
-                    "Checking the center target for a tracked vertical wall...",
+                    "Locking this 16 cm wall position...",
                 )
             }
         }
@@ -461,12 +466,13 @@ class ArCoreTrackingEngine(
         frame: Frame,
         currentPose: Pose,
     ) {
-        if (!qrPlacementRequested) return
-        qrPlacementRequested = false
-
         val view = surfaceView ?: return
         if (view.width <= 2 || view.height <= 2) {
-            setQrPlacementStatus("AR placement view is not ready yet. Try again.")
+            setQrPlacementWallReady(false)
+            if (qrPlacementRequested) {
+                qrPlacementRequested = false
+                setQrPlacementStatus("AR placement view is not ready yet. Try again.")
+            }
             return
         }
 
@@ -489,14 +495,28 @@ class ArCoreTrackingEngine(
         val hit = selectedHit
         val plane = selectedPlane
         if (hit == null || plane == null) {
-            setQrPlacementStatus(
-                "NO VERTICAL WALL YET — move the phone slowly so ARCore can map " +
-                    "the wall, then keep the target on it and tap PLACE QR again.",
-            )
+            setQrPlacementWallReady(false)
+            if (qrPlacementRequested) {
+                qrPlacementRequested = false
+                setQrPlacementStatus(
+                    "NO VERTICAL WALL YET — move the phone slowly across the wall " +
+                        "until the green 16 cm square appears.",
+                )
+            }
             return
         }
 
         val hitPose = hit.hitPose
+        wallQrPreviewRenderer.draw(
+            camera = frame.camera,
+            pose = hitPose,
+            sizeMeters = 0.16f,
+        )
+        setQrPlacementWallReady(true)
+
+        if (!qrPlacementRequested) return
+        qrPlacementRequested = false
+
         val hitPosition = hitPose.translation
 
         // For ARCore planes local +Y is the plane normal. Resolve the sign so
@@ -517,6 +537,7 @@ class ArCoreTrackingEngine(
             normal[0] * normal[0] + normal[2] * normal[2],
         )
         if (horizontalLength < 0.70f) {
+            setQrPlacementWallReady(false)
             setQrPlacementStatus(
                 "That surface is not vertical enough. Aim at an upright wall.",
             )
@@ -525,6 +546,7 @@ class ArCoreTrackingEngine(
 
         val origin = trackingOriginPosition
         if (origin == null) {
+            setQrPlacementWallReady(false)
             setQrPlacementStatus("Mapping origin was lost. Exit and restart mapping.")
             return
         }
@@ -563,6 +585,26 @@ class ArCoreTrackingEngine(
         )
     }
 
+    private fun setQrPlacementWallReady(ready: Boolean) {
+        if (qrPlacementWallReady == ready) return
+        qrPlacementWallReady = ready
+
+        mainHandler.post {
+            qrPlacementButton?.apply {
+                isEnabled = ready
+                alpha = if (ready) 1f else 0.45f
+            }
+            if (ready) {
+                qrPlacementStatusText?.text =
+                    "VERTICAL WALL FOUND — the green square is 16 cm wide. " +
+                        "Move the phone to position it, then tap PLACE QR."
+            } else {
+                qrPlacementStatusText?.text =
+                    "SCANNING WALL — move slowly until the green 16 cm square appears."
+            }
+        }
+    }
+
     private fun setQrPlacementStatus(text: String) {
         mainHandler.post {
             qrPlacementStatusText?.text = text
@@ -574,6 +616,7 @@ class ArCoreTrackingEngine(
 
         qrPlacementMode = false
         qrPlacementRequested = false
+        qrPlacementWallReady = false
         val callback = qrPlacementCompletion
         qrPlacementCompletion = null
 
@@ -635,6 +678,7 @@ class ArCoreTrackingEngine(
         qrPlacementCompletion = null
         qrPlacementMode = false
         qrPlacementRequested = false
+        qrPlacementWallReady = false
         surfaceView = null
 
         val removeViews = Runnable {
@@ -708,6 +752,7 @@ class ArCoreTrackingEngine(
         // Mapping normally renders into a hidden 2x2 surface, but QR wall
         // placement can promote that same surface to full-screen at any time.
         backgroundRenderer.createOnGlThread()
+        wallQrPreviewRenderer.createOnGlThread()
         if (navigationMode) {
             breadcrumbRenderer.createOnGlThread()
         }
