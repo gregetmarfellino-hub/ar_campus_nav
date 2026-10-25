@@ -1,0 +1,44 @@
+[
+  {
+    "id": "dest_electronics",
+    "name": "Electronics Practice Room",
+    "node_id": "electronics_room",
+    "category": "lab",
+    "description": "Practice / electronics lab"
+  },
+  {
+    "id": "dest_floor2_stairs",
+    "name": "Main Stairs to Floor 2",
+    "node_id": "stairs_floor2",
+    "category": "stairs",
+    "description": "Main upper-floor access"
+  },
+  {
+    "id": "dest_main_hall",
+    "name": "Main Hall",
+    "node_id": "main_hall",
+    "category": "landmark",
+    "description": "Main hall / left branch"
+  },
+  {
+    "id": "dest_terrace",
+    "name": "Terrace Entrance",
+    "node_id": "terrace_entry",
+    "category": "entrance",
+    "description": "Right-side entrance"
+  },
+  {
+    "id": "dest_right_stairs",
+    "name": "Terrace Stairs to Floor 2",
+    "node_id": "stairs_right",
+    "category": "stairs",
+    "description": "Terrace-side upper-floor access"
+  },
+  {
+    "id": "dest_math_park",
+    "name": "Main Park Bend",
+    "node_id": "math_park_bend",
+    "category": "landmark",
+    "description": "Inside-side landmark beside the main walking path"
+  }
+]

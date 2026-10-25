@@ -1,0 +1,37 @@
+[
+  {
+    "id": "main_entrance",
+    "label": "Main Entrance",
+    "node_id": "main_entrance",
+    "floor": 1,
+    "heading_degrees": null
+  },
+  {
+    "id": "main_park_bend",
+    "label": "Main Park Bend",
+    "node_id": "math_park_bend",
+    "floor": 1,
+    "heading_degrees": null
+  },
+  {
+    "id": "electronics_junction",
+    "label": "Electronics Junction",
+    "node_id": "electronics_junction",
+    "floor": 1,
+    "heading_degrees": null
+  },
+  {
+    "id": "terrace_entrance",
+    "label": "Terrace Entrance",
+    "node_id": "terrace_entry",
+    "floor": 1,
+    "heading_degrees": null
+  },
+  {
+    "id": "road_entry",
+    "label": "Road Entry",
+    "node_id": "road_entry",
+    "floor": 1,
+    "heading_degrees": null
+  }
+]

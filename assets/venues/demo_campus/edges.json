@@ -1,0 +1,79 @@
+[
+  {
+    "from": "road_entry",
+    "to": "main_entrance",
+    "distance_m": 12,
+    "bidirectional": true,
+    "accessible": true
+  },
+  {
+    "from": "main_entrance",
+    "to": "main_hall",
+    "distance_m": 18,
+    "bidirectional": true,
+    "accessible": true
+  },
+  {
+    "from": "main_entrance",
+    "to": "terrace_entry",
+    "distance_m": 14,
+    "bidirectional": true,
+    "accessible": true
+  },
+  {
+    "from": "terrace_entry",
+    "to": "stairs_right",
+    "distance_m": 12,
+    "bidirectional": true,
+    "accessible": true
+  },
+  {
+    "from": "main_entrance",
+    "to": "main_door",
+    "distance_m": 7,
+    "bidirectional": true,
+    "accessible": true
+  },
+  {
+    "from": "main_door",
+    "to": "lower_corridor",
+    "distance_m": 9,
+    "bidirectional": true,
+    "accessible": true
+  },
+  {
+    "from": "lower_corridor",
+    "to": "math_park_bend",
+    "distance_m": 8,
+    "bidirectional": true,
+    "accessible": true
+  },
+  {
+    "from": "math_park_bend",
+    "to": "electronics_junction",
+    "distance_m": 18,
+    "bidirectional": true,
+    "accessible": true
+  },
+  {
+    "from": "electronics_junction",
+    "to": "electronics_room",
+    "distance_m": 7,
+    "bidirectional": true,
+    "accessible": true
+  },
+  {
+    "from": "electronics_junction",
+    "to": "upper_corridor",
+    "distance_m": 14,
+    "bidirectional": true,
+    "accessible": true
+  },
+  {
+    "from": "upper_corridor",
+    "to": "stairs_floor2",
+    "distance_m": 11,
+    "bidirectional": true,
+    "accessible": true
+  }
+]

@@ -1,0 +1,98 @@
+[
+  {
+    "id": "road_entry",
+    "label": "Road Entry",
+    "floor": 1,
+    "x": 0.5,
+    "y": 0.94,
+    "type": "entrance"
+  },
+  {
+    "id": "main_entrance",
+    "label": "Main Entrance",
+    "floor": 1,
+    "x": 0.5,
+    "y": 0.8,
+    "type": "entrance"
+  },
+  {
+    "id": "main_hall",
+    "label": "Main Hall",
+    "floor": 1,
+    "x": 0.18,
+    "y": 0.78,
+    "type": "landmark"
+  },
+  {
+    "id": "terrace_entry",
+    "label": "Terrace Entrance",
+    "floor": 1,
+    "x": 0.7,
+    "y": 0.79,
+    "type": "entrance"
+  },
+  {
+    "id": "stairs_right",
+    "label": "Terrace Stairs to Floor 2",
+    "floor": 1,
+    "x": 0.84,
+    "y": 0.9,
+    "type": "stairs"
+  },
+  {
+    "id": "main_door",
+    "label": "Main Door",
+    "floor": 1,
+    "x": 0.5,
+    "y": 0.69,
+    "type": "waypoint"
+  },
+  {
+    "id": "lower_corridor",
+    "label": "Lower Corridor",
+    "floor": 1,
+    "x": 0.5,
+    "y": 0.59,
+    "type": "waypoint"
+  },
+  {
+    "id": "math_park_bend",
+    "label": "Main Park Bend",
+    "floor": 1,
+    "x": 0.39,
+    "y": 0.49,
+    "type": "landmark"
+  },
+  {
+    "id": "electronics_junction",
+    "label": "Electronics Junction",
+    "floor": 1,
+    "x": 0.5,
+    "y": 0.34,
+    "type": "waypoint"
+  },
+  {
+    "id": "electronics_room",
+    "label": "Electronics Practice Room",
+    "floor": 1,
+    "x": 0.69,
+    "y": 0.34,
+    "type": "lab"
+  },
+  {
+    "id": "upper_corridor",
+    "label": "Upper Corridor",
+    "floor": 1,
+    "x": 0.49,
+    "y": 0.2,
+    "type": "waypoint"
+  },
+  {
+    "id": "stairs_floor2",
+    "label": "Main Stairs to Floor 2",
+    "floor": 1,
+    "x": 0.53,
+    "y": 0.08,
+    "type": "stairs"
+  }
+]

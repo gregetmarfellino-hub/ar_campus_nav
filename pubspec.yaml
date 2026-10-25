@@ -1,0 +1,26 @@
+name: ar_campus_nav
+description: "Offline modular campus navigation prototype."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  mobile_scanner: ^7.4.2
+  qr_flutter: ^4.1.0
+  flutter_compass: ^0.8.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/venues/demo_campus/

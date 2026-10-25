@@ -1,0 +1,10 @@
+{
+  "id": "demo_campus_engineering",
+  "name": "Demo Campus \u00b7 Engineering Ground Floor",
+  "description": "Portable offline venue module for the first mapped section of the engineering ground floor. Indoor paths remain user-verified sample data.",
+  "version": 2,
+  "floors": [
+    1
+  ],
+  "default_start_node_id": "main_entrance"
+}
