@@ -5,6 +5,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../models/anchor_point.dart';
 import '../models/venue.dart';
 import '../services/anchor_codec.dart';
+import '../services/visual_anchor_spec.dart';
 
 class AnchorQrScreen extends StatefulWidget {
   const AnchorQrScreen({
@@ -106,6 +107,8 @@ class _AnchorQrScreenState extends State<AnchorQrScreen> {
                     anchor: anchor,
                   ),
                 ),
+                const SizedBox(height: 14),
+                _VisualPoseStatus(anchor: anchor),
                 const SizedBox(height: 18),
                 Container(
                   padding: const EdgeInsets.all(15),
@@ -124,9 +127,10 @@ class _AnchorQrScreenState extends State<AnchorQrScreen> {
                       SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'Install this QR at the exact physical place where '
-                          'the anchor was mapped. Moving the QR changes the '
-                          'meaning of the location and will shift AR navigation.',
+                          'Install this QR at the exact mapped location. Keep '
+                          'the QR upright and do not rotate or move it after '
+                          'deployment. The black/white QR image itself must be '
+                          '16 cm wide so ARCore can recover metric scale.',
                           style: TextStyle(
                             color: Colors.white70,
                             height: 1.45,
@@ -288,13 +292,66 @@ class _QrCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 10),
-          const Text(
-            'AR CAMPUS NAV • SCAN LOCATION',
-            style: TextStyle(
+          Text(
+            'AR CAMPUS NAV • ${anchor.visualPoseReady ? 'VISUAL POSE READY' : 'POSITION ONLY'}',
+            style: const TextStyle(
               color: Color(0xFF9DBEF7),
               fontSize: 10,
               fontWeight: FontWeight.w900,
               letterSpacing: 0.8,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VisualPoseStatus extends StatelessWidget {
+  const _VisualPoseStatus({required this.anchor});
+
+  final AnchorPoint anchor;
+
+  @override
+  Widget build(BuildContext context) {
+    final ready = anchor.visualPoseReady;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: ready
+            ? const Color(0x143DDC97)
+            : const Color(0x14F9C74F),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: ready
+              ? const Color(0x333DDC97)
+              : const Color(0x33F9C74F),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            ready ? Icons.center_focus_strong_rounded : Icons.info_outline,
+            color: ready
+                ? const Color(0xFF3DDC97)
+                : const Color(0xFFF9C74F),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              ready
+                  ? 'Visual pose ready • QR width '
+                      '${(VisualAnchorSpec.qrWidthMeters * 100).toStringAsFixed(0)} cm. '
+                      'AR Guide can localize position + direction directly '
+                      'from this QR.'
+                  : 'Legacy position-only anchor. Re-map this anchor with the '
+                      'Spatial Mapper visual-facing capture before relying on '
+                      'one-scan orientation.',
+              style: const TextStyle(
+                color: Colors.white70,
+                height: 1.4,
+              ),
             ),
           ),
         ],
