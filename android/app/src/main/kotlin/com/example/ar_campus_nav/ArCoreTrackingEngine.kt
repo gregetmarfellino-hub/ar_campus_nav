@@ -89,6 +89,9 @@ class ArCoreTrackingEngine(
     private var persistentPortalLabel = "Start portal"
     private var navigationCloudAnchorId: String? = null
     private var navigationResolveFuture: com.google.ar.core.ResolveCloudAnchorFuture? = null
+    private var navigationPortalActivated = false
+    private var navigationPortalFocusFrames = 0
+    private val navigationPortalFocusFramesRequired = 12
 
     // Physical start QR localization for mapping. The image database is loaded
     // before the ARCore session starts, then the mapper camera waits for this
