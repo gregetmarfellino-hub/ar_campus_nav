@@ -698,15 +698,21 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'AR start portal ready',
-                        style: TextStyle(fontWeight: FontWeight.w900),
+                      Text(
+                        routeStartAnchor!.localDevPortal
+                            ? 'AR start portal ready (DEV)'
+                            : 'AR start portal ready',
+                        style: const TextStyle(fontWeight: FontWeight.w900),
                       ),
                       const SizedBox(height: 3),
                       Text(
-                        '${routeStartAnchor!.label} has a persistent start portal. '
-                        'Choose a destination; AR resolves it near the mapped '
-                        'entrance and activates the saved route.',
+                        routeStartAnchor.localDevPortal
+                            ? '${routeStartAnchor.label} is using the local dev portal. '
+                                'Choose a destination to test portal scanning and route guidance; '
+                                'the old physical spot is not restored in this mode.'
+                            : '${routeStartAnchor.label} has a persistent start portal. '
+                                'Choose a destination; AR resolves it near the mapped '
+                                'entrance and activates the saved route.',
                         style: const TextStyle(
                           color: Colors.white54,
                           fontSize: 11,
