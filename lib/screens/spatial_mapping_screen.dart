@@ -59,9 +59,12 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
   bool _starting = false;
   bool _arStarted = false;
   bool _arming = false;
-  bool _awaitingFreshOrigin = false;
+  bool _awaitingStartQr = false;
   bool _recording = false;
   bool _trackingInterrupted = false;
+
+  String? _placedStartQrId;
+  String? _placedStartQrLabel;
 
   int _stablePoseSamples = 0;
   int _recoveryPoseSamples = 0;
@@ -81,7 +84,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
   String? _savedJson;
 
   bool get _mappingActive =>
-      _arming || _awaitingFreshOrigin || _recording;
+      _arming || _awaitingStartQr || _recording;
 
   @override
   void initState() {
@@ -205,7 +208,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       setState(() {
         _arStarted = true;
         _arming = true;
-        _awaitingFreshOrigin = false;
+        _awaitingStartQr = false;
         _recording = false;
         _trackingInterrupted = false;
         _stablePoseSamples = 0;
@@ -219,6 +222,8 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         _pose = const ArPose(tracking: 'INITIALIZING');
         _points.clear();
         _markers.clear();
+        _placedStartQrId = null;
+        _placedStartQrLabel = null;
         _message =
             'WAIT — do not walk yet. Hold the phone naturally and point the '
             'rear camera at a textured, well-lit area while ARCore locks on.';
@@ -258,6 +263,10 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         _message =
             'WAIT — ARCore has not locked yet. '
             '${pose.errorMessage ?? 'Move the phone slowly and aim at visible detail.'}';
+      } else if (_awaitingStartQr && pose.tracking == 'PAUSED') {
+        _message =
+            'WAIT — tracking paused before the start QR was placed. '
+            '${pose.errorMessage ?? 'Move the phone slowly until ARCore recovers.'}';
       } else if (pose.errorMessage != null) {
         _message = pose.errorMessage;
       }
@@ -269,19 +278,18 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     _pose = pose;
 
     // Initial acquisition: demand several consecutive good poses before
-    // allowing mapping to begin. Once stable, reset the native local origin
-    // exactly where the user is standing.
+    // allowing the author to define the entrance/start QR. Recording does not
+    // begin until that visual anchor has been placed.
     if (_arming) {
       _stablePoseSamples++;
 
       if (_stablePoseSamples >= _stablePoseSamplesRequired) {
         _arming = false;
-        _awaitingFreshOrigin = true;
-        _trackingState = 'LOCKED';
+        _awaitingStartQr = true;
+        _trackingState = 'START QR';
         _message =
-            'Tracking locked. Hold still for a moment while the mapping origin '
-            'is set here.';
-        unawaited(_resetOriginAndBegin());
+            'ARCore locked. Do not walk yet — place the entrance/start QR in '
+            'AR first. That visual anchor becomes the origin for this route.';
         _refreshUi(force: true);
         return;
       }
@@ -289,15 +297,14 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       _trackingState =
           'LOCKING $_stablePoseSamples/$_stablePoseSamplesRequired';
       _message =
-          'WAIT — keep the phone steady. Mapping starts only after a stable '
-          'ARCore lock.';
+          'WAIT — keep the phone steady. After ARCore locks, define the start '
+          'QR before walking.';
       _refreshUi();
       return;
     }
 
-    // resetArOrigin() clears the native frame. Do not record an old pose that
-    // raced with the reset command.
-    if (_awaitingFreshOrigin) {
+    if (_awaitingStartQr) {
+      _trackingState = 'START QR';
       _refreshUi();
       return;
     }
@@ -400,40 +407,6 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       qz: pose.qz,
       qw: pose.qw,
     );
-  }
-
-  Future<void> _resetOriginAndBegin() async {
-    try {
-      await _ar.resetOrigin();
-      if (!mounted || !_awaitingFreshOrigin) return;
-
-      // Give the next real TRACKING pose ownership of the freshly reset frame.
-      // The next EventChannel pose arrives at ~20 Hz.
-      await Future<void>.delayed(const Duration(milliseconds: 80));
-      if (!mounted || !_awaitingFreshOrigin) return;
-
-      setState(() {
-        _awaitingFreshOrigin = false;
-        _recording = true;
-        _trackingInterrupted = false;
-        _recordedDistanceMeters = 0;
-        _points.clear();
-        _markers.clear();
-        _trackingState = 'READY';
-        _message =
-            'READY — start walking now. If tracking pauses, stop walking until '
-            'the app says it has recovered.';
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _arming = false;
-        _awaitingFreshOrigin = false;
-        _recording = false;
-        _trackingState = 'ERROR';
-        _message = 'Could not set mapping origin: $error';
-      });
-    }
   }
 
   void _refreshUi({bool force = false}) {
@@ -892,7 +865,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       if (!mounted) return;
       setState(() {
         _arming = false;
-        _awaitingFreshOrigin = false;
+        _awaitingStartQr = false;
         _recording = false;
         _trackingInterrupted = false;
         _arStarted = false;
@@ -922,7 +895,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     if (!mounted) return;
     setState(() {
       _arming = false;
-      _awaitingFreshOrigin = false;
+      _awaitingStartQr = false;
       _recording = false;
       _trackingInterrupted = false;
       _arStarted = false;
