@@ -80,6 +80,16 @@ class ArCoreTrackingEngine(
     private var qrPlacementWidthMeters = 0.16f
     private var qrPlacementCompletion: ((Map<String, Any>?) -> Unit)? = null
 
+    // Persistent start portal. Mapping hosts one Cloud Anchor at the portal
+    // pose; navigation resolves the saved ID in a fresh ARCore session.
+    private var persistentPortalMappingMode = false
+    private var persistentPortalHosting = false
+    private var persistentPortalHostAnchor: Anchor? = null
+    private var persistentPortalHostFuture: com.google.ar.core.HostCloudAnchorFuture? = null
+    private var persistentPortalLabel = "Start portal"
+    private var navigationCloudAnchorId: String? = null
+    private var navigationResolveFuture: com.google.ar.core.ResolveCloudAnchorFuture? = null
+
     // Physical start QR localization for mapping. The image database is loaded
     // before the ARCore session starts, then the mapper camera waits for this
     // real-world QR and uses its measured center + outward normal as the
