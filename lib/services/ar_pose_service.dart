@@ -128,6 +128,23 @@ class ArPoseService {
     return await _native.invokeMethod<String>('startArTracking') ?? 'UNKNOWN';
   }
 
+  Future<String> startMappingWithVisualAnchor({
+    required Uint8List qrPng,
+    required double widthMeters,
+    required String label,
+  }) async {
+    if (!platformSupported) return 'ANDROID_ONLY';
+    return await _native.invokeMethod<String>(
+          'startArTracking',
+          <String, dynamic>{
+            'mapping_visual_anchor_png': qrPng,
+            'mapping_visual_anchor_width_m': widthMeters,
+            'mapping_visual_anchor_label': label,
+          },
+        ) ??
+        'UNKNOWN';
+  }
+
   Future<VisualQrPlacement?> placeVisualQrAnchor({
     required Uint8List qrPng,
     required double widthMeters,
