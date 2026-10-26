@@ -146,6 +146,60 @@ void main() {
     expect(anchor.visualPoseReady, isFalse);
   });
 
+  test('persistent portal ID survives mapping apply into start anchor', () {
+    final session = MappingSession(
+      id: 'persistent_portal',
+      venueId: 'venue',
+      venueName: 'Venue',
+      floor: 1,
+      createdAt: DateTime.utc(2026, 1, 1),
+      startAnchorId: 'main_anchor',
+      startAnchorLabel: 'Main Entrance',
+      startCloudAnchorId: 'cloud-test-123',
+      originHeadingDegrees: 0,
+      stepLengthMeters: 0,
+      source: 'arcore_spatial',
+      points: const [
+        MappingPoint(
+          xMeters: 0,
+          yMeters: 0,
+          headingDegrees: 0,
+          stepIndex: 0,
+          timestampMs: 0,
+        ),
+        MappingPoint(
+          xMeters: 0,
+          yMeters: 3,
+          headingDegrees: 0,
+          stepIndex: 1,
+          timestampMs: 1000,
+        ),
+      ],
+      markers: const [
+        MappingMarker(
+          id: 'main_anchor',
+          label: 'Main Entrance',
+          type: 'anchor',
+          floor: 1,
+          xMeters: 0,
+          yMeters: 0,
+          upMeters: 0,
+          pointIndex: 0,
+          anchorFacingDegrees: 0,
+        ),
+      ],
+    );
+
+    final venue = service.applySession(
+      venue: baseVenue(),
+      session: session,
+    );
+    final anchor = venue.anchorById('main_anchor');
+
+    expect(anchor.cloudAnchorId, 'cloud-test-123');
+    expect(anchor.persistentPoseReady, isTrue);
+    expect(anchor.nodeId, 'old_start');
+  });
   test('placed start QR upgrades an existing legacy entrance anchor', () {
     final session = MappingSession(
       id: 'upgrade_main_entrance',
