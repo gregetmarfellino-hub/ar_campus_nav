@@ -597,7 +597,15 @@ class ArCoreTrackingEngine(
             textSize = 14f
             setTextColor(Color.WHITE)
             background = roundedBackground(0xC0000000.toInt(), dp(24).toFloat())
-            setOnClickListener { finishQrPlacement(null) }
+            setOnClickListener {
+                if (persistentPortalMappingMode) {
+                    emitStatus("PERSISTENT_PORTAL_CANCELLED")
+                    finishQrPlacement(null)
+                    mainHandler.post { stop() }
+                } else {
+                    finishQrPlacement(null)
+                }
+            }
         }
 
         controls.addView(
@@ -690,7 +698,7 @@ class ArCoreTrackingEngine(
         )
 
         if (persistentPortalMappingMode) {
-            updatePersistentPortalQuality(targetPose)
+            updatePersistentPortalQuality(currentPose)
         }
 
         if (!qrPlacementRequested) return
@@ -701,7 +709,7 @@ class ArCoreTrackingEngine(
                 setPersistentPortalStatus("ARCore session is unavailable. Try again.")
                 return
             }
-            val quality = activeSession.estimateFeatureMapQualityForHosting(targetPose)
+            val quality = activeSession.estimateFeatureMapQualityForHosting(currentPose)
             if (quality == Session.FeatureMapQuality.INSUFFICIENT) {
                 setPersistentPortalStatus(
                     "NOT ENOUGH VISUAL DETAIL YET — slowly scan the entrance area around the portal.",
@@ -762,10 +770,10 @@ class ArCoreTrackingEngine(
         )
     }
 
-    private fun updatePersistentPortalQuality(targetPose: Pose) {
+    private fun updatePersistentPortalQuality(cameraPose: Pose) {
         val activeSession = session ?: return
         val quality = try {
-            activeSession.estimateFeatureMapQualityForHosting(targetPose)
+            activeSession.estimateFeatureMapQualityForHosting(cameraPose)
         } catch (_: Exception) {
             Session.FeatureMapQuality.INSUFFICIENT
         }
@@ -867,7 +875,18 @@ class ArCoreTrackingEngine(
         qrPlacementTrackingReady = ready
 
         mainHandler.post {
+            if (persistentPortalMappingMode) {
+                if (!ready) {
+                    qrPlacementButton?.isEnabled = false
+                    qrPlacementButton?.alpha = 0.45f
+                    qrPlacementStatusText?.text =
+                        "TRACKING PAUSED — move slowly until ARCore recovers."
+                }
+                return@post
+            }
+
             qrPlacementButton?.isEnabled = ready
+            qrPlacementButton?.alpha = if (ready) 1f else 0.45f
             if (ready) {
                 qrPlacementStatusText?.text =
                     "QR READY — move/aim the phone, adjust distance, then tap PLACE QR HERE."
