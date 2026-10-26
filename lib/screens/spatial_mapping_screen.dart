@@ -15,7 +15,6 @@ import '../services/ar_pose_service.dart';
 import '../services/mapping_path_simplifier.dart';
 import '../services/mapping_storage.dart';
 import '../services/visual_anchor_spec.dart';
-import 'mapping_screen.dart';
 import 'qr_anchor_scanner_screen.dart';
 
 class SpatialMappingScreen extends StatefulWidget {
@@ -931,18 +930,6 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Mapping JSON copied.')),
-    );
-  }
-
-  Future<void> _openLegacyMapper() async {
-    if (_mappingActive || _starting) return;
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => MappingScreen(
-          venue: widget.venue,
-          initialAnchor: _startAnchor,
-        ),
-      ),
     );
   }
 
