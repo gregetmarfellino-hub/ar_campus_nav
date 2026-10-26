@@ -284,9 +284,13 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
               anchorFacingDegrees: 0,
             ),
           );
-        _message =
-            'START PORTAL SAVED — $label is now the persistent route origin. '
-            'Start walking and add the destination.';
+        final localDev = cloudAnchorId.startsWith('localdev:');
+        _message = localDev
+            ? 'LOCAL DEV PORTAL SAVED — start walking and add the destination. '
+                'The portal/route UX is testable now, but this mode will not '
+                'restore the exact old physical spot in a fresh session.'
+            : 'START PORTAL SAVED — $label is now the persistent route origin. '
+                'Start walking and add the destination.';
       });
       return;
     }
