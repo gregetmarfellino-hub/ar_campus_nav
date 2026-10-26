@@ -1422,6 +1422,133 @@ class ArCoreTrackingEngine(
             mappingVisualStatusText?.text = text
         }
     }
+    private fun beginPersistentPortalResolve(activeSession: Session) {
+        val cloudId = navigationCloudAnchorId ?: return
+        if (navigationAligned || navigationCloudResolveAttempted) return
+
+        navigationCloudResolveAttempted = true
+        setNavigationHud(
+            "FINDING START PORTAL — slowly look around the mapped entrance area...",
+        )
+        mainHandler.post {
+            navigationAlignButton?.visibility = android.view.View.GONE
+            navigationReanchorButton?.visibility = android.view.View.GONE
+        }
+
+        navigationResolveFuture = activeSession.resolveCloudAnchorAsync(
+            cloudId,
+        ) { resolvedAnchor, state ->
+            navigationResolveFuture = null
+            val glView = surfaceView
+            if (glView == null) {
+                try { resolvedAnchor?.detach() } catch (_: Exception) {}
+                return@resolveCloudAnchorAsync
+            }
+
+            glView.queueEvent {
+                if (state == Anchor.CloudAnchorState.SUCCESS &&
+                    resolvedAnchor != null
+                ) {
+                    releaseNavigationAnchor()
+                    navigationWorldAnchor = resolvedAnchor
+                    navigationForwardX = 0f
+                    navigationForwardZ = -1f
+                    navigationRightX = 1f
+                    navigationRightZ = 0f
+                    navigationAligned = true
+                    navigationPortalActivated = false
+                    navigationPortalFocusFrames = 0
+                    resetNavigationCalibration()
+                    resetNavigationContinuity()
+                    activeRouteIndex = 1
+
+                    setNavigationAlignedUi()
+                    setNavigationHud(
+                        "START PORTAL FOUND — point the camera at the floating QR to begin.",
+                    )
+                    emitStatus("PERSISTENT_PORTAL_RESOLVED")
+                } else {
+                    try { resolvedAnchor?.detach() } catch (_: Exception) {}
+                    setNavigationArrowVisible(false)
+                    setNavigationHud(
+                        "COULD NOT RESOLVE START PORTAL (${state.name}). " +
+                            "Return near the mapped entrance with internet access and retry.",
+                    )
+                    emitError(
+                        "CLOUD_ANCHOR_RESOLVE_FAILED",
+                        "Cloud Anchor resolve failed: ${state.name}",
+                    )
+                }
+            }
+        }
+    }
+
+    private fun drawPersistentNavigationPortal(
+        camera: com.google.ar.core.Camera,
+        anchor: Anchor,
+    ) {
+        val pose = anchor.pose
+        qrPlacementRenderer.draw(
+            camera = camera,
+            center = pose.translation,
+            rightAxis = pose.getTransformedAxis(0, 1f),
+            upAxis = pose.getTransformedAxis(1, 1f),
+            sizeMeters = qrPlacementWidthMeters,
+        )
+    }
+
+    private fun updatePersistentPortalActivation(
+        currentPose: Pose,
+        anchor: Anchor,
+    ): Boolean {
+        if (navigationPortalActivated) return true
+
+        val portal = anchor.pose.translation
+        val cameraPosition = currentPose.translation
+        val dx = portal[0] - cameraPosition[0]
+        val dy = portal[1] - cameraPosition[1]
+        val dz = portal[2] - cameraPosition[2]
+        val distance = sqrt(dx * dx + dy * dy + dz * dz)
+        if (distance < 0.001f) {
+            navigationPortalFocusFrames = 0
+            return false
+        }
+
+        val cameraForward = currentPose.getTransformedAxis(2, -1f)
+        val inverseDistance = 1f / distance
+        val dot =
+            cameraForward[0] * dx * inverseDistance +
+                cameraForward[1] * dy * inverseDistance +
+                cameraForward[2] * dz * inverseDistance
+
+        val centered = dot >= 0.94f && distance in 0.30f..4.00f
+        navigationPortalFocusFrames = if (centered) {
+            navigationPortalFocusFrames + 1
+        } else {
+            0
+        }
+
+        if (navigationPortalFocusFrames >= navigationPortalFocusFramesRequired) {
+            navigationPortalActivated = true
+            setNavigationHud(
+                "PORTAL SCANNED — route activated. Follow the green AR path.",
+            )
+            emitStatus("PERSISTENT_PORTAL_ACTIVATED")
+            return true
+        }
+
+        val progress =
+            ((navigationPortalFocusFrames.toFloat() /
+                navigationPortalFocusFramesRequired.toFloat()) * 100f).toInt()
+        setNavigationHud(
+            if (centered) {
+                "SCANNING START PORTAL — hold steady ${progress}%"
+            } else {
+                "CENTER THE FLOATING START QR IN THE CAMERA TO BEGIN"
+            },
+        )
+        return false
+    }
     private fun configurePersistentPortalPreview(
         png: ByteArray?,
         widthMeters: Float?,
