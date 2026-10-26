@@ -626,6 +626,23 @@ class ArCoreTrackingEngine(
         currentPose: Pose,
         camera: com.google.ar.core.Camera,
     ) {
+        if (persistentPortalHosting) {
+            val hostedAnchor = persistentPortalHostAnchor
+            if (hostedAnchor != null &&
+                hostedAnchor.trackingState == TrackingState.TRACKING
+            ) {
+                val pose = hostedAnchor.pose
+                qrPlacementRenderer.draw(
+                    camera = camera,
+                    center = pose.translation,
+                    rightAxis = pose.getTransformedAxis(0, 1f),
+                    upAxis = pose.getTransformedAxis(1, 1f),
+                    sizeMeters = qrPlacementWidthMeters,
+                )
+            }
+            return
+        }
+
         val cameraForward = currentPose.getTransformedAxis(2, -1f)
         val cameraPosition = currentPose.translation
         val distance = qrPlacementDistanceMeters
@@ -636,13 +653,16 @@ class ArCoreTrackingEngine(
             cameraPosition[2] + cameraForward[2] * distance,
         )
 
-        // Keep the QR upright regardless of phone pitch/roll. Its outward
-        // normal faces back toward the user at placement time.
         val horizontal = horizontalForward(currentPose)
         val outwardX = -horizontal[0]
         val outwardZ = -horizontal[2]
         val rightAxis = floatArrayOf(outwardZ, 0f, -outwardX)
         val upAxis = floatArrayOf(0f, 1f, 0f)
+        val targetPose = horizontalPoseFromForward(
+            position = center,
+            forwardX = horizontal[0],
+            forwardZ = horizontal[2],
+        )
 
         qrPlacementRenderer.draw(
             camera = camera,
@@ -652,8 +672,38 @@ class ArCoreTrackingEngine(
             sizeMeters = qrPlacementWidthMeters,
         )
 
+        if (persistentPortalMappingMode) {
+            updatePersistentPortalQuality(targetPose)
+        }
+
         if (!qrPlacementRequested) return
         qrPlacementRequested = false
+
+        if (persistentPortalMappingMode) {
+            val activeSession = session ?: run {
+                setPersistentPortalStatus("ARCore session is unavailable. Try again.")
+                return
+            }
+            val quality = activeSession.estimateFeatureMapQualityForHosting(targetPose)
+            if (quality == Session.FeatureMapQuality.INSUFFICIENT) {
+                setPersistentPortalStatus(
+                    "NOT ENOUGH VISUAL DETAIL YET — slowly scan the entrance area around the portal.",
+                )
+                return
+            }
+
+            trackingOriginPosition = center.copyOf()
+            trackingForwardX = horizontal[0]
+            trackingForwardZ = horizontal[2]
+            trackingRightX = -trackingForwardZ
+            trackingRightZ = trackingForwardX
+
+            hostPersistentStartPortal(
+                activeSession = activeSession,
+                targetPose = targetPose,
+            )
+            return
+        }
 
         val origin = trackingOriginPosition ?: run {
             mainHandler.post {
@@ -663,11 +713,6 @@ class ArCoreTrackingEngine(
             return
         }
 
-        val targetPose = Pose.makeTranslation(
-            center[0],
-            center[1],
-            center[2],
-        )
         val local = localPosition(
             pose = targetPose,
             origin = origin,
@@ -700,6 +745,106 @@ class ArCoreTrackingEngine(
         )
     }
 
+    private fun updatePersistentPortalQuality(targetPose: Pose) {
+        val activeSession = session ?: return
+        val quality = try {
+            activeSession.estimateFeatureMapQualityForHosting(targetPose)
+        } catch (_: Exception) {
+            Session.FeatureMapQuality.INSUFFICIENT
+        }
+        val ready = quality != Session.FeatureMapQuality.INSUFFICIENT
+
+        mainHandler.post {
+            qrPlacementButton?.apply {
+                isEnabled = ready
+                alpha = if (ready) 1f else 0.45f
+            }
+            qrPlacementStatusText?.text = if (ready) {
+                "PERSISTENCE READY (${quality.name}) — position the QR portal, then tap LOCK START PORTAL."
+            } else {
+                "SCAN AROUND THE START — move slowly so ARCore can learn enough visual detail to persist this portal."
+            }
+        }
+    }
+
+    private fun setPersistentPortalStatus(text: String) {
+        mainHandler.post {
+            qrPlacementStatusText?.text = text
+        }
+    }
+
+    private fun hostPersistentStartPortal(
+        activeSession: Session,
+        targetPose: Pose,
+    ) {
+        persistentPortalHostFuture?.cancel()
+        persistentPortalHostFuture = null
+
+        try {
+            persistentPortalHostAnchor?.detach()
+        } catch (_: Exception) {
+        }
+
+        val localAnchor = activeSession.createAnchor(targetPose)
+        persistentPortalHostAnchor = localAnchor
+        persistentPortalHosting = true
+
+        mainHandler.post {
+            qrPlacementButton?.apply {
+                isEnabled = false
+                alpha = 0.45f
+                text = "HOSTING PORTAL..."
+            }
+            qrPlacementStatusText?.text =
+                "SAVING START PORTAL — keep the phone steady and keep this area visible."
+        }
+
+        persistentPortalHostFuture = activeSession.hostCloudAnchorAsync(
+            localAnchor,
+            1,
+        ) { cloudAnchorId, state ->
+            persistentPortalHostFuture = null
+
+            if (state == Anchor.CloudAnchorState.SUCCESS &&
+                !cloudAnchorId.isNullOrBlank()
+            ) {
+                emit(
+                    mapOf(
+                        "type" to "status",
+                        "tracking" to "PERSISTENT_PORTAL_HOSTED",
+                        "cloud_anchor_id" to cloudAnchorId,
+                        "message" to "Persistent start portal saved.",
+                    ),
+                )
+                finishQrPlacement(
+                    mapOf(
+                        "cloud_anchor_id" to cloudAnchorId,
+                    ),
+                )
+            } else {
+                persistentPortalHosting = false
+                try {
+                    persistentPortalHostAnchor?.detach()
+                } catch (_: Exception) {
+                }
+                persistentPortalHostAnchor = null
+
+                mainHandler.post {
+                    qrPlacementButton?.apply {
+                        text = "LOCK START PORTAL"
+                        isEnabled = true
+                        alpha = 1f
+                    }
+                    qrPlacementStatusText?.text =
+                        "PORTAL SAVE FAILED (${state.name}). Check internet / ARCore Cloud setup, then try again."
+                }
+                emitError(
+                    "CLOUD_ANCHOR_HOST_FAILED",
+                    "Cloud Anchor hosting failed: ${state.name}",
+                )
+            }
+        }
+    }
     private fun setQrPlacementTrackingReady(ready: Boolean) {
         if (qrPlacementTrackingReady == ready) return
         qrPlacementTrackingReady = ready
