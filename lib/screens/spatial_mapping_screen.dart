@@ -10,12 +10,10 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../models/anchor_point.dart';
 import '../models/mapping_session.dart';
 import '../models/venue.dart';
-import '../services/anchor_codec.dart';
 import '../services/ar_pose_service.dart';
 import '../services/mapping_path_simplifier.dart';
 import '../services/mapping_storage.dart';
 import '../services/visual_anchor_spec.dart';
-import 'qr_anchor_scanner_screen.dart';
 
 class SpatialMappingScreen extends StatefulWidget {
   const SpatialMappingScreen({
@@ -45,7 +43,6 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
 
   final ArPoseService _ar = const ArPoseService();
   final MappingStorage _storage = const MappingStorage();
-  final AnchorCodec _anchorCodec = const AnchorCodec();
 
   StreamSubscription<ArPose>? _poseSubscription;
 
@@ -126,35 +123,6 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         _availability = 'ERROR';
         _message = error.toString();
       });
-    }
-  }
-
-  Future<void> _scanStartAnchor() async {
-    if (_mappingActive || _starting) return;
-
-    final raw = await Navigator.of(context).push<String>(
-      MaterialPageRoute<String>(
-        builder: (_) => const QrAnchorScannerScreen(),
-      ),
-    );
-    if (!mounted || raw == null) return;
-
-    try {
-      final anchor = _anchorCodec.resolve(
-        venue: widget.venue,
-        rawValue: raw,
-      );
-      setState(() {
-        _startAnchor = anchor;
-        _floor = anchor.floor;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Spatial origin: ${anchor.label}')),
-      );
-    } on FormatException catch (error) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(error.message)),
-      );
     }
   }
 
@@ -1027,51 +995,39 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
           ),
           const SizedBox(height: 18),
           _section('START / FLOOR'),
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<String?>(
-                  key: ValueKey(_startAnchor?.id),
-                  initialValue: _startAnchor?.id,
-                  decoration: const InputDecoration(
-                    labelText: 'Start location / entrance',
-                    prefixIcon: Icon(Icons.qr_code_2_rounded),
-                  ),
-                  items: [
-                    const DropdownMenuItem<String?>(
-                      value: null,
-                      child: Text('Create a new route start'),
-                    ),
-                    for (final anchor in widget.venue.anchors)
-                      DropdownMenuItem<String?>(
-                        value: anchor.id,
-                        child: Text(anchor.label),
-                      ),
-                  ],
-                  onChanged: _mappingActive || _starting
-                      ? null
-                      : (value) {
-                          if (value == null) {
-                            setState(() => _startAnchor = null);
-                            return;
-                          }
-                          final anchor = widget.venue.anchors.firstWhere(
-                            (item) => item.id == value,
-                          );
-                          setState(() {
-                            _startAnchor = anchor;
-                            _floor = anchor.floor;
-                          });
-                        },
+          DropdownButtonFormField<String?>(
+            key: ValueKey(_startAnchor?.id),
+            initialValue: _startAnchor?.id,
+            decoration: const InputDecoration(
+              labelText: 'Route start / entrance',
+              prefixIcon: Icon(Icons.view_in_ar_rounded),
+            ),
+            items: [
+              const DropdownMenuItem<String?>(
+                value: null,
+                child: Text('Create a new route start'),
+              ),
+              for (final anchor in widget.venue.anchors)
+                DropdownMenuItem<String?>(
+                  value: anchor.id,
+                  child: Text(anchor.label),
                 ),
-              ),
-              const SizedBox(width: 8),
-              IconButton.filledTonal(
-                tooltip: 'Scan start anchor',
-                onPressed: _mappingActive || _starting ? null : _scanStartAnchor,
-                icon: const Icon(Icons.qr_code_scanner_rounded),
-              ),
             ],
+            onChanged: _mappingActive || _starting
+                ? null
+                : (value) {
+                    if (value == null) {
+                      setState(() => _startAnchor = null);
+                      return;
+                    }
+                    final anchor = widget.venue.anchors.firstWhere(
+                      (item) => item.id == value,
+                    );
+                    setState(() {
+                      _startAnchor = anchor;
+                      _floor = anchor.floor;
+                    });
+                  },
           ),
           const SizedBox(height: 10),
           DropdownButtonFormField<int>(
