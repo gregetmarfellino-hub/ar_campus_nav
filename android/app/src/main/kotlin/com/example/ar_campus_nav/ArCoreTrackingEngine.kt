@@ -306,12 +306,24 @@ class ArCoreTrackingEngine(
         navigationCloudAnchorId = cloudAnchorId?.takeIf { it.isNotBlank() }
         navigationResolveFuture?.cancel()
         navigationResolveFuture = null
-        configureVisualAnchor(
-            png = visualAnchorPng,
-            widthMeters = visualAnchorWidthMeters,
-            label = visualAnchorLabel,
-            routeOffsetDegrees = visualAnchorRouteOffsetDegrees,
-        )
+        navigationPortalFocusFrames = 0
+        navigationPortalActivated = navigationCloudAnchorId == null
+
+        if (navigationCloudAnchorId != null) {
+            clearVisualAnchorConfiguration()
+            configurePersistentPortalPreview(
+                png = visualAnchorPng,
+                widthMeters = visualAnchorWidthMeters,
+                label = visualAnchorLabel,
+            )
+        } else {
+            configureVisualAnchor(
+                png = visualAnchorPng,
+                widthMeters = visualAnchorWidthMeters,
+                label = visualAnchorLabel,
+                routeOffsetDegrees = visualAnchorRouteOffsetDegrees,
+            )
+        }
         navigationAligned = false
         alignmentRequested = false
         resetNavigationCalibration()
@@ -1383,6 +1395,24 @@ class ArCoreTrackingEngine(
             mappingVisualStatusText?.text = text
         }
     }
+    private fun configurePersistentPortalPreview(
+        png: ByteArray?,
+        widthMeters: Float?,
+        label: String?,
+    ) {
+        qrPlacementRenderer.setBitmap(null)
+        qrPlacementBitmap?.recycle()
+        qrPlacementBitmap = null
+
+        if (png == null || png.isEmpty()) return
+        val bitmap = BitmapFactory.decodeByteArray(png, 0, png.size) ?: return
+
+        qrPlacementBitmap = bitmap
+        qrPlacementWidthMeters = widthMeters?.takeIf { it > 0f } ?: 0.16f
+        persistentPortalLabel = label ?: navigationStartLabel
+        qrPlacementRenderer.setBitmap(bitmap)
+    }
+
     private fun configureVisualAnchor(
         png: ByteArray?,
         widthMeters: Float?,
