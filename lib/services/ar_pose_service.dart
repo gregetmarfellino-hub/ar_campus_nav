@@ -19,6 +19,7 @@ class ArPose {
     this.timestampNanos = 0,
     this.errorCode,
     this.errorMessage,
+    this.cloudAnchorId,
   });
 
   final String tracking;
@@ -34,6 +35,7 @@ class ArPose {
   final int timestampNanos;
   final String? errorCode;
   final String? errorMessage;
+  final String? cloudAnchorId;
 
   bool get isTracking => tracking == 'TRACKING';
 
@@ -70,6 +72,7 @@ class ArPose {
       timestampNanos: integer('timestamp_ns'),
       errorCode: event['code']?.toString(),
       errorMessage: event['message']?.toString(),
+      cloudAnchorId: event['cloud_anchor_id']?.toString(),
     );
   }
 }
@@ -128,6 +131,23 @@ class ArPoseService {
     return await _native.invokeMethod<String>('startArTracking') ?? 'UNKNOWN';
   }
 
+  Future<String> startPersistentPortalMapping({
+    required Uint8List qrPng,
+    required double widthMeters,
+    required String label,
+  }) async {
+    if (!platformSupported) return 'ANDROID_ONLY';
+    return await _native.invokeMethod<String>(
+          'startPersistentPortalMapping',
+          <String, dynamic>{
+            'qr_png': qrPng,
+            'qr_width_m': widthMeters,
+            'label': label,
+          },
+        ) ??
+        'UNKNOWN';
+  }
+
   Future<String> startMappingWithVisualAnchor({
     required Uint8List qrPng,
     required double widthMeters,
@@ -178,6 +198,7 @@ class ArPoseService {
     double? visualAnchorWidthMeters,
     String? visualAnchorLabel,
     double? visualAnchorRouteOffsetDegrees,
+    String? cloudAnchorId,
   }) async {
     if (!platformSupported) return 'ANDROID_ONLY';
     return await _native.invokeMethod<String>(
@@ -196,6 +217,8 @@ class ArPoseService {
             if (visualAnchorRouteOffsetDegrees != null)
               'visual_anchor_route_offset_deg':
                   visualAnchorRouteOffsetDegrees,
+            if (cloudAnchorId != null)
+              'cloud_anchor_id': cloudAnchorId,
           },
         ) ??
         'UNKNOWN';
