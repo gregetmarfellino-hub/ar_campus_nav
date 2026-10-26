@@ -565,6 +565,9 @@ class _HomeScreenState extends State<HomeScreen> {
     }).toList(growable: false);
 
     final activeAnchor = _activeAnchor;
+    final routeStartAnchor = activeAnchor ?? _anchorForStartNode(venue);
+    final persistentStartReady =
+        routeStartAnchor?.persistentPoseReady == true;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(18, 8, 18, 32),
@@ -662,7 +665,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
         const SizedBox(height: 18),
         Text(
-          activeAnchor == null ? 'LOCATION' : 'YOU ARE HERE',
+          persistentStartReady
+              ? 'AR START'
+              : activeAnchor == null
+                  ? 'LOCATION'
+                  : 'YOU ARE HERE',
           style: const TextStyle(
             color: Colors.white54,
             fontSize: 11,
@@ -671,7 +678,48 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         const SizedBox(height: 8),
-        if (activeAnchor != null)
+        if (persistentStartReady)
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0x143DDC97),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0x333DDC97)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.view_in_ar_rounded,
+                  color: Color(0xFF3DDC97),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'AR start portal ready',
+                        style: TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        '${routeStartAnchor!.label} has a persistent start portal. '
+                        'Choose a destination; AR resolves it near the mapped '
+                        'entrance and activates the saved route.',
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 11,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          )
+        else if (activeAnchor != null)
           _AnchorStatus(anchor: activeAnchor)
         else
           Container(
@@ -684,43 +732,34 @@ class _HomeScreenState extends State<HomeScreen> {
             child: const Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.location_searching_rounded,
-                    color: Color(0xFFF9C74F)),
+                Icon(Icons.info_outline_rounded, color: Color(0xFFF9C74F)),
                 SizedBox(width: 10),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Location not confirmed',
-                        style: TextStyle(fontWeight: FontWeight.w900),
-                      ),
-                      SizedBox(height: 3),
-                      Text(
-                        'Scan a venue location QR while standing at that '
-                        'marker. That anchor becomes the physical origin for '
-                        'accurate AR navigation. The manual point below is '
-                        'only a preview/test fallback.',
-                        style: TextStyle(
-                          color: Colors.white54,
-                          fontSize: 11,
-                          height: 1.4,
-                        ),
-                      ),
-                    ],
+                  child: Text(
+                    'No persistent start portal yet. Map this route with the '
+                    'Spatial Mapper for seamless AR startup.',
+                    style: TextStyle(
+                      color: Colors.white54,
+                      fontSize: 11,
+                      height: 1.4,
+                    ),
                   ),
                 ),
               ],
             ),
           ),
-        const SizedBox(height: 10),
-        FilledButton.icon(
-          onPressed: _scanAnchor,
-          icon: const Icon(Icons.qr_code_scanner_rounded),
-          label: Text(
-            activeAnchor == null ? 'SCAN LOCATION' : 'SCAN ANOTHER LOCATION',
+        if (!persistentStartReady) ...[
+          const SizedBox(height: 10),
+          FilledButton.icon(
+            onPressed: _scanAnchor,
+            icon: const Icon(Icons.qr_code_scanner_rounded),
+            label: Text(
+              activeAnchor == null
+                  ? 'LEGACY SCAN LOCATION'
+                  : 'SCAN ANOTHER LEGACY LOCATION',
+            ),
           ),
-        ),
+        ],
         const SizedBox(height: 14),
         const Text(
           'PREVIEW / TEST START',
