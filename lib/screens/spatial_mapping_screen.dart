@@ -161,6 +161,110 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
   Future<void> _startSpatialRecording() async {
     if (_starting || _mappingActive) return;
 
+    String label;
+    String anchorId;
+    final existing = _startAnchor;
+
+    if (existing != null) {
+      label = existing.label;
+      anchorId = existing.id;
+    } else {
+      var draftLabel = 'Main Entrance';
+      final entered = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Create start QR'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Name the physical entrance/start marker for this route.',
+                style: TextStyle(height: 1.4),
+              ),
+              const SizedBox(height: 14),
+              TextFormField(
+                initialValue: draftLabel,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'Start label'),
+                onChanged: (value) => draftLabel = value,
+                onFieldSubmitted: (value) {
+                  final trimmed = value.trim();
+                  if (trimmed.isNotEmpty) {
+                    Navigator.of(dialogContext).pop(trimmed);
+                  }
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final value = draftLabel.trim();
+                if (value.isNotEmpty) {
+                  Navigator.of(dialogContext).pop(value);
+                }
+              },
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted || entered == null) return;
+      label = entered;
+      anchorId = _uniqueVisualAnchorId(label);
+    }
+
+    final payload = _qrPayloadForAnchorId(anchorId);
+    final deployed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Deploy $label QR'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                color: Colors.white,
+                padding: const EdgeInsets.all(14),
+                child: QrImageView(
+                  data: payload,
+                  size: 220,
+                  backgroundColor: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'Print or display this exact QR on another device/support at '
+                '${(VisualAnchorSpec.qrWidthMeters * 100).toStringAsFixed(0)} cm '
+                'wide and keep it upright. The mapping camera must physically '
+                'see this marker; a virtual-only QR cannot relocalize a later session.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(height: 1.4),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            icon: const Icon(Icons.qr_code_scanner_rounded),
+            label: const Text('QR IS DEPLOYED — SCAN'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || deployed != true) return;
+
     setState(() {
       _starting = true;
       _message = null;
@@ -184,7 +288,12 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         _arStarted = false;
       }
 
-      final result = await _ar.start();
+      final qrPng = await _qrPngForAnchorId(anchorId);
+      final result = await _ar.startMappingWithVisualAnchor(
+        qrPng: qrPng,
+        widthMeters: VisualAnchorSpec.qrWidthMeters,
+        label: label,
+      );
       if (!mounted) return;
 
       if (result == 'INSTALL_REQUESTED') {
@@ -200,15 +309,15 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       if (result != 'STARTED') {
         setState(() {
           _starting = false;
-          _message = 'Could not start ARCore: $result';
+          _message = 'Could not start ARCore QR mapping: $result';
         });
         return;
       }
 
       setState(() {
         _arStarted = true;
-        _arming = true;
-        _awaitingStartQr = false;
+        _arming = false;
+        _awaitingStartQr = true;
         _recording = false;
         _trackingInterrupted = false;
         _stablePoseSamples = 0;
@@ -218,15 +327,15 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         _consecutiveRejectedPoseJumps = 0;
         _recordedDistanceMeters = 0;
         _starting = false;
-        _trackingState = 'ACQUIRING';
+        _trackingState = 'SCAN START QR';
         _pose = const ArPose(tracking: 'INITIALIZING');
         _points.clear();
         _markers.clear();
-        _placedStartQrId = null;
-        _placedStartQrLabel = null;
+        _placedStartQrId = anchorId;
+        _placedStartQrLabel = label;
         _message =
-            'WAIT — do not walk yet. Hold the phone naturally and point the '
-            'rear camera at a textured, well-lit area while ARCore locks on.';
+            'Do not walk yet. Point the AR camera at the deployed $label QR. '
+            'Recording starts automatically after its physical pose is locked.';
       });
     } catch (error) {
       if (!mounted) return;
@@ -236,7 +345,6 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       });
     }
   }
-
   void _onPose(ArPose pose) {
     if (!mounted) return;
 
@@ -499,8 +607,8 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     return candidate;
   }
 
-  Future<Uint8List> _qrPngForAnchorId(String anchorId) async {
-    final payload = Uri(
+  String _qrPayloadForAnchorId(String anchorId) {
+    return Uri(
       scheme: 'arnav',
       host: 'anchor',
       queryParameters: <String, String>{
@@ -508,6 +616,10 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         'id': anchorId,
       },
     ).toString();
+  }
+
+  Future<Uint8List> _qrPngForAnchorId(String anchorId) async {
+    final payload = _qrPayloadForAnchorId(anchorId);
 
     final painter = QrPainter(
       data: payload,
@@ -710,120 +822,6 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     });
   }
 
-  Future<void> _placeStartQrAndBegin() async {
-    if (!_awaitingStartQr || !_arStarted || !_pose.isTracking) return;
-
-    final existing = _startAnchor;
-    String label;
-    String anchorId;
-
-    if (existing != null) {
-      label = existing.label;
-      anchorId = existing.id;
-    } else {
-      var draftLabel = 'Main Entrance';
-      final entered = await showDialog<String>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Name this start location'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'This QR will be the entrance/start anchor for this mapped '
-                'route. Visitors can localize here later without a manual '
-                'direction walk.',
-                style: TextStyle(height: 1.4),
-              ),
-              const SizedBox(height: 14),
-              TextFormField(
-                initialValue: draftLabel,
-                autofocus: true,
-                decoration: const InputDecoration(labelText: 'Start label'),
-                onChanged: (value) => draftLabel = value,
-                onFieldSubmitted: (value) {
-                  final trimmed = value.trim();
-                  if (trimmed.isNotEmpty) {
-                    Navigator.of(dialogContext).pop(trimmed);
-                  }
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final value = draftLabel.trim();
-                if (value.isNotEmpty) {
-                  Navigator.of(dialogContext).pop(value);
-                }
-              },
-              child: const Text('Continue'),
-            ),
-          ],
-        ),
-      );
-
-      if (!mounted || entered == null) return;
-      label = entered;
-      anchorId = _uniqueVisualAnchorId(label);
-    }
-
-    VisualQrPlacement? placement;
-    try {
-      final qrPng = await _qrPngForAnchorId(anchorId);
-      placement = await _ar.placeVisualQrAnchor(
-        qrPng: qrPng,
-        widthMeters: VisualAnchorSpec.qrWidthMeters,
-      );
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _message = 'Could not place start QR: $error';
-      });
-      return;
-    }
-
-    if (!mounted || placement == null) return;
-    final placed = placement;
-
-    setState(() {
-      _points.clear();
-      _markers
-        ..clear()
-        ..add(
-          MappingMarker(
-            id: anchorId,
-            label: label,
-            type: 'anchor',
-            floor: _floor,
-            xMeters: placed.rightMeters,
-            yMeters: placed.forwardMeters,
-            upMeters: placed.upMeters,
-            pointIndex: 0,
-            anchorFacingDegrees: placed.facingDegrees,
-          ),
-        );
-      _placedStartQrId = anchorId;
-      _placedStartQrLabel = label;
-      _awaitingStartQr = false;
-      _recording = true;
-      _trackingInterrupted = false;
-      _recoveryPoseSamples = 0;
-      _consecutiveRejectedPoseJumps = 0;
-      _recordedDistanceMeters = 0;
-      _trackingState = 'READY';
-      _message =
-          'START QR LOCKED — $label is now the entrance/origin for this '
-          'recording. Start walking the real route and add rooms, junctions, '
-          'stairs, or optional QR checkpoints as needed.';
-    });
-  }
   Future<void> _addNewAnchorMarker() async {
     if (!_recording ||
         _trackingInterrupted ||
