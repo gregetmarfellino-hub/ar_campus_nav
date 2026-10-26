@@ -90,6 +90,7 @@ class ArCoreTrackingEngine(
     private var mappingVisualAnchorEnabled = false
     private var mappingVisualOverlay: FrameLayout? = null
     private var mappingVisualStatusText: TextView? = null
+    private var mappingVisualLastHudText: String? = null
     private var mappingVisualSampleCount = 0
     private var mappingVisualPositionX = 0f
     private var mappingVisualPositionY = 0f
@@ -1162,6 +1163,8 @@ class ArCoreTrackingEngine(
     }
 
     private fun setMappingVisualHud(text: String) {
+        if (mappingVisualLastHudText == text) return
+        mappingVisualLastHudText = text
         mainHandler.post {
             mappingVisualStatusText?.text = text
         }
@@ -1256,6 +1259,7 @@ class ArCoreTrackingEngine(
         mappingVisualAnchorLabel = ""
         mappingVisualAnchorEnabled = false
         mappingVisualStatusText = null
+        mappingVisualLastHudText = null
         resetMappingVisualSamples()
     }
 
@@ -2265,6 +2269,7 @@ class ArCoreTrackingEngine(
             background = roundedBackground(0xB8000000.toInt(), dp(18).toFloat())
         }
         mappingVisualStatusText = status
+        mappingVisualLastHudText = status.text.toString()
         overlay.addView(
             status,
             FrameLayout.LayoutParams(
@@ -2292,6 +2297,7 @@ class ArCoreTrackingEngine(
             val glView = surfaceView
             mappingVisualOverlay = null
             mappingVisualStatusText = null
+            mappingVisualLastHudText = null
 
             if (overlay != null && glView != null) {
                 (glView.parent as? ViewGroup)?.removeView(glView)
