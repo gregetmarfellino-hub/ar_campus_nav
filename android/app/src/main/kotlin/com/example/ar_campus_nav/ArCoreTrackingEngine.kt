@@ -709,6 +709,7 @@ class ArCoreTrackingEngine(
 
         val oldOverlay = navigationOverlay
         val oldQrPlacementOverlay = qrPlacementOverlay
+        val oldMappingVisualOverlay = mappingVisualOverlay
         val pendingQrPlacement = qrPlacementCompletion
         val oldView = surfaceView
         navigationOverlay = null
@@ -718,6 +719,8 @@ class ArCoreTrackingEngine(
         navigationReanchorButton = null
         navigationExitButton = null
         qrPlacementOverlay = null
+        mappingVisualOverlay = null
+        mappingVisualStatusText = null
         qrPlacementStatusText = null
         qrPlacementDistanceText = null
         qrPlacementButton = null
@@ -730,7 +733,8 @@ class ArCoreTrackingEngine(
         val removeViews = Runnable {
             (oldOverlay?.parent as? ViewGroup)?.removeView(oldOverlay)
             (oldQrPlacementOverlay?.parent as? ViewGroup)?.removeView(oldQrPlacementOverlay)
-            if (oldOverlay == null) {
+            (oldMappingVisualOverlay?.parent as? ViewGroup)?.removeView(oldMappingVisualOverlay)
+            if (oldOverlay == null && oldMappingVisualOverlay == null) {
                 (oldView?.parent as? ViewGroup)?.removeView(oldView)
             }
             qrPlacementRenderer.setBitmap(null)
@@ -766,6 +770,7 @@ class ArCoreTrackingEngine(
         navigationArrivalShown = false
         navigationPoints = emptyList()
         clearVisualAnchorConfiguration()
+        clearMappingVisualAnchorConfiguration()
         emitStatus("STOPPED")
     }
 
@@ -2649,8 +2654,11 @@ class ArCoreTrackingEngine(
 
     private fun cleanupFailedStart() {
         val oldOverlay = navigationOverlay
+        val oldMappingVisualOverlay = mappingVisualOverlay
         val oldView = surfaceView
         navigationOverlay = null
+        mappingVisualOverlay = null
+        mappingVisualStatusText = null
         navigationStatusText = null
         navigationArrowText = null
         navigationAlignButton = null
@@ -2661,7 +2669,9 @@ class ArCoreTrackingEngine(
         if (oldOverlay != null || oldView != null) {
             mainHandler.post {
                 (oldOverlay?.parent as? ViewGroup)?.removeView(oldOverlay)
-                if (oldOverlay == null) {
+                (oldMappingVisualOverlay?.parent as? ViewGroup)
+                    ?.removeView(oldMappingVisualOverlay)
+                if (oldOverlay == null && oldMappingVisualOverlay == null) {
                     (oldView?.parent as? ViewGroup)?.removeView(oldView)
                 }
             }
@@ -2688,5 +2698,6 @@ class ArCoreTrackingEngine(
         resetNavigationContinuity()
         navigationArrivalShown = false
         navigationPoints = emptyList()
+        clearMappingVisualAnchorConfiguration()
     }
 }
