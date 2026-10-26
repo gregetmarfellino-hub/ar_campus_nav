@@ -171,13 +171,15 @@ class _HomeScreenState extends State<HomeScreen> {
     final nodeId = _startNodeId;
     if (nodeId == null) return null;
 
+    AnchorPoint? visualFallback;
     AnchorPoint? fallback;
     for (final anchor in venue.anchors) {
       if (anchor.nodeId != nodeId) continue;
-      if (anchor.visualPoseReady) return anchor;
+      if (anchor.persistentPoseReady) return anchor;
+      if (anchor.visualPoseReady) visualFallback ??= anchor;
       fallback ??= anchor;
     }
-    return fallback;
+    return visualFallback ?? fallback;
   }
 
   Future<void> _openRoute(Destination destination) async {
