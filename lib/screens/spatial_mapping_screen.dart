@@ -1235,35 +1235,24 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                         backgroundColor: _green,
                         foregroundColor: Colors.black,
                       ),
-                      onPressed: _starting ? null : _startBootstrapRecording,
+                      onPressed:
+                          _starting ? null : _startPersistentPortalRecording,
                       icon: _starting
                           ? const SizedBox(
                               width: 18,
                               height: 18,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
-                          : const Icon(Icons.route_rounded),
+                          : const Icon(Icons.view_in_ar_rounded),
                       label: Text(
-                        _starting
-                            ? 'STARTING ARCORE...'
-                            : 'START MAPPING NOW',
+                        _starting ? 'STARTING AR...' : 'START MAPPING',
                       ),
                     ),
                   ),
                   const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: _starting ? null : _startSpatialRecording,
-                      icon: const Icon(Icons.qr_code_scanner_rounded),
-                      label: const Text('SET UP & SCAN START QR'),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
                   const Text(
-                    'You can map a brand-new route immediately. Scanning a '
-                    'deployed QR is optional here, but required later for '
-                    'one-scan persistent localization.',
+                    'Place the floating start QR portal once, lock it, then '
+                    'walk the route and add the destination.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: Colors.white38,
@@ -1274,9 +1263,8 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                 ]
                 else if (_awaitingStartQr) ...[
                   const Text(
-                    'DO NOT WALK YET. The AR camera is scanning the deployed '
-                    'physical start QR. Recording begins automatically after '
-                    'ARCore locks its position and orientation.',
+                    'DO NOT WALK YET. Place the floating QR start portal in AR. '
+                    'Recording begins automatically after the portal is saved.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: Color(0xFFF9D976),
@@ -1291,7 +1279,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                     child: OutlinedButton.icon(
                       onPressed: _discardRecording,
                       icon: const Icon(Icons.close_rounded),
-                      label: const Text('CANCEL SCAN'),
+                      label: const Text('CANCEL PORTAL'),
                     ),
                   ),
                 ] else if (!_recording) ...[
