@@ -348,6 +348,11 @@ class ArCoreTrackingEngine(
                 updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
                 planeFindingMode = Config.PlaneFindingMode.DISABLED
                 lightEstimationMode = Config.LightEstimationMode.DISABLED
+                if (persistentPortalMappingMode ||
+                    !navigationCloudAnchorId.isNullOrBlank()
+                ) {
+                    cloudAnchorMode = Config.CloudAnchorMode.ENABLED
+                }
             }
             configureVisualImageDatabase(newSession, config)
             newSession.configure(config)
@@ -362,6 +367,8 @@ class ArCoreTrackingEngine(
 
             if (navigationMode) {
                 createNavigationOverlay(glView)
+            } else if (qrPlacementMode) {
+                createQrPlacementOverlay(glView)
             } else if (mappingVisualAnchorEnabled) {
                 createMappingVisualOverlay(glView)
             } else {
