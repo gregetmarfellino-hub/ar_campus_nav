@@ -78,6 +78,31 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                         },
                     )
                 }
+                "startPersistentPortalMapping" -> {
+                    val qrPng = call.argument<ByteArray>("qr_png")
+                    val widthMeters =
+                        (call.argument<Number>("qr_width_m"))?.toFloat()
+                    val label =
+                        call.argument<String>("label") ?: "Start portal"
+
+                    if (qrPng == null || qrPng.isEmpty() ||
+                        widthMeters == null || widthMeters <= 0f
+                    ) {
+                        result.error(
+                            "INVALID_PORTAL",
+                            "Portal QR bitmap and width are required.",
+                            null,
+                        )
+                    } else {
+                        result.success(
+                            arEngine().startPersistentPortalMapping(
+                                qrPng = qrPng,
+                                widthMeters = widthMeters,
+                                label = label,
+                            ),
+                        )
+                    }
+                }
                 "startArNavigation" -> {
                     val destination =
                         call.argument<String>("destination") ?: "Destination"
@@ -96,6 +121,8 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                         (call.argument<Number>(
                             "visual_anchor_route_offset_deg",
                         ))?.toFloat()
+                    val cloudAnchorId =
+                        call.argument<String>("cloud_anchor_id")
                     val rawPoints =
                         call.argument<List<Map<String, Any?>>>("points") ?: emptyList()
 
@@ -125,6 +152,7 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                             visualAnchorLabel = visualAnchorLabel,
                             visualAnchorRouteOffsetDegrees =
                                 visualAnchorRouteOffsetDegrees,
+                            cloudAnchorId = cloudAnchorId,
                         ),
                     )
                 }
