@@ -823,7 +823,7 @@ class ArCoreTrackingEngine(
             val frame = activeSession.update()
             val camera = frame.camera
 
-            if (navigationMode || qrPlacementMode) {
+            if (navigationMode || qrPlacementMode || mappingVisualAnchorEnabled) {
                 backgroundRenderer.draw(frame, cameraTextureId)
             }
 
@@ -835,6 +835,11 @@ class ArCoreTrackingEngine(
                 )
                 if (qrPlacementMode) {
                     setQrPlacementTrackingReady(false)
+                }
+                if (mappingVisualAnchorEnabled) {
+                    setMappingVisualHud(
+                        "TRACKING PAUSED — move slowly until ARCore recovers.",
+                    )
                 }
                 if (navigationMode) {
                     if (!navigationTrackingLost) {
@@ -863,6 +868,17 @@ class ArCoreTrackingEngine(
                     camera = camera,
                 )
                 return
+            }
+
+            if (mappingVisualAnchorEnabled) {
+                val locked = tryLockMappingStartQr(
+                    activeSession = activeSession,
+                    currentPose = currentPose,
+                )
+                if (!locked) {
+                    emitTrackingState("TRACKING")
+                    return
+                }
             }
 
             if (navigationMode && navigationTrackingLost) {
@@ -1043,6 +1059,108 @@ class ArCoreTrackingEngine(
         trackingRightZ = 0f
     }
 
+    private fun tryLockMappingStartQr(
+        activeSession: Session,
+        currentPose: Pose,
+    ): Boolean {
+        if (!mappingVisualAnchorEnabled) return true
+
+        val target = activeSession
+            .getAllTrackables(AugmentedImage::class.java)
+            .firstOrNull { image ->
+                image.name == mappingVisualImageName &&
+                    image.trackingState == TrackingState.TRACKING &&
+                    image.trackingMethod ==
+                        AugmentedImage.TrackingMethod.FULL_TRACKING
+            }
+            ?: run {
+                resetMappingVisualSamples()
+                setMappingVisualHud(
+                    "LOOK FOR START QR — point the camera at the upright " +
+                        "16 cm ${mappingVisualAnchorLabel} QR.",
+                )
+                return false
+            }
+
+        val imagePose = target.centerPose
+        val position = imagePose.translation
+        var normal = imagePose.getTransformedAxis(1, 1f)
+
+        val toCameraX = currentPose.tx() - position[0]
+        val toCameraY = currentPose.ty() - position[1]
+        val toCameraZ = currentPose.tz() - position[2]
+        val facingDot =
+            normal[0] * toCameraX +
+                normal[1] * toCameraY +
+                normal[2] * toCameraZ
+        if (facingDot < 0f) {
+            normal = floatArrayOf(-normal[0], -normal[1], -normal[2])
+        }
+
+        val horizontalLength = sqrt(
+            normal[0] * normal[0] + normal[2] * normal[2],
+        )
+        if (horizontalLength < 0.35f) {
+            resetMappingVisualSamples()
+            setMappingVisualHud(
+                "QR DETECTED, BUT NOT UPRIGHT — hold/mount it vertically.",
+            )
+            return false
+        }
+
+        val forwardX = normal[0] / horizontalLength
+        val forwardZ = normal[2] / horizontalLength
+
+        mappingVisualSampleCount++
+        mappingVisualPositionX += position[0]
+        mappingVisualPositionY += position[1]
+        mappingVisualPositionZ += position[2]
+        mappingVisualForwardX += forwardX
+        mappingVisualForwardZ += forwardZ
+
+        if (mappingVisualSampleCount < mappingVisualSamplesRequired) {
+            setMappingVisualHud(
+                "START QR DETECTED — hold steady " +
+                    "$mappingVisualSampleCount/$mappingVisualSamplesRequired",
+            )
+            return false
+        }
+
+        val n = mappingVisualSampleCount.toFloat()
+        val originX = mappingVisualPositionX / n
+        val originY = mappingVisualPositionY / n
+        val originZ = mappingVisualPositionZ / n
+        var averageForwardX = mappingVisualForwardX / n
+        var averageForwardZ = mappingVisualForwardZ / n
+        val forwardLength = sqrt(
+            averageForwardX * averageForwardX +
+                averageForwardZ * averageForwardZ,
+        )
+        if (forwardLength < 0.20f) {
+            resetMappingVisualSamples()
+            return false
+        }
+        averageForwardX /= forwardLength
+        averageForwardZ /= forwardLength
+
+        trackingOriginPosition = floatArrayOf(originX, originY, originZ)
+        trackingForwardX = averageForwardX
+        trackingForwardZ = averageForwardZ
+        trackingRightX = -trackingForwardZ
+        trackingRightZ = trackingForwardX
+
+        mappingVisualAnchorEnabled = false
+        resetMappingVisualSamples()
+        finishMappingVisualOverlay()
+        emitStatus("MAPPING_START_QR_LOCKED")
+        return true
+    }
+
+    private fun setMappingVisualHud(text: String) {
+        mainHandler.post {
+            mappingVisualStatusText?.text = text
+        }
+    }
     private fun configureVisualAnchor(
         png: ByteArray?,
         widthMeters: Float?,
