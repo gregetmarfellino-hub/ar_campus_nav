@@ -2187,6 +2187,119 @@ class ArCoreTrackingEngine(
         }
     }
 
+    private fun createMappingVisualOverlay(glView: GLSurfaceView) {
+        val overlay = FrameLayout(activity).apply {
+            setBackgroundColor(Color.BLACK)
+        }
+
+        overlay.addView(
+            glView,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ),
+        )
+
+        val topCard = TextView(activity).apply {
+            text = "MAP START QR\n${mappingVisualAnchorLabel.ifBlank { "Entrance" }}"
+            setTextColor(Color.WHITE)
+            textSize = 17f
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            background = roundedBackground(0xB8000000.toInt(), dp(18).toFloat())
+        }
+        overlay.addView(
+            topCard,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                gravity = Gravity.TOP
+                setMargins(dp(72), dp(38), dp(24), 0)
+            },
+        )
+
+        val target = TextView(activity).apply {
+            text = "□"
+            textSize = 82f
+            gravity = Gravity.CENTER
+            setTextColor(0xFF3DDC97.toInt())
+        }
+        overlay.addView(
+            target,
+            FrameLayout.LayoutParams(dp(130), dp(130)).apply {
+                gravity = Gravity.CENTER
+            },
+        )
+
+        val closeButton = Button(activity).apply {
+            text = "×"
+            textSize = 24f
+            setTextColor(Color.WHITE)
+            background = roundedBackground(0xB8000000.toInt(), dp(28).toFloat())
+            setOnClickListener {
+                emitStatus("MAPPING_QR_SCAN_CANCELLED")
+                mainHandler.post { stop() }
+            }
+        }
+        overlay.addView(
+            closeButton,
+            FrameLayout.LayoutParams(dp(52), dp(52)).apply {
+                gravity = Gravity.TOP or Gravity.START
+                setMargins(dp(14), dp(38), 0, 0)
+            },
+        )
+
+        val status = TextView(activity).apply {
+            text =
+                "LOOK FOR START QR — point at the upright 16 cm " +
+                    "${mappingVisualAnchorLabel.ifBlank { "entrance" }} QR and hold steady."
+            setTextColor(Color.WHITE)
+            textSize = 15f
+            gravity = Gravity.CENTER
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = roundedBackground(0xB8000000.toInt(), dp(18).toFloat())
+        }
+        mappingVisualStatusText = status
+        overlay.addView(
+            status,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                gravity = Gravity.BOTTOM
+                setMargins(dp(24), 0, dp(24), dp(54))
+            },
+        )
+
+        activity.addContentView(
+            overlay,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            ),
+        )
+        mappingVisualOverlay = overlay
+    }
+
+    private fun finishMappingVisualOverlay() {
+        mainHandler.post {
+            val overlay = mappingVisualOverlay
+            val glView = surfaceView
+            mappingVisualOverlay = null
+            mappingVisualStatusText = null
+
+            if (overlay != null && glView != null) {
+                (glView.parent as? ViewGroup)?.removeView(glView)
+                (overlay.parent as? ViewGroup)?.removeView(overlay)
+                activity.addContentView(
+                    glView,
+                    FrameLayout.LayoutParams(2, 2).apply {
+                        gravity = Gravity.BOTTOM or Gravity.END
+                    },
+                )
+            }
+        }
+    }
     private fun createNavigationOverlay(glView: GLSurfaceView) {
         val overlay = FrameLayout(activity).apply {
             setBackgroundColor(Color.BLACK)
