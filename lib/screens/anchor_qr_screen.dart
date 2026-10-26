@@ -127,12 +127,12 @@ class _AnchorQrScreenState extends State<AnchorQrScreen> {
                       SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'Install or display the physical QR at the same '
-                          '3D position and facing chosen with PLACE QR IN AR. '
-                          'It can be on any suitable support; it is not tied '
-                          'to a wall. Keep it upright and do not move it after '
-                          'deployment. The black/white QR image itself must be '
-                          '16 cm wide so ARCore can recover metric scale.',
+                          'Keep this exact physical QR deployed at the '
+                          'anchor location used during mapping. It can be on '
+                          'any suitable support; keep it upright and do not '
+                          'move it after the map is recorded. The black/white '
+                          'QR image itself must be 16 cm wide so ARCore can '
+                          'recover metric scale.',
                           style: TextStyle(
                             color: Colors.white70,
                             height: 1.45,
@@ -347,9 +347,9 @@ class _VisualPoseStatus extends StatelessWidget {
                       '${(VisualAnchorSpec.qrWidthMeters * 100).toStringAsFixed(0)} cm. '
                       'AR Guide can localize position + direction directly '
                       'from this QR.'
-                  : 'Legacy position-only anchor. Re-map this anchor with the '
-                      'Spatial Mapper visual-facing capture before relying on '
-                      'one-scan orientation.',
+                  : 'Legacy position-only anchor. Deploy this QR physically, '
+                      'then re-map from it with the Spatial Mapper start-QR scan '
+                      'so ARCore can learn its position and orientation.',
               style: const TextStyle(
                 color: Colors.white70,
                 height: 1.4,
