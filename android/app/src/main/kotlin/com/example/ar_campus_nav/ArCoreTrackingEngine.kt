@@ -457,8 +457,10 @@ class ArCoreTrackingEngine(
         return null
     }
 
-    private fun createQrPlacementOverlay() {
-        val glView = surfaceView ?: run {
+    private fun createQrPlacementOverlay(
+        suppliedView: GLSurfaceView? = surfaceView,
+    ) {
+        val glView = suppliedView ?: run {
             finishQrPlacement(null)
             return
         }
@@ -474,9 +476,13 @@ class ArCoreTrackingEngine(
         val overlay = FrameLayout(activity)
 
         val status = TextView(activity).apply {
-            text =
+            text = if (persistentPortalMappingMode) {
+                "PLACE START PORTAL\nMove/aim the phone to position the floating QR start portal. " +
+                    "Scan the entrance area slowly until persistence quality is ready."
+            } else {
                 "PLACE QR IN 3D\nMove/aim the phone to position the floating QR. " +
                     "It does not need a wall or detected plane."
+            }
             setTextColor(Color.WHITE)
             textSize = 16f
             gravity = Gravity.CENTER
@@ -554,7 +560,11 @@ class ArCoreTrackingEngine(
         }
 
         val place = Button(activity).apply {
-            text = "PLACE QR HERE"
+            text = if (persistentPortalMappingMode) {
+                "LOCK START PORTAL"
+            } else {
+                "PLACE QR HERE"
+            }
             textSize = 15f
             setTextColor(Color.BLACK)
             background = roundedBackground(0xFF3DDC97.toInt(), dp(24).toFloat())
