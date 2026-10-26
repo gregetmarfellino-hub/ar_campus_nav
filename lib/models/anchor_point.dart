@@ -29,6 +29,9 @@ class AnchorPoint {
   bool get persistentPoseReady =>
       cloudAnchorId != null && cloudAnchorId!.isNotEmpty;
 
+  bool get localDevPortal =>
+      cloudAnchorId?.startsWith('localdev:') == true;
+
   factory AnchorPoint.fromJson(Map<String, dynamic> json) {
     return AnchorPoint(
       id: json['id'] as String,
