@@ -981,6 +981,8 @@ class ArCoreTrackingEngine(
         navigationPoints = emptyList()
         clearVisualAnchorConfiguration()
         clearMappingVisualAnchorConfiguration()
+        clearPersistentPortalState()
+        clearNavigationCloudAnchorState()
         emitStatus("STOPPED")
     }
 
@@ -1459,6 +1461,25 @@ class ArCoreTrackingEngine(
         if (added) {
             config.augmentedImageDatabase = database
         }
+    }
+
+    private fun clearPersistentPortalState() {
+        persistentPortalHostFuture?.cancel()
+        persistentPortalHostFuture = null
+        try {
+            persistentPortalHostAnchor?.detach()
+        } catch (_: Exception) {
+        }
+        persistentPortalHostAnchor = null
+        persistentPortalMappingMode = false
+        persistentPortalHosting = false
+        persistentPortalLabel = "Start portal"
+    }
+
+    private fun clearNavigationCloudAnchorState() {
+        navigationResolveFuture?.cancel()
+        navigationResolveFuture = null
+        navigationCloudAnchorId = null
     }
 
     private fun clearMappingVisualAnchorConfiguration() {
