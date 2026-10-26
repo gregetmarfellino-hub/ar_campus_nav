@@ -45,13 +45,31 @@ class VenueMappingService {
         session.startAnchorLabel ??
         'Recorded start';
 
-    // The first applied recording defines the persistent venue frame. Its
-    // local origin becomes venue (0, 0); any legacy heading metadata is still
-    // respected. ARCore spatial sessions currently use 0 degrees here, which
-    // intentionally means their first local frame becomes the venue frame.
-    final transform = VenueTransform2D.atOrigin(
-      headingDegrees: session.originHeadingDegrees,
+    // Preserve an existing start anchor's venue position when a new visual
+    // QR pose is placed for it. For a brand-new venue/start, the first
+    // recording still defines the persistent venue frame.
+    final existingStartNode =
+        startAnchor == null ? null : _findNode(venue, startAnchor.nodeId);
+    final placedStartQr = _placedStartVisualMarker(
+      session,
+      startAnchorId: startAnchor?.id,
     );
+    final transform = placedStartQr != null && existingStartNode != null
+        ? VenueTransform2D.fromPointAndHeading(
+            localX: placedStartQr.xMeters,
+            localY: placedStartQr.yMeters,
+            venueX: existingStartNode.x,
+            venueY: existingStartNode.y,
+            headingDegrees: startAnchor?.visualPoseReady == true
+                ? _headingDelta(
+                    startAnchor!.headingDegrees!,
+                    placedStartQr.anchorFacingDegrees!,
+                  )
+                : session.originHeadingDegrees,
+          )
+        : VenueTransform2D.atOrigin(
+            headingDegrees: session.originHeadingDegrees,
+          );
 
     final generated = _buildRecordedFloor(
       venue: venue,
@@ -253,14 +271,27 @@ class VenueMappingService {
     nodeIdByIndex[selected.first] = startNodeId;
 
     if (startAnchor != null) {
+      MappingMarker? visualUpgrade;
+      for (final marker in startGroup) {
+        if (marker.type == 'anchor' &&
+            marker.id == startAnchor.id &&
+            marker.anchorFacingDegrees != null) {
+          visualUpgrade = marker;
+          break;
+        }
+      }
+
       anchors.add(
         AnchorPoint(
           id: startAnchor.id,
           label: startAnchor.label,
           nodeId: startNodeId,
           floor: session.floor,
-          headingDegrees: startAnchor.headingDegrees,
-          visualHeadingVerified: startAnchor.visualHeadingVerified,
+          headingDegrees: visualUpgrade == null
+              ? startAnchor.headingDegrees
+              : _markerAnchorHeading(visualUpgrade, transform),
+          visualHeadingVerified:
+              visualUpgrade != null || startAnchor.visualHeadingVerified,
         ),
       );
       usedAnchorIds.add(startAnchor.id);
@@ -596,6 +627,30 @@ class VenueMappingService {
     );
   }
 
+  MappingMarker? _placedStartVisualMarker(
+    MappingSession session, {
+    required String? startAnchorId,
+  }) {
+    MappingMarker? fallback;
+    for (final marker in session.markers) {
+      if (marker.type != 'anchor' || marker.anchorFacingDegrees == null) {
+        continue;
+      }
+      if (startAnchorId != null && marker.id == startAnchorId) {
+        return marker;
+      }
+      if (startAnchorId == null && marker.pointIndex == 0) {
+        fallback ??= marker;
+      }
+    }
+    return fallback;
+  }
+
+  double _headingDelta(double targetHeading, double localHeading) {
+    var delta = (targetHeading - localHeading) % 360.0;
+    if (delta < 0) delta += 360.0;
+    return delta;
+  }
   MappingMarker? _visualAnchorMarker(List<MappingMarker> markers) {
     for (final marker in markers) {
       if (marker.type == 'anchor' && marker.anchorFacingDegrees != null) {
@@ -678,7 +733,12 @@ class VenueMappingService {
     NavNode? bestNode;
     var bestBaseline = 0.0;
 
-    final localStart = session.points.first;
+    final visualStart = _placedStartVisualMarker(
+      session,
+      startAnchorId: startAnchor.id,
+    );
+    final localStartX = visualStart?.xMeters ?? session.points.first.xMeters;
+    final localStartY = visualStart?.yMeters ?? session.points.first.yMeters;
 
     for (final marker in session.markers) {
       final referenceId = marker.referenceAnchorId;
@@ -695,8 +755,8 @@ class VenueMappingService {
       final node = _findNode(venue, anchor.nodeId);
       if (node == null) continue;
 
-      final localDx = marker.xMeters - localStart.xMeters;
-      final localDy = marker.yMeters - localStart.yMeters;
+      final localDx = marker.xMeters - localStartX;
+      final localDy = marker.yMeters - localStartY;
       final localDistance = math.sqrt(localDx * localDx + localDy * localDy);
 
       final venueDx = node.x - originNode.x;
@@ -729,8 +789,8 @@ class VenueMappingService {
       );
     }
 
-    final localDx = bestMarker.xMeters - localStart.xMeters;
-    final localDy = bestMarker.yMeters - localStart.yMeters;
+    final localDx = bestMarker.xMeters - localStartX;
+    final localDy = bestMarker.yMeters - localStartY;
     final localDistance = math.sqrt(localDx * localDx + localDy * localDy);
     final venueDx = bestNode.x - originNode.x;
     final venueDy = bestNode.y - originNode.y;
@@ -748,8 +808,8 @@ class VenueMappingService {
     }
 
     return VenueTransform2D.fromPointPairs(
-      localAX: localStart.xMeters,
-      localAY: localStart.yMeters,
+      localAX: localStartX,
+      localAY: localStartY,
       localBX: bestMarker.xMeters,
       localBY: bestMarker.yMeters,
       venueAX: originNode.x,
