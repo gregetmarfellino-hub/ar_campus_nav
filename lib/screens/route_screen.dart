@@ -201,9 +201,11 @@ class _RouteScreenState extends State<RouteScreen> {
               label: Text(
                 anchor == null
                     ? 'START AR MANUAL PREVIEW'
-                    : anchor.visualPoseReady
-                        ? 'START AR & LOCK QR'
-                        : 'START AR + MANUAL ALIGN',
+                    : anchor.persistentPoseReady
+                        ? 'START AR PORTAL'
+                        : anchor.visualPoseReady
+                            ? 'START AR & LOCK QR'
+                            : 'START AR + MANUAL ALIGN',
               ),
               style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 15),
@@ -305,19 +307,19 @@ class _RouteScreenState extends State<RouteScreen> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    anchor?.visualPoseReady == true
-                        ? 'Point the AR camera at the deployed 16 cm QR. '
-                            'ARCore will measure its physical position and '
-                            'orientation directly; no 2–3 m calibration walk '
-                            'is required.'
-                        : anchor != null
-                            ? 'This is a legacy position-only QR. ARCore still '
-                                'needs the manual 2–3 m direction calibration. '
-                                'Re-map the anchor with visual facing to remove '
-                                'that step.'
-                            : 'Manual preview assumes you are physically at the '
-                                'selected start and still requires the 2–3 m '
-                                'direction calibration.',
+                    anchor?.persistentPoseReady == true
+                        ? 'ARCore will resolve the saved entrance portal in the '
+                            'real world. Center the floating QR portal briefly '
+                            'to activate the route — no calibration walk.'
+                        : anchor?.visualPoseReady == true
+                            ? 'Point the AR camera at the deployed 16 cm QR. '
+                                'ARCore will measure its physical position and '
+                                'orientation directly.'
+                            : anchor != null
+                                ? 'This is legacy route data without a persistent '
+                                    'start portal, so older alignment is still used.'
+                                : 'Manual preview assumes you are physically at the '
+                                    'selected start and uses older alignment.',
                     style: const TextStyle(
                       color: Colors.white70,
                       height: 1.45,
@@ -341,33 +343,35 @@ class _SpatialAlignmentCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final value = anchor;
+    final persistentReady = value?.persistentPoseReady ?? false;
     final visualReady = value?.visualPoseReady ?? false;
     final hasAnchor = value != null;
 
-    final title = visualReady
-        ? 'VISUAL QR LOCALIZATION'
-        : hasAnchor
-            ? 'LEGACY QR + MANUAL DIRECTION'
-            : 'MANUAL PREVIEW MODE';
-    final color = visualReady
+    final title = persistentReady
+        ? 'PERSISTENT AR START PORTAL'
+        : visualReady
+            ? 'VISUAL QR LOCALIZATION'
+            : hasAnchor
+                ? 'LEGACY START ALIGNMENT'
+                : 'MANUAL PREVIEW MODE';
+    final color = persistentReady || visualReady
         ? const Color(0xFF3DDC97)
         : const Color(0xFFF9C74F);
 
-    final message = visualReady
-        ? 'Expected QR: ${value!.label}. Open AR and point the camera at that '
-            'physical 16 cm marker. ARCore will lock both position and '
-            'direction from the marker pose.'
-        : hasAnchor
-            ? 'The QR identifies ${value.label}, but this older anchor has no '
-                'verified installation facing. Navigation falls back to the '
-                '2–3 m direction walk.'
-            : 'No physical anchor is selected. AR assumes you are standing '
-                'exactly on the selected map start and uses manual alignment.';
-
+    final message = persistentReady
+        ? '${value!.label} has a saved persistent AR portal. Open AR near the '
+            'mapped entrance; the floating QR should resolve back into place.'
+        : visualReady
+            ? 'Expected QR: ${value!.label}. Open AR and point the camera at '
+                'the physical marker to localize.'
+            : hasAnchor
+                ? 'This older anchor has no persistent portal. Navigation keeps '
+                    'the legacy alignment path only for backward compatibility.'
+                : 'No persistent start anchor is selected; this is legacy manual preview.';
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: visualReady
+        color: persistentReady || visualReady
             ? const Color(0x143DDC97)
             : const Color(0x14F9C74F),
         borderRadius: BorderRadius.circular(18),
@@ -377,11 +381,13 @@ class _SpatialAlignmentCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(
-            visualReady
-                ? Icons.center_focus_strong_rounded
-                : hasAnchor
-                    ? Icons.qr_code_2_rounded
-                    : Icons.science_outlined,
+            persistentReady
+                ? Icons.view_in_ar_rounded
+                : visualReady
+                    ? Icons.center_focus_strong_rounded
+                    : hasAnchor
+                        ? Icons.qr_code_2_rounded
+                        : Icons.science_outlined,
             color: color,
           ),
           const SizedBox(width: 12),
@@ -460,9 +466,11 @@ class _AnchorCard extends StatelessWidget {
                 Text(
                   value == null
                       ? 'Manual preview start'
-                      : value.visualPoseReady
-                          ? 'Visual QR target'
-                          : 'Legacy QR start',
+                      : value.persistentPoseReady
+                          ? 'Persistent AR start portal'
+                          : value.visualPoseReady
+                              ? 'Visual QR target'
+                              : 'Legacy start',
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 2),
@@ -485,9 +493,11 @@ class _AnchorCard extends StatelessWidget {
             label: Text(
               value == null
                   ? 'SCAN LOCATION'
-                  : value.visualPoseReady
-                      ? 'SCANNER FALLBACK'
-                      : 'UPDATE LOCATION',
+                  : value.persistentPoseReady
+                      ? 'PORTAL READY'
+                      : value.visualPoseReady
+                          ? 'SCANNER FALLBACK'
+                          : 'UPDATE LOCATION',
             ),
           ),
         ],
