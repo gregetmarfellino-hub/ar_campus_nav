@@ -225,6 +225,39 @@ class ArCoreTrackingEngine(
         return startSession()
     }
 
+    fun startPersistentPortalMapping(
+        qrPng: ByteArray,
+        widthMeters: Float,
+        label: String,
+    ): String {
+        navigationMode = false
+        clearVisualAnchorConfiguration()
+        clearMappingVisualAnchorConfiguration()
+        clearPersistentPortalState()
+
+        val bitmap = BitmapFactory.decodeByteArray(qrPng, 0, qrPng.size)
+            ?: return "PORTAL_QR_DECODE_FAILED"
+        if (widthMeters <= 0f) {
+            bitmap.recycle()
+            return "PORTAL_QR_SIZE_INVALID"
+        }
+
+        qrPlacementBitmap?.recycle()
+        qrPlacementBitmap = bitmap
+        qrPlacementWidthMeters = widthMeters
+        qrPlacementDistanceMeters = 1.0f
+        qrPlacementCompletion = null
+        qrPlacementRequested = false
+        qrPlacementTrackingReady = false
+        qrPlacementMode = true
+        persistentPortalMappingMode = true
+        persistentPortalHosting = false
+        persistentPortalLabel = label
+        qrPlacementRenderer.setBitmap(bitmap)
+
+        return startSession()
+    }
+
     fun startMappingWithVisualAnchor(
         visualAnchorPng: ByteArray,
         visualAnchorWidthMeters: Float,
@@ -258,6 +291,7 @@ class ArCoreTrackingEngine(
         visualAnchorWidthMeters: Float? = null,
         visualAnchorLabel: String? = null,
         visualAnchorRouteOffsetDegrees: Float? = null,
+        cloudAnchorId: String? = null,
     ): String {
         if (points.size < 2) return "ROUTE_TOO_SHORT"
 
@@ -266,6 +300,9 @@ class ArCoreTrackingEngine(
         navigationStartLabel = startLabel
         navigationAnchorLocalized = anchorLocalized
         navigationPoints = points
+        navigationCloudAnchorId = cloudAnchorId?.takeIf { it.isNotBlank() }
+        navigationResolveFuture?.cancel()
+        navigationResolveFuture = null
         configureVisualAnchor(
             png = visualAnchorPng,
             widthMeters = visualAnchorWidthMeters,
