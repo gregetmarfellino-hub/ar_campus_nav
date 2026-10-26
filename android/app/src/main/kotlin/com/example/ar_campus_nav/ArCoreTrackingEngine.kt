@@ -89,6 +89,7 @@ class ArCoreTrackingEngine(
     private var persistentPortalLabel = "Start portal"
     private var navigationCloudAnchorId: String? = null
     private var navigationResolveFuture: com.google.ar.core.ResolveCloudAnchorFuture? = null
+    private var navigationCloudResolveAttempted = false
     private var navigationPortalActivated = false
     private var navigationPortalFocusFrames = 0
     private val navigationPortalFocusFramesRequired = 12
@@ -306,6 +307,7 @@ class ArCoreTrackingEngine(
         navigationCloudAnchorId = cloudAnchorId?.takeIf { it.isNotBlank() }
         navigationResolveFuture?.cancel()
         navigationResolveFuture = null
+        navigationCloudResolveAttempted = false
         navigationPortalFocusFrames = 0
         navigationPortalActivated = navigationCloudAnchorId == null
 
@@ -1512,7 +1514,10 @@ class ArCoreTrackingEngine(
     private fun clearNavigationCloudAnchorState() {
         navigationResolveFuture?.cancel()
         navigationResolveFuture = null
+        navigationCloudResolveAttempted = false
         navigationCloudAnchorId = null
+        navigationPortalActivated = false
+        navigationPortalFocusFrames = 0
     }
 
     private fun clearMappingVisualAnchorConfiguration() {
