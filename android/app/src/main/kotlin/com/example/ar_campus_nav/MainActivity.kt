@@ -50,7 +50,34 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                 "deleteMapping" -> deleteMapping(call.argument("id"), result)
                 "ensureCameraPermission" -> ensureCameraPermission(result)
                 "arCoreAvailability" -> result.success(arEngine().availabilityLabel())
-                "startArTracking" -> result.success(arEngine().start())
+                "startArTracking" -> {
+                    val mappingVisualAnchorPng =
+                        call.argument<ByteArray>("mapping_visual_anchor_png")
+                    val mappingVisualAnchorWidthMeters =
+                        (call.argument<Number>("mapping_visual_anchor_width_m"))
+                            ?.toFloat()
+                    val mappingVisualAnchorLabel =
+                        call.argument<String>("mapping_visual_anchor_label")
+
+                    result.success(
+                        if (
+                            mappingVisualAnchorPng != null &&
+                            mappingVisualAnchorPng.isNotEmpty() &&
+                            mappingVisualAnchorWidthMeters != null &&
+                            mappingVisualAnchorWidthMeters > 0f
+                        ) {
+                            arEngine().startMappingWithVisualAnchor(
+                                visualAnchorPng = mappingVisualAnchorPng,
+                                visualAnchorWidthMeters =
+                                    mappingVisualAnchorWidthMeters,
+                                visualAnchorLabel =
+                                    mappingVisualAnchorLabel ?: "Start QR",
+                            )
+                        } else {
+                            arEngine().start()
+                        },
+                    )
+                }
                 "startArNavigation" -> {
                     val destination =
                         call.argument<String>("destination") ?: "Destination"
