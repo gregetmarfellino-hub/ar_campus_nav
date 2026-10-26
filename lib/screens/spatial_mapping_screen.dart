@@ -352,6 +352,58 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     final stateChanged = _trackingState != pose.tracking;
     _trackingState = pose.tracking;
 
+    // Mapping start QR lock is a status event with no pose payload. Native has
+    // already rebased its tracking frame to the QR center + outward normal.
+    if (pose.tracking == 'MAPPING_START_QR_LOCKED' && _awaitingStartQr) {
+      final anchorId = _placedStartQrId;
+      final label = _placedStartQrLabel;
+      if (anchorId != null && label != null) {
+        setState(() {
+          _awaitingStartQr = false;
+          _recording = true;
+          _trackingInterrupted = false;
+          _recoveryPoseSamples = 0;
+          _consecutiveRejectedPoseJumps = 0;
+          _recordedDistanceMeters = 0;
+          _trackingState = 'READY';
+          _points.clear();
+          _markers
+            ..clear()
+            ..add(
+              MappingMarker(
+                id: anchorId,
+                label: label,
+                type: 'anchor',
+                floor: _floor,
+                xMeters: 0,
+                yMeters: 0,
+                upMeters: 0,
+                pointIndex: 0,
+                anchorFacingDegrees: 0,
+              ),
+            );
+          _message =
+              'START QR LOCKED — $label is the physical origin. Start walking '
+              'the route now; no manual direction calibration is needed.';
+        });
+      }
+      return;
+    }
+
+    if (pose.tracking == 'MAPPING_QR_SCAN_CANCELLED') {
+      setState(() {
+        _arming = false;
+        _awaitingStartQr = false;
+        _recording = false;
+        _arStarted = false;
+        _trackingState = 'STOPPED';
+        _placedStartQrId = null;
+        _placedStartQrLabel = null;
+        _message = 'Start QR scan cancelled.';
+      });
+      return;
+    }
+
     // Status-only events (PAUSED, RESETTING_ORIGIN, etc.) do not contain
     // coordinates. Keep the last good pose on screen instead of snapping
     // X/Forward back to zero.
@@ -1374,19 +1426,17 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                       label: Text(
                         _starting
                             ? 'STARTING ARCORE...'
-                            : 'START SPATIAL MAPPING',
+                            : 'SET UP & SCAN START QR',
                       ),
                     ),
                   )
                 else if (_awaitingStartQr) ...[
-                  Text(
-                    _startAnchor == null
-                        ? 'ARCore is ready. Place a NEW start QR before walking. '
-                            'This becomes the entrance/origin for the route.'
-                        : 'ARCore is ready. Re-place ${_startAnchor!.label} in '
-                            'AR to upgrade/use it as the visual start anchor.',
+                  const Text(
+                    'DO NOT WALK YET. The AR camera is scanning the deployed '
+                    'physical start QR. Recording begins automatically after '
+                    'ARCore locks its position and orientation.',
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: Color(0xFFF9D976),
                       fontSize: 12,
                       fontWeight: FontWeight.w800,
@@ -1396,27 +1446,10 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                   const SizedBox(height: 10),
                   SizedBox(
                     width: double.infinity,
-                    child: FilledButton.icon(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: _green,
-                        foregroundColor: Colors.black,
-                      ),
-                      onPressed: _pose.isTracking ? _placeStartQrAndBegin : null,
-                      icon: const Icon(Icons.qr_code_2_rounded),
-                      label: Text(
-                        _startAnchor == null
-                            ? 'PLACE START QR'
-                            : 'PLACE ${_startAnchor!.label.toUpperCase()} QR',
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
                     child: OutlinedButton.icon(
                       onPressed: _discardRecording,
                       icon: const Icon(Icons.close_rounded),
-                      label: const Text('CANCEL'),
+                      label: const Text('CANCEL SCAN'),
                     ),
                   ),
                 ] else if (!_recording) ...[
