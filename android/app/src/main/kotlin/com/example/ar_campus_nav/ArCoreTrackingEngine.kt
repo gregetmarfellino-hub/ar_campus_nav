@@ -484,13 +484,24 @@ class ArCoreTrackingEngine(
 
         (qrPlacementOverlay?.parent as? ViewGroup)?.removeView(qrPlacementOverlay)
 
-        glView.layoutParams = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT,
-        )
-        glView.bringToFront()
-
         val overlay = FrameLayout(activity)
+
+        val existingParent = glView.parent as? ViewGroup
+        if (existingParent == null) {
+            overlay.addView(
+                glView,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
+        } else {
+            glView.layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            )
+            glView.bringToFront()
+        }
 
         val status = TextView(activity).apply {
             text = if (persistentPortalMappingMode) {
@@ -912,14 +923,26 @@ class ArCoreTrackingEngine(
 
         mainHandler.post {
             val overlay = qrPlacementOverlay
+            val glView = surfaceView
             qrPlacementOverlay = null
             qrPlacementStatusText = null
             qrPlacementDistanceText = null
             qrPlacementButton = null
-            (overlay?.parent as? ViewGroup)?.removeView(overlay)
 
-            surfaceView?.layoutParams = FrameLayout.LayoutParams(2, 2).apply {
-                gravity = Gravity.BOTTOM or Gravity.END
+            if (overlay != null && glView != null && glView.parent === overlay) {
+                overlay.removeView(glView)
+                (overlay.parent as? ViewGroup)?.removeView(overlay)
+                activity.addContentView(
+                    glView,
+                    FrameLayout.LayoutParams(2, 2).apply {
+                        gravity = Gravity.BOTTOM or Gravity.END
+                    },
+                )
+            } else {
+                (overlay?.parent as? ViewGroup)?.removeView(overlay)
+                glView?.layoutParams = FrameLayout.LayoutParams(2, 2).apply {
+                    gravity = Gravity.BOTTOM or Gravity.END
+                }
             }
 
             qrPlacementRenderer.setBitmap(null)
