@@ -748,12 +748,15 @@ class ArCoreTrackingEngine(
                 setPersistentPortalStatus("ARCore session is unavailable. Try again.")
                 return
             }
-            val quality = activeSession.estimateFeatureMapQualityForHosting(currentPose)
-            if (quality == Session.FeatureMapQuality.INSUFFICIENT) {
-                setPersistentPortalStatus(
-                    "NOT ENOUGH VISUAL DETAIL YET — slowly scan the entrance area around the portal.",
-                )
-                return
+            if (!persistentPortalLocalDevMode) {
+                val quality =
+                    activeSession.estimateFeatureMapQualityForHosting(currentPose)
+                if (quality == Session.FeatureMapQuality.INSUFFICIENT) {
+                    setPersistentPortalStatus(
+                        "NOT ENOUGH VISUAL DETAIL YET — slowly scan the entrance area around the portal.",
+                    )
+                    return
+                }
             }
 
             trackingOriginPosition = center.copyOf()
@@ -811,6 +814,20 @@ class ArCoreTrackingEngine(
 
     private fun updatePersistentPortalQuality(cameraPose: Pose) {
         val activeSession = session ?: return
+
+        if (persistentPortalLocalDevMode) {
+            mainHandler.post {
+                qrPlacementButton?.apply {
+                    isEnabled = true
+                    alpha = 1f
+                }
+                qrPlacementStatusText?.text =
+                    "LOCAL DEV MODE — position the QR portal, then tap LOCK START PORTAL. " +
+                        "This tests the UX but not real-world cross-session persistence."
+            }
+            return
+        }
+
         val quality = try {
             activeSession.estimateFeatureMapQualityForHosting(cameraPose)
         } catch (_: Exception) {
@@ -852,6 +869,25 @@ class ArCoreTrackingEngine(
         val localAnchor = activeSession.createAnchor(targetPose)
         persistentPortalHostAnchor = localAnchor
         persistentPortalHosting = true
+
+        if (persistentPortalLocalDevMode) {
+            val localId = "localdev:${System.currentTimeMillis()}"
+            emit(
+                mapOf(
+                    "type" to "status",
+                    "tracking" to "PERSISTENT_PORTAL_HOSTED",
+                    "cloud_anchor_id" to localId,
+                    "message" to
+                        "Local dev portal saved. Cross-session physical position is mocked.",
+                ),
+            )
+            finishQrPlacement(
+                mapOf(
+                    "cloud_anchor_id" to localId,
+                ),
+            )
+            return
+        }
 
         mainHandler.post {
             qrPlacementButton?.apply {
@@ -1205,7 +1241,10 @@ class ArCoreTrackingEngine(
                 if (!navigationAligned &&
                     navigationCloudAnchorId != null
                 ) {
-                    beginPersistentPortalResolve(activeSession)
+                    beginPersistentPortalResolve(
+                        activeSession = activeSession,
+                        currentPose = currentPose,
+                    )
                     emitTrackingState("TRACKING")
                     setNavigationArrowVisible(false)
                     return
@@ -1492,11 +1531,57 @@ class ArCoreTrackingEngine(
             mappingVisualStatusText?.text = text
         }
     }
-    private fun beginPersistentPortalResolve(activeSession: Session) {
+    private fun beginPersistentPortalResolve(
+        activeSession: Session,
+        currentPose: Pose,
+    ) {
         val cloudId = navigationCloudAnchorId ?: return
         if (navigationAligned || navigationCloudResolveAttempted) return
 
         navigationCloudResolveAttempted = true
+
+        if (navigationLocalDevPortal) {
+            val forward = horizontalForward(currentPose)
+            val cameraPosition = currentPose.translation
+            val portalPosition = floatArrayOf(
+                cameraPosition[0] + forward[0] * 1.0f,
+                cameraPosition[1],
+                cameraPosition[2] + forward[2] * 1.0f,
+            )
+            val portalPose = horizontalPoseFromForward(
+                position = portalPosition,
+                forwardX = forward[0],
+                forwardZ = forward[2],
+            )
+
+            releaseNavigationAnchor()
+            navigationWorldAnchor = activeSession.createAnchor(portalPose)
+            navigationForwardX = 0f
+            navigationForwardZ = -1f
+            navigationRightX = 1f
+            navigationRightZ = 0f
+            navigationAligned = true
+            navigationPortalActivated = false
+            navigationPortalFocusFrames = 0
+            resetNavigationCalibration()
+            resetNavigationContinuity()
+            activeRouteIndex = 1
+
+            setNavigationAlignedUi()
+            setNavigationHud(
+                "LOCAL DEV PORTAL READY — center the floating QR to activate the route. " +
+                    "Its old real-world position is not being restored in this mode.",
+            )
+            emit(
+                mapOf(
+                    "type" to "status",
+                    "tracking" to "PERSISTENT_PORTAL_RESOLVED",
+                    "message" to
+                        "Local dev portal recreated near the current camera.",
+                ),
+            )
+            return
+        }
         setNavigationHud(
             "FINDING START PORTAL — slowly look around the mapped entrance area...",
         )
