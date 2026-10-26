@@ -80,6 +80,25 @@ class ArCoreTrackingEngine(
     private var qrPlacementWidthMeters = 0.16f
     private var qrPlacementCompletion: ((Map<String, Any>?) -> Unit)? = null
 
+    // Physical start QR localization for mapping. The image database is loaded
+    // before the ARCore session starts, then the mapper camera waits for this
+    // real-world QR and uses its measured center + outward normal as the
+    // persistent mapping frame.
+    private var mappingVisualAnchorBitmap: Bitmap? = null
+    private var mappingVisualAnchorWidthMeters = 0f
+    private var mappingVisualAnchorLabel = ""
+    private var mappingVisualAnchorEnabled = false
+    private var mappingVisualOverlay: FrameLayout? = null
+    private var mappingVisualStatusText: TextView? = null
+    private var mappingVisualSampleCount = 0
+    private var mappingVisualPositionX = 0f
+    private var mappingVisualPositionY = 0f
+    private var mappingVisualPositionZ = 0f
+    private var mappingVisualForwardX = 0f
+    private var mappingVisualForwardZ = 0f
+    private val mappingVisualSamplesRequired = 6
+    private val mappingVisualImageName = "ar_mapping_start_qr"
+
     private var cameraTextureId: Int = 0
 
     // Tracking/mapping origin: gravity-horizontal frame.
@@ -191,6 +210,31 @@ class ArCoreTrackingEngine(
     fun start(): String {
         navigationMode = false
         clearVisualAnchorConfiguration()
+        clearMappingVisualAnchorConfiguration()
+        return startSession()
+    }
+
+    fun startMappingWithVisualAnchor(
+        visualAnchorPng: ByteArray,
+        visualAnchorWidthMeters: Float,
+        visualAnchorLabel: String,
+    ): String {
+        navigationMode = false
+        clearVisualAnchorConfiguration()
+        clearMappingVisualAnchorConfiguration()
+
+        val bitmap = BitmapFactory.decodeByteArray(
+            visualAnchorPng,
+            0,
+            visualAnchorPng.size,
+        ) ?: return "MAPPING_QR_DECODE_FAILED"
+
+        mappingVisualAnchorBitmap = bitmap
+        mappingVisualAnchorWidthMeters = visualAnchorWidthMeters
+        mappingVisualAnchorLabel = visualAnchorLabel
+        mappingVisualAnchorEnabled = true
+        resetMappingVisualSamples()
+
         return startSession()
     }
 
@@ -270,6 +314,8 @@ class ArCoreTrackingEngine(
 
             if (navigationMode) {
                 createNavigationOverlay(glView)
+            } else if (mappingVisualAnchorEnabled) {
+                createMappingVisualOverlay(glView)
             } else {
                 val layoutParams = FrameLayout.LayoutParams(2, 2).apply {
                     gravity = Gravity.BOTTOM or Gravity.END
