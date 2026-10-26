@@ -796,47 +796,29 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         )
         .toList(growable: false);
 
-    final action = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Add anchor checkpoint'),
-        content: const Text(
-          'Reference an existing venue anchor when you are physically standing '
-          'at that known location. This gives later spatial merges a second '
-          'point for rotation + translation. Create a new anchor when this is '
-          'a brand-new checkpoint.',
+    if (candidates.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'No other deployed venue anchors are available on this floor yet.',
+          ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop('new'),
-            child: const Text('Create new'),
-          ),
-          FilledButton(
-            onPressed: candidates.isEmpty
-                ? null
-                : () => Navigator.of(dialogContext).pop('reference'),
-            child: const Text('Reference existing'),
-          ),
-        ],
-      ),
-    );
-
-    if (!mounted || action == null) return;
-
-    if (action == 'new') {
-      await _addNewAnchorMarker();
+      );
       return;
     }
 
     final anchorId = await showDialog<String>(
       context: context,
       builder: (dialogContext) => SimpleDialog(
-        title: const Text('Which known anchor is here?'),
+        title: const Text('Link existing physical QR anchor'),
         children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(24, 0, 24, 12),
+            child: Text(
+              'Use this only while physically standing at an already-deployed '
+              'anchor. It helps stitch this recording into the existing venue graph.',
+            ),
+          ),
           for (final anchor in candidates)
             SimpleDialogOption(
               onPressed: () => Navigator.of(dialogContext).pop(anchor.id),
@@ -869,116 +851,8 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         ),
       );
       _message =
-          'Known anchor linked: ${anchor.label}. This recording now has an '
-          'orientation reference for venue alignment.';
-    });
-  }
-
-  Future<void> _addNewAnchorMarker() async {
-    if (!_recording ||
-        _trackingInterrupted ||
-        _points.isEmpty ||
-        !_pose.isTracking) {
-      return;
-    }
-
-    var draftLabel = 'QR anchor checkpoint';
-    final label = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Place QR marker in AR'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'The live AR camera will show the real QR as a floating 3D '
-              'marker. Move/aim the phone and adjust its distance, then place '
-              'the QR wherever you want. No wall or plane is required.',
-              style: TextStyle(height: 1.4),
-            ),
-            const SizedBox(height: 16),
-            TextFormField(
-              initialValue: draftLabel,
-              autofocus: true,
-              decoration: const InputDecoration(labelText: 'Label'),
-              onChanged: (value) => draftLabel = value,
-              onFieldSubmitted: (value) {
-                final trimmed = value.trim();
-                if (trimmed.isNotEmpty) {
-                  Navigator.of(dialogContext).pop(trimmed);
-                }
-              },
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton.icon(
-            onPressed: () {
-              final value = draftLabel.trim();
-              if (value.isNotEmpty) {
-                Navigator.of(dialogContext).pop(value);
-              }
-            },
-            icon: const Icon(Icons.view_in_ar_rounded),
-            label: const Text('Open AR placement'),
-          ),
-        ],
-      ),
-    );
-
-    if (!mounted || label == null || _points.isEmpty || !_pose.isTracking) {
-      return;
-    }
-
-    final anchorId = _uniqueVisualAnchorId(label);
-
-    VisualQrPlacement? placement;
-    try {
-      final qrPng = await _qrPngForAnchorId(anchorId);
-      placement = await _ar.placeVisualQrAnchor(
-        qrPng: qrPng,
-        widthMeters: VisualAnchorSpec.qrWidthMeters,
-      );
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _message = 'Could not place visual QR: $error';
-      });
-      return;
-    }
-
-    if (!mounted || placement == null || _points.isEmpty) return;
-    final placed = placement;
-    final markerPointIndex = _nearestPointIndex(
-      placed.rightMeters,
-      placed.forwardMeters,
-    );
-
-    setState(() {
-      _markers.add(
-        MappingMarker(
-          id: anchorId,
-          label: label,
-          type: 'anchor',
-          floor: _floor,
-          xMeters: placed.rightMeters,
-          yMeters: placed.forwardMeters,
-          upMeters: placed.upMeters,
-          pointIndex: markerPointIndex,
-          anchorFacingDegrees: placed.facingDegrees,
-        ),
-      );
-      _message =
-          'Visual QR placed in AR at '
-          'R ${placed.rightMeters.toStringAsFixed(2)} m / '
-          'F ${placed.forwardMeters.toStringAsFixed(2)} m / '
-          'Up ${placed.upMeters.toStringAsFixed(2)} m. '
-          'Use this same QR ID when you deploy the physical marker.';
+          'Known physical anchor linked: ${anchor.label}. This recording can '
+          'use it as an additional merge reference.';
     });
   }
   Future<void> _finishAndSave() async {
@@ -1478,8 +1352,8 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                     _trackingInterrupted
                         ? 'STOP WALKING until tracking recovers.'
                         : 'Recording is live from the start QR. Walk naturally; '
-                            'add rooms, junctions, stairs, and optional QR '
-                            'checkpoints only at real locations.',
+                            'add rooms, junctions, stairs, and link existing '
+                            'physical anchors only at real locations.',
                     style: TextStyle(
                       color: _trackingInterrupted
                           ? const Color(0xFFF9D976)
@@ -1499,13 +1373,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                       _markerButton('waypoint', Icons.add_road_rounded),
                       _markerButton('destination', Icons.flag_rounded),
                       _markerButton('stairs', Icons.stairs_rounded),
-                      FilledButton.tonalIcon(
-                        onPressed: _trackingInterrupted
-                            ? null
-                            : _addNewAnchorMarker,
-                        icon: const Icon(Icons.view_in_ar_rounded, size: 18),
-                        label: const Text('ADD QR CHECKPOINT'),
-                      ),
+
                       _markerButton('anchor', Icons.link_rounded),
                     ],
                   ),
