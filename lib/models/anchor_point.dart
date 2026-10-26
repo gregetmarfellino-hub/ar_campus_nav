@@ -6,6 +6,7 @@ class AnchorPoint {
     required this.floor,
     this.headingDegrees,
     this.visualHeadingVerified = false,
+    this.cloudAnchorId,
   });
 
   final String id;
@@ -18,8 +19,15 @@ class AnchorPoint {
   final double? headingDegrees;
   final bool visualHeadingVerified;
 
+  /// ARCore Cloud Anchor ID for the persistent virtual start portal.
+  /// Null for legacy/non-persistent anchors.
+  final String? cloudAnchorId;
+
   bool get visualPoseReady =>
       visualHeadingVerified && headingDegrees != null;
+
+  bool get persistentPoseReady =>
+      cloudAnchorId != null && cloudAnchorId!.isNotEmpty;
 
   factory AnchorPoint.fromJson(Map<String, dynamic> json) {
     return AnchorPoint(
@@ -30,6 +38,7 @@ class AnchorPoint {
       headingDegrees: (json['heading_degrees'] as num?)?.toDouble(),
       visualHeadingVerified:
           json['visual_heading_verified'] as bool? ?? false,
+      cloudAnchorId: json['cloud_anchor_id'] as String?,
     );
   }
 }
