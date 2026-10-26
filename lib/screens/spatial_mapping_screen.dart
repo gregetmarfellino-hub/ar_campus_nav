@@ -710,6 +710,120 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     });
   }
 
+  Future<void> _placeStartQrAndBegin() async {
+    if (!_awaitingStartQr || !_arStarted || !_pose.isTracking) return;
+
+    final existing = _startAnchor;
+    String label;
+    String anchorId;
+
+    if (existing != null) {
+      label = existing.label;
+      anchorId = existing.id;
+    } else {
+      var draftLabel = 'Main Entrance';
+      final entered = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Name this start location'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'This QR will be the entrance/start anchor for this mapped '
+                'route. Visitors can localize here later without a manual '
+                'direction walk.',
+                style: TextStyle(height: 1.4),
+              ),
+              const SizedBox(height: 14),
+              TextFormField(
+                initialValue: draftLabel,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'Start label'),
+                onChanged: (value) => draftLabel = value,
+                onFieldSubmitted: (value) {
+                  final trimmed = value.trim();
+                  if (trimmed.isNotEmpty) {
+                    Navigator.of(dialogContext).pop(trimmed);
+                  }
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final value = draftLabel.trim();
+                if (value.isNotEmpty) {
+                  Navigator.of(dialogContext).pop(value);
+                }
+              },
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      );
+
+      if (!mounted || entered == null) return;
+      label = entered;
+      anchorId = _uniqueVisualAnchorId(label);
+    }
+
+    VisualQrPlacement? placement;
+    try {
+      final qrPng = await _qrPngForAnchorId(anchorId);
+      placement = await _ar.placeVisualQrAnchor(
+        qrPng: qrPng,
+        widthMeters: VisualAnchorSpec.qrWidthMeters,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _message = 'Could not place start QR: $error';
+      });
+      return;
+    }
+
+    if (!mounted || placement == null) return;
+    final placed = placement;
+
+    setState(() {
+      _points.clear();
+      _markers
+        ..clear()
+        ..add(
+          MappingMarker(
+            id: anchorId,
+            label: label,
+            type: 'anchor',
+            floor: _floor,
+            xMeters: placed.rightMeters,
+            yMeters: placed.forwardMeters,
+            upMeters: placed.upMeters,
+            pointIndex: 0,
+            anchorFacingDegrees: placed.facingDegrees,
+          ),
+        );
+      _placedStartQrId = anchorId;
+      _placedStartQrLabel = label;
+      _awaitingStartQr = false;
+      _recording = true;
+      _trackingInterrupted = false;
+      _recoveryPoseSamples = 0;
+      _consecutiveRejectedPoseJumps = 0;
+      _recordedDistanceMeters = 0;
+      _trackingState = 'READY';
+      _message =
+          'START QR LOCKED — $label is now the entrance/origin for this '
+          'recording. Start walking the real route and add rooms, junctions, '
+          'stairs, or optional QR checkpoints as needed.';
+    });
+  }
   Future<void> _addNewAnchorMarker() async {
     if (!_recording ||
         _trackingInterrupted ||
@@ -818,6 +932,13 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     });
   }
   Future<void> _finishAndSave() async {
+    if (_placedStartQrId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Place the start QR before saving.')),
+      );
+      return;
+    }
+
     if (!_recording || _points.length < 2 || _distanceMeters < 0.5) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -841,7 +962,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       floor: _floor,
       createdAt: now,
       startAnchorId: _startAnchor?.id,
-      startAnchorLabel: _startAnchor?.label,
+      startAnchorLabel: _placedStartQrLabel ?? _startAnchor?.label,
       originHeadingDegrees: 0,
       stepLengthMeters: 0,
       source: 'arcore_spatial',
@@ -873,6 +994,8 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         _savedPath = path;
         _savedJson = prettyJson;
         _pose = const ArPose(tracking: 'STOPPED');
+        _placedStartQrId = null;
+        _placedStartQrLabel = null;
         _message =
             'Spatial mapping saved: $rawPointCount raw samples → '
             '${simplified.points.length} saved geometry points. '
@@ -906,6 +1029,8 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       _recordedDistanceMeters = 0;
       _points.clear();
       _markers.clear();
+      _placedStartQrId = null;
+      _placedStartQrLabel = null;
       _pose = const ArPose(tracking: 'STOPPED');
       _message = 'Spatial recording discarded.';
     });
