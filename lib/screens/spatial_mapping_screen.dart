@@ -158,6 +158,105 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     }
   }
 
+  Future<void> _startBootstrapRecording() async {
+    if (_starting || _mappingActive) return;
+
+    final existing = _startAnchor;
+    final label = existing?.label ?? 'Main Entrance';
+    final anchorId = existing?.id ?? _uniqueVisualAnchorId(label);
+
+    setState(() {
+      _starting = true;
+      _arming = false;
+      _awaitingStartQr = false;
+      _recording = false;
+      _placedStartQrId = anchorId;
+      _placedStartQrLabel = label;
+      _trackingState = 'STARTING';
+      _message = null;
+      _savedPath = null;
+      _savedJson = null;
+    });
+
+    try {
+      final permission = await _ar.ensureCameraPermission();
+      if (!permission) {
+        if (!mounted) return;
+        setState(() {
+          _starting = false;
+          _placedStartQrId = null;
+          _placedStartQrLabel = null;
+          _trackingState = 'STOPPED';
+          _message = 'Camera permission is required for ARCore spatial mapping.';
+        });
+        return;
+      }
+
+      if (_arStarted) {
+        await _ar.stop();
+        _arStarted = false;
+      }
+
+      final result = await _ar.start();
+      if (!mounted) return;
+
+      if (result == 'INSTALL_REQUESTED') {
+        setState(() {
+          _starting = false;
+          _placedStartQrId = null;
+          _placedStartQrLabel = null;
+          _trackingState = 'STOPPED';
+          _message =
+              'Google Play Services for AR needs installation/update. '
+              'Return here and start again afterward.';
+        });
+        return;
+      }
+
+      if (result != 'STARTED') {
+        setState(() {
+          _starting = false;
+          _placedStartQrId = null;
+          _placedStartQrLabel = null;
+          _trackingState = 'STOPPED';
+          _message = 'Could not start ARCore: $result';
+        });
+        return;
+      }
+
+      setState(() {
+        _arStarted = true;
+        _arming = true;
+        _awaitingStartQr = false;
+        _recording = false;
+        _trackingInterrupted = false;
+        _stablePoseSamples = 0;
+        _recoveryPoseSamples = 0;
+        _trackingInterruptions = 0;
+        _rejectedPoseJumps = 0;
+        _consecutiveRejectedPoseJumps = 0;
+        _recordedDistanceMeters = 0;
+        _starting = false;
+        _trackingState = 'ACQUIRING';
+        _pose = const ArPose(tracking: 'INITIALIZING');
+        _points.clear();
+        _markers.clear();
+        _message =
+            'WAIT — hold the phone steady until ARCore locks. Then recording '
+            'starts automatically from $label as a provisional entrance.';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _starting = false;
+        _arming = false;
+        _placedStartQrId = null;
+        _placedStartQrLabel = null;
+        _trackingState = 'STOPPED';
+        _message = 'Could not start spatial mapping: $error';
+      });
+    }
+  }
   Future<void> _startSpatialRecording() async {
     if (_starting || _mappingActive) return;
 
@@ -459,19 +558,38 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
 
     _pose = pose;
 
-    // Initial acquisition: demand several consecutive good poses before
-    // allowing the author to define the entrance/start QR. Recording does not
-    // begin until that visual anchor has been placed.
+    // Bootstrap mapping: once ARCore is stable, recording starts immediately.
+    // The entrance anchor is provisional until/unless a physical QR is bound.
     if (_arming) {
       _stablePoseSamples++;
 
       if (_stablePoseSamples >= _stablePoseSamplesRequired) {
+        final anchorId = _placedStartQrId;
+        final label = _placedStartQrLabel;
         _arming = false;
-        _awaitingStartQr = true;
-        _trackingState = 'START QR';
+        _awaitingStartQr = false;
+        _recording = true;
+        _trackingState = 'READY';
+        _recordedDistanceMeters = 0;
+        _points.clear();
+        _markers.clear();
+        if (anchorId != null && label != null) {
+          _markers.add(
+            MappingMarker(
+              id: anchorId,
+              label: label,
+              type: 'anchor',
+              floor: _floor,
+              xMeters: 0,
+              yMeters: 0,
+              upMeters: 0,
+              pointIndex: 0,
+            ),
+          );
+        }
         _message =
-            'ARCore locked. Do not walk yet — place the entrance/start QR in '
-            'AR first. That visual anchor becomes the origin for this route.';
+            'RECORDING READY — start walking. $label is the provisional start '
+            'location; you can map geometry now even without a deployed QR.';
         _refreshUi(force: true);
         return;
       }
@@ -479,8 +597,8 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       _trackingState =
           'LOCKING $_stablePoseSamples/$_stablePoseSamplesRequired';
       _message =
-          'WAIT — keep the phone steady. After ARCore locks, define the start '
-          'QR before walking.';
+          'WAIT — keep the phone steady. Recording starts automatically after '
+          'a stable ARCore lock.';
       _refreshUi();
       return;
     }
@@ -880,7 +998,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
   Future<void> _finishAndSave() async {
     if (_placedStartQrId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Place the start QR before saving.')),
+        const SnackBar(content: Text('Start location is missing. Restart mapping.')),
       );
       return;
     }
@@ -1307,25 +1425,51 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                   ),
                 ],
                 const SizedBox(height: 14),
-                if (!_mappingActive)
+                if (!_mappingActive) ...[
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.icon(
-                      onPressed: _starting ? null : _startSpatialRecording,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _green,
+                        foregroundColor: Colors.black,
+                      ),
+                      onPressed: _starting ? null : _startBootstrapRecording,
                       icon: _starting
                           ? const SizedBox(
                               width: 18,
                               height: 18,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
-                          : const Icon(Icons.view_in_ar_rounded),
+                          : const Icon(Icons.route_rounded),
                       label: Text(
                         _starting
                             ? 'STARTING ARCORE...'
-                            : 'SET UP & SCAN START QR',
+                            : 'START MAPPING NOW',
                       ),
                     ),
-                  )
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _starting ? null : _startSpatialRecording,
+                      icon: const Icon(Icons.qr_code_scanner_rounded),
+                      label: const Text('SET UP & SCAN START QR'),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'You can map a brand-new route immediately. Scanning a '
+                    'deployed QR is optional here, but required later for '
+                    'one-scan persistent localization.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.white38,
+                      fontSize: 11,
+                      height: 1.35,
+                    ),
+                  ),
+                ]
                 else if (_awaitingStartQr) ...[
                   const Text(
                     'DO NOT WALK YET. The AR camera is scanning the deployed '
