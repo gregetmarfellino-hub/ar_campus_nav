@@ -1,8 +1,21 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) {
+        file.inputStream().use { load(it) }
+    }
+}
+val arcoreApiKey =
+    localProperties.getProperty("ARCORE_API_KEY")
+        ?: System.getenv("ARCORE_API_KEY")
+        ?: ""
 
 android {
     namespace = "com.example.ar_campus_nav"
@@ -27,6 +40,7 @@ android {
         // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["arcoreApiKey"] = arcoreApiKey
     }
 
     buildTypes {
