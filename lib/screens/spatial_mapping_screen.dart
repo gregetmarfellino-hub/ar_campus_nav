@@ -798,6 +798,14 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     });
   }
   Future<void> _finishAndSave() async {
+    if (_startCloudAnchorId == null || _startCloudAnchorId!.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Start portal is not persistent yet. Lock the portal first.'),
+        ),
+      );
+      return;
+    }
     if (_placedStartQrId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Start location is missing. Restart mapping.')),
@@ -829,6 +837,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       createdAt: now,
       startAnchorId: _startAnchor?.id,
       startAnchorLabel: _placedStartQrLabel ?? _startAnchor?.label,
+      startCloudAnchorId: _startCloudAnchorId,
       originHeadingDegrees: 0,
       stepLengthMeters: 0,
       source: 'arcore_spatial',
@@ -862,6 +871,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         _pose = const ArPose(tracking: 'STOPPED');
         _placedStartQrId = null;
         _placedStartQrLabel = null;
+        _startCloudAnchorId = null;
         _message =
             'Spatial mapping saved: $rawPointCount raw samples → '
             '${simplified.points.length} saved geometry points. '
@@ -897,6 +907,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       _markers.clear();
       _placedStartQrId = null;
       _placedStartQrLabel = null;
+      _startCloudAnchorId = null;
       _pose = const ArPose(tracking: 'STOPPED');
       _message = 'Spatial recording discarded.';
     });
