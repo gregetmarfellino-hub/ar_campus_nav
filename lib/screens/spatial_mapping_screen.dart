@@ -1135,7 +1135,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                 ),
                 SizedBox(height: 10),
                 Text(
-                  'Walk the real path once.',
+                  'Place the start QR, then walk.',
                   style: TextStyle(
                     fontSize: 25,
                     fontWeight: FontWeight.w900,
@@ -1143,9 +1143,9 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                 ),
                 SizedBox(height: 8),
                 Text(
-                  'ARCore records the phone position directly in meters. '
-                  'No compass heading or step-length integration is used to '
-                  'shape a spatial recording.',
+                  'Each recording starts from a visual QR anchor. After that, '
+                  'ARCore records the walked path directly in meters; no '
+                  'compass heading or step-length integration shapes the map.',
                   style: TextStyle(color: Colors.white60, height: 1.45),
                 ),
               ],
@@ -1160,13 +1160,13 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                   key: ValueKey(_startAnchor?.id),
                   initialValue: _startAnchor?.id,
                   decoration: const InputDecoration(
-                    labelText: 'Start anchor',
+                    labelText: 'Start location / entrance QR',
                     prefixIcon: Icon(Icons.qr_code_2_rounded),
                   ),
                   items: [
                     const DropdownMenuItem<String?>(
                       value: null,
-                      child: Text('No QR anchor / local origin'),
+                      child: Text('Create a new start QR'),
                     ),
                     for (final anchor in widget.venue.anchors)
                       DropdownMenuItem<String?>(
@@ -1380,10 +1380,51 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                       ),
                     ),
                   )
-                else if (!_recording) ...[
+                else if (_awaitingStartQr) ...[
+                  Text(
+                    _startAnchor == null
+                        ? 'ARCore is ready. Place a NEW start QR before walking. '
+                            'This becomes the entrance/origin for the route.'
+                        : 'ARCore is ready. Re-place ${_startAnchor!.label} in '
+                            'AR to upgrade/use it as the visual start anchor.',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Color(0xFFF9D976),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _green,
+                        foregroundColor: Colors.black,
+                      ),
+                      onPressed: _pose.isTracking ? _placeStartQrAndBegin : null,
+                      icon: const Icon(Icons.qr_code_2_rounded),
+                      label: Text(
+                        _startAnchor == null
+                            ? 'PLACE START QR'
+                            : 'PLACE ${_startAnchor!.label.toUpperCase()} QR',
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _discardRecording,
+                      icon: const Icon(Icons.close_rounded),
+                      label: const Text('CANCEL'),
+                    ),
+                  ),
+                ] else if (!_recording) ...[
                   const Text(
-                    'DO NOT WALK YET. Mapping begins only after ARCore has a '
-                    'stable visual lock and the local origin is reset.',
+                    'DO NOT WALK YET. ARCore is still acquiring a stable '
+                    'visual lock. The start QR step appears automatically next.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: Color(0xFFF9D976),
@@ -1405,8 +1446,9 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                   Text(
                     _trackingInterrupted
                         ? 'STOP WALKING until tracking recovers.'
-                        : 'Recording is live. Walk naturally and add semantic '
-                            'markers only at real locations.',
+                        : 'Recording is live from the start QR. Walk naturally; '
+                            'add rooms, junctions, stairs, and optional QR '
+                            'checkpoints only at real locations.',
                     style: TextStyle(
                       color: _trackingInterrupted
                           ? const Color(0xFFF9D976)
@@ -1431,7 +1473,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                             ? null
                             : _addNewAnchorMarker,
                         icon: const Icon(Icons.view_in_ar_rounded, size: 18),
-                        label: const Text('PLACE QR IN AR'),
+                        label: const Text('ADD QR CHECKPOINT'),
                       ),
                       _markerButton('anchor', Icons.link_rounded),
                     ],
