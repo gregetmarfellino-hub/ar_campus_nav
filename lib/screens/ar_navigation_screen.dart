@@ -94,8 +94,9 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
 
         if (pose.tracking == 'PERSISTENT_PORTAL_RESOLVED') {
           setState(() {
-            _status =
-                'Start portal found. Center the floating QR in the camera to begin.';
+            _status = _anchor?.localDevPortal == true
+                ? 'Local dev portal recreated. Center the floating QR to begin.'
+                : 'Start portal found. Center the floating QR in the camera to begin.';
           });
           return;
         }
@@ -392,9 +393,12 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
 
       setState(() {
         _status = switch (result) {
-          'STARTED' => persistentAnchor != null
-              ? 'Resolving the saved ${persistentAnchor.label} start portal. '
-                  'Look around the mapped entrance area.'
+          'STARTED' => persistentAnchor?.localDevPortal == true
+              ? 'Starting local development portal. It will be recreated near '
+                  'the current camera so you can test the interaction.'
+              : persistentAnchor != null
+                  ? 'Resolving the saved ${persistentAnchor.label} start portal. '
+                      'Look around the mapped entrance area.'
               : visualAnchor != null
                   ? 'Visual localization ready. Point the AR camera at the '
                       '16 cm ${visualAnchor.label} QR and hold it steady until '
