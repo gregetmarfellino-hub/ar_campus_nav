@@ -1078,25 +1078,72 @@ class ArCoreTrackingEngine(
         activeSession: Session,
         config: Config,
     ) {
-        val bitmap = navigationVisualAnchorBitmap ?: return
-        if (!navigationVisualAnchorEnabled) return
+        val database = AugmentedImageDatabase(activeSession)
+        var added = false
 
-        try {
-            val database = AugmentedImageDatabase(activeSession)
-            database.addImage(
-                navigationVisualImageName,
-                bitmap,
-                navigationVisualAnchorWidthMeters,
-            )
+        if (navigationVisualAnchorEnabled) {
+            val bitmap = navigationVisualAnchorBitmap
+            if (bitmap != null) {
+                try {
+                    database.addImage(
+                        navigationVisualImageName,
+                        bitmap,
+                        navigationVisualAnchorWidthMeters,
+                    )
+                    added = true
+                } catch (error: Exception) {
+                    navigationVisualAnchorEnabled = false
+                    navigationVisualSetupWarning =
+                        "ARCore could not register this QR as a visual target " +
+                            "(${error.javaClass.simpleName}). Use manual alignment."
+                }
+            }
+        }
+
+        if (mappingVisualAnchorEnabled) {
+            val bitmap = mappingVisualAnchorBitmap
+            if (bitmap != null) {
+                try {
+                    database.addImage(
+                        mappingVisualImageName,
+                        bitmap,
+                        mappingVisualAnchorWidthMeters,
+                    )
+                    added = true
+                } catch (error: Exception) {
+                    mappingVisualAnchorEnabled = false
+                    emitError(
+                        "MAPPING_QR_DATABASE_ERROR",
+                        "ARCore could not register the mapping start QR: " +
+                            error.javaClass.simpleName,
+                    )
+                }
+            }
+        }
+
+        if (added) {
             config.augmentedImageDatabase = database
-        } catch (error: Exception) {
-            navigationVisualAnchorEnabled = false
-            navigationVisualSetupWarning =
-                "ARCore could not register this QR as a visual target " +
-                    "(${error.javaClass.simpleName}). Use manual alignment."
         }
     }
 
+    private fun clearMappingVisualAnchorConfiguration() {
+        mappingVisualAnchorBitmap?.recycle()
+        mappingVisualAnchorBitmap = null
+        mappingVisualAnchorWidthMeters = 0f
+        mappingVisualAnchorLabel = ""
+        mappingVisualAnchorEnabled = false
+        mappingVisualStatusText = null
+        resetMappingVisualSamples()
+    }
+
+    private fun resetMappingVisualSamples() {
+        mappingVisualSampleCount = 0
+        mappingVisualPositionX = 0f
+        mappingVisualPositionY = 0f
+        mappingVisualPositionZ = 0f
+        mappingVisualForwardX = 0f
+        mappingVisualForwardZ = 0f
+    }
     private fun clearVisualAnchorConfiguration() {
         navigationVisualAnchorBitmap?.recycle()
         navigationVisualAnchorBitmap = null
