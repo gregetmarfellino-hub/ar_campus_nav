@@ -145,6 +145,7 @@ class MappingSession {
     required this.createdAt,
     required this.startAnchorId,
     required this.startAnchorLabel,
+    this.startCloudAnchorId,
     required this.originHeadingDegrees,
     required this.stepLengthMeters,
     required this.points,
@@ -162,6 +163,7 @@ class MappingSession {
   final DateTime createdAt;
   final String? startAnchorId;
   final String? startAnchorLabel;
+  final String? startCloudAnchorId;
 
   /// One rotation metadata value for placing separate sessions into a shared
   /// 2D venue frame. ARCore still owns the actual path geometry.
@@ -242,6 +244,8 @@ class MappingSession {
         'created_at': createdAt.toIso8601String(),
         'start_anchor_id': startAnchorId,
         'start_anchor_label': startAnchorLabel,
+        if (startCloudAnchorId != null)
+          'start_cloud_anchor_id': startCloudAnchorId,
         'origin_heading_deg': originHeadingDegrees,
         'step_length_m': stepLengthMeters,
         'source': source,
@@ -261,6 +265,7 @@ class MappingSession {
       createdAt: DateTime.parse(json['created_at'] as String),
       startAnchorId: json['start_anchor_id'] as String?,
       startAnchorLabel: json['start_anchor_label'] as String?,
+      startCloudAnchorId: json['start_cloud_anchor_id'] as String?,
       originHeadingDegrees:
           (json['origin_heading_deg'] as num?)?.toDouble() ?? 0,
       stepLengthMeters: (json['step_length_m'] as num?)?.toDouble() ?? 0,
