@@ -80,6 +80,60 @@ void main() {
     );
   }
 
+  test('bootstrap spatial map can create a provisional entrance without QR', () {
+    final session = MappingSession(
+      id: 'bootstrap_no_qr',
+      venueId: 'venue',
+      venueName: 'Venue',
+      floor: 1,
+      createdAt: DateTime.utc(2026, 1, 1),
+      startAnchorId: null,
+      startAnchorLabel: 'Main Entrance',
+      originHeadingDegrees: 0,
+      stepLengthMeters: 0,
+      source: 'arcore_spatial',
+      points: const [
+        MappingPoint(
+          xMeters: 0,
+          yMeters: 0,
+          headingDegrees: 0,
+          stepIndex: 0,
+          timestampMs: 0,
+        ),
+        MappingPoint(
+          xMeters: 0,
+          yMeters: 4,
+          headingDegrees: 0,
+          stepIndex: 1,
+          timestampMs: 1000,
+        ),
+      ],
+      markers: const [
+        MappingMarker(
+          id: 'main_entrance',
+          label: 'Main Entrance',
+          type: 'anchor',
+          floor: 1,
+          xMeters: 0,
+          yMeters: 0,
+          upMeters: 0,
+          pointIndex: 0,
+        ),
+      ],
+    );
+
+    final venue = service.applySession(
+      venue: baseVenue(),
+      session: session,
+    );
+
+    final anchor = venue.anchorById('main_entrance');
+    final node = venue.nodeById(anchor.nodeId);
+
+    expect(anchor.visualPoseReady, isFalse);
+    expect(node.type, 'entrance');
+    expect(venue.edges, isNotEmpty);
+  });
   test('legacy start anchor stays position-only unless facing was verified', () {
     final venue = service.applySession(
       venue: baseVenue(),
