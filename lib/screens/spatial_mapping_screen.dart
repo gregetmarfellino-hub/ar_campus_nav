@@ -267,54 +267,62 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     final stateChanged = _trackingState != pose.tracking;
     _trackingState = pose.tracking;
 
-    // Mapping start QR lock is a status event with no pose payload. Native has
-    // already rebased its tracking frame to the QR center + outward normal.
-    if (pose.tracking == 'MAPPING_START_QR_LOCKED' && _awaitingStartQr) {
+    // Persistent portal hosting returns a Cloud Anchor ID as a status event.
+    // Native has already rebased the local mapping frame to this portal pose.
+    if (pose.tracking == 'PERSISTENT_PORTAL_HOSTED' && _awaitingStartQr) {
       final anchorId = _placedStartQrId;
       final label = _placedStartQrLabel;
-      if (anchorId != null && label != null) {
+      final cloudAnchorId = pose.cloudAnchorId;
+
+      if (anchorId == null || label == null || cloudAnchorId == null) {
         setState(() {
-          _awaitingStartQr = false;
-          _recording = true;
-          _trackingInterrupted = false;
-          _recoveryPoseSamples = 0;
-          _consecutiveRejectedPoseJumps = 0;
-          _recordedDistanceMeters = 0;
-          _trackingState = 'READY';
-          _points.clear();
-          _markers
-            ..clear()
-            ..add(
-              MappingMarker(
-                id: anchorId,
-                label: label,
-                type: 'anchor',
-                floor: _floor,
-                xMeters: 0,
-                yMeters: 0,
-                upMeters: 0,
-                pointIndex: 0,
-                anchorFacingDegrees: 0,
-              ),
-            );
-          _message =
-              'START QR LOCKED — $label is the physical origin. Start walking '
-              'the route now; no manual direction calibration is needed.';
+          _message = 'Persistent portal hosted without a valid anchor ID.';
         });
+        return;
       }
+
+      setState(() {
+        _startCloudAnchorId = cloudAnchorId;
+        _awaitingStartQr = false;
+        _recording = true;
+        _trackingInterrupted = false;
+        _recoveryPoseSamples = 0;
+        _consecutiveRejectedPoseJumps = 0;
+        _recordedDistanceMeters = 0;
+        _trackingState = 'READY';
+        _points.clear();
+        _markers
+          ..clear()
+          ..add(
+            MappingMarker(
+              id: anchorId,
+              label: label,
+              type: 'anchor',
+              floor: _floor,
+              xMeters: 0,
+              yMeters: 0,
+              upMeters: 0,
+              pointIndex: 0,
+              anchorFacingDegrees: 0,
+            ),
+          );
+        _message =
+            'START PORTAL SAVED — $label is now the persistent route origin. '
+            'Start walking and add the destination.';
+      });
       return;
     }
 
-    if (pose.tracking == 'MAPPING_QR_SCAN_CANCELLED') {
+    if (pose.tracking == 'PERSISTENT_PORTAL_CANCELLED') {
       setState(() {
-        _arming = false;
         _awaitingStartQr = false;
         _recording = false;
         _arStarted = false;
         _trackingState = 'STOPPED';
         _placedStartQrId = null;
         _placedStartQrLabel = null;
-        _message = 'Start QR scan cancelled.';
+        _startCloudAnchorId = null;
+        _message = 'Start portal placement cancelled.';
       });
       return;
     }
@@ -340,7 +348,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
             '${pose.errorMessage ?? 'Move the phone slowly and aim at visible detail.'}';
       } else if (_awaitingStartQr && pose.tracking == 'PAUSED') {
         _message =
-            'WAIT — tracking paused before the start QR was placed. '
+            'WAIT — tracking paused before the start portal was locked. '
             '${pose.errorMessage ?? 'Move the phone slowly until ARCore recovers.'}';
       } else if (pose.errorMessage != null) {
         _message = pose.errorMessage;
