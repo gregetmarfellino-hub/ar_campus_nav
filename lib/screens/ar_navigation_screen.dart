@@ -92,6 +92,20 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
           return;
         }
 
+        if (pose.tracking == 'PERSISTENT_PORTAL_RESOLVED') {
+          setState(() {
+            _status =
+                'Start portal found. Center the floating QR in the camera to begin.';
+          });
+          return;
+        }
+
+        if (pose.tracking == 'PERSISTENT_PORTAL_ACTIVATED') {
+          setState(() {
+            _status = 'Start portal scanned. AR route activated.';
+          });
+          return;
+        }
         if (pose.tracking == 'VISUAL_ANCHOR_LOCKED') {
           setState(() {
             _status =
@@ -292,12 +306,18 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
   Future<bool> _startNavigation() async {
     if (!mounted) return false;
 
-    final visualAnchor = _anchor != null &&
-            _anchor!.visualPoseReady &&
+    final startAnchor = _anchor != null &&
             _route.nodes.isNotEmpty &&
             _route.nodes.first.id == _anchor!.nodeId
         ? _anchor
         : null;
+    final persistentAnchor =
+        startAnchor?.persistentPoseReady == true ? startAnchor : null;
+    final visualAnchor =
+        persistentAnchor == null && startAnchor?.visualPoseReady == true
+            ? startAnchor
+            : null;
+    final portalPreviewAnchor = persistentAnchor ?? visualAnchor;
     final points = _routeLocalPoints();
     if (points.length < 2) {
       setState(() {
@@ -319,36 +339,41 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
     }
 
     try {
-      final visualPng =
-          visualAnchor == null ? null : await _visualAnchorPng(visualAnchor);
+      final visualPng = portalPreviewAnchor == null
+          ? null
+          : await _visualAnchorPng(portalPreviewAnchor);
       final result = await _ar.startNavigation(
         destinationName: widget.destination.name,
         startLabel: _route.nodes.first.label,
         anchorLocalized: _anchor != null,
         points: points,
         visualAnchorPng: visualPng,
-        visualAnchorWidthMeters: visualAnchor == null
+        visualAnchorWidthMeters: portalPreviewAnchor == null
             ? null
             : VisualAnchorSpec.qrWidthMeters,
-        visualAnchorLabel: visualAnchor?.label,
+        visualAnchorLabel: portalPreviewAnchor?.label,
         visualAnchorRouteOffsetDegrees: visualAnchor == null
             ? null
             : _visualAnchorRouteOffsetDegrees(visualAnchor),
+        cloudAnchorId: persistentAnchor?.cloudAnchorId,
       );
       if (!mounted) return false;
 
       setState(() {
         _status = switch (result) {
-          'STARTED' => visualAnchor != null
-              ? 'Visual localization ready. Point the AR camera at the '
-                  '16 cm ${visualAnchor.label} QR and hold it steady until '
-                  'the app locks position + direction.'
-              : _anchor == null
-                  ? 'Manual preview: stand exactly at the selected map start, '
-                      'tap SET START, walk 2–3 m along the first real path, then '
-                      'LOCK DIRECTION.'
-                  : 'This anchor is position-only. Use manual alignment now, '
-                      'or re-map it as a visual QR anchor for one-scan pose.',
+          'STARTED' => persistentAnchor != null
+              ? 'Resolving the saved ${persistentAnchor.label} start portal. '
+                  'Look around the mapped entrance area.'
+              : visualAnchor != null
+                  ? 'Visual localization ready. Point the AR camera at the '
+                      '16 cm ${visualAnchor.label} QR and hold it steady until '
+                      'the app locks position + direction.'
+                  : _anchor == null
+                      ? 'Manual preview: stand exactly at the selected map start, '
+                          'tap SET START, walk 2–3 m along the first real path, then '
+                          'LOCK DIRECTION.'
+                      : 'This legacy anchor has no persistent portal. '
+                          'Manual alignment remains available for old data.',
           'INSTALL_REQUESTED' =>
             'Install/update Google Play Services for AR, then retry.',
           _ => 'ARCore: $result',
@@ -539,9 +564,9 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
                 ),
                 const SizedBox(height: 22),
                 const Text(
-                  'Visual-ready QR anchors localize both translation and '
-                  'horizontal direction directly in AR. Legacy anchors fall '
-                  'back to the manual 2–3 m direction calibration.',
+                  'Persistent routes resolve their saved AR start portal '
+                  'automatically. Center the floating QR portal to activate '
+                  'guidance; legacy routes may still use older alignment modes.',
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Colors.white38,
