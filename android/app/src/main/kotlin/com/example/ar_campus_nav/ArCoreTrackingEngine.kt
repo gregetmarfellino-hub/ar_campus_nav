@@ -83,11 +83,13 @@ class ArCoreTrackingEngine(
     // Persistent start portal. Mapping hosts one Cloud Anchor at the portal
     // pose; navigation resolves the saved ID in a fresh ARCore session.
     private var persistentPortalMappingMode = false
+    private var persistentPortalLocalDevMode = false
     private var persistentPortalHosting = false
     private var persistentPortalHostAnchor: Anchor? = null
     private var persistentPortalHostFuture: com.google.ar.core.HostCloudAnchorFuture? = null
     private var persistentPortalLabel = "Start portal"
     private var navigationCloudAnchorId: String? = null
+    private var navigationLocalDevPortal = false
     private var navigationResolveFuture: com.google.ar.core.ResolveCloudAnchorFuture? = null
     private var navigationCloudResolveAttempted = false
     private var navigationPortalActivated = false
@@ -199,6 +201,9 @@ class ArCoreTrackingEngine(
     private var activeRouteIndex = 1
     private var navigationArrivalShown = false
 
+    private fun isLocalDevPortalId(value: String?): Boolean =
+        value?.startsWith("localdev:") == true
+
     private fun hasArCoreCloudApiKey(): Boolean {
         return try {
             val info = activity.packageManager.getApplicationInfo(
@@ -249,14 +254,11 @@ class ArCoreTrackingEngine(
         widthMeters: Float,
         label: String,
     ): String {
-        if (!hasArCoreCloudApiKey()) {
-            return "ARCORE_CLOUD_API_KEY_MISSING"
-        }
-
         navigationMode = false
         clearVisualAnchorConfiguration()
         clearMappingVisualAnchorConfiguration()
         clearPersistentPortalState()
+        persistentPortalLocalDevMode = !hasArCoreCloudApiKey()
 
         val bitmap = BitmapFactory.decodeByteArray(qrPng, 0, qrPng.size)
             ?: return "PORTAL_QR_DECODE_FAILED"
@@ -317,9 +319,6 @@ class ArCoreTrackingEngine(
         cloudAnchorId: String? = null,
     ): String {
         if (points.size < 2) return "ROUTE_TOO_SHORT"
-        if (!cloudAnchorId.isNullOrBlank() && !hasArCoreCloudApiKey()) {
-            return "ARCORE_CLOUD_API_KEY_MISSING"
-        }
 
         navigationMode = true
         navigationDestination = destination
@@ -327,6 +326,7 @@ class ArCoreTrackingEngine(
         navigationAnchorLocalized = anchorLocalized
         navigationPoints = points
         navigationCloudAnchorId = cloudAnchorId?.takeIf { it.isNotBlank() }
+        navigationLocalDevPortal = isLocalDevPortalId(navigationCloudAnchorId)
         navigationResolveFuture?.cancel()
         navigationResolveFuture = null
         navigationCloudResolveAttempted = false
@@ -387,8 +387,10 @@ class ArCoreTrackingEngine(
                 updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
                 planeFindingMode = Config.PlaneFindingMode.DISABLED
                 lightEstimationMode = Config.LightEstimationMode.DISABLED
-                if (persistentPortalMappingMode ||
-                    !navigationCloudAnchorId.isNullOrBlank()
+                if ((persistentPortalMappingMode &&
+                        !persistentPortalLocalDevMode) ||
+                    (!navigationCloudAnchorId.isNullOrBlank() &&
+                        !navigationLocalDevPortal)
                 ) {
                     cloudAnchorMode = Config.CloudAnchorMode.ENABLED
                 }
@@ -1727,6 +1729,7 @@ class ArCoreTrackingEngine(
         }
         persistentPortalHostAnchor = null
         persistentPortalMappingMode = false
+        persistentPortalLocalDevMode = false
         persistentPortalHosting = false
         persistentPortalLabel = "Start portal"
     }
@@ -1736,6 +1739,7 @@ class ArCoreTrackingEngine(
         navigationResolveFuture = null
         navigationCloudResolveAttempted = false
         navigationCloudAnchorId = null
+        navigationLocalDevPortal = false
         navigationPortalActivated = false
         navigationPortalFocusFrames = 0
     }
