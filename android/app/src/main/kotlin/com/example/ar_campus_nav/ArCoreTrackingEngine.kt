@@ -199,6 +199,21 @@ class ArCoreTrackingEngine(
     private var activeRouteIndex = 1
     private var navigationArrivalShown = false
 
+    private fun hasArCoreCloudApiKey(): Boolean {
+        return try {
+            val info = activity.packageManager.getApplicationInfo(
+                activity.packageName,
+                android.content.pm.PackageManager.GET_META_DATA,
+            )
+            val key = info.metaData
+                ?.getString("com.google.android.ar.API_KEY")
+                ?.trim()
+            !key.isNullOrEmpty() && key != "YOUR_ARCORE_API_KEY_HERE"
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     fun availabilityLabel(): String {
         return try {
             when (ArCoreApk.getInstance().checkAvailability(activity)) {
@@ -234,6 +249,10 @@ class ArCoreTrackingEngine(
         widthMeters: Float,
         label: String,
     ): String {
+        if (!hasArCoreCloudApiKey()) {
+            return "ARCORE_CLOUD_API_KEY_MISSING"
+        }
+
         navigationMode = false
         clearVisualAnchorConfiguration()
         clearMappingVisualAnchorConfiguration()
@@ -298,6 +317,9 @@ class ArCoreTrackingEngine(
         cloudAnchorId: String? = null,
     ): String {
         if (points.size < 2) return "ROUTE_TOO_SHORT"
+        if (!cloudAnchorId.isNullOrBlank() && !hasArCoreCloudApiKey()) {
+            return "ARCORE_CLOUD_API_KEY_MISSING"
+        }
 
         navigationMode = true
         navigationDestination = destination
