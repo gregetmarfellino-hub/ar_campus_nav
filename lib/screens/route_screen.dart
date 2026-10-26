@@ -488,8 +488,13 @@ class _AnchorCard extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           OutlinedButton.icon(
-            onPressed: onScan,
-            icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
+            onPressed: value?.persistentPoseReady == true ? null : onScan,
+            icon: Icon(
+              value?.persistentPoseReady == true
+                  ? Icons.check_circle_rounded
+                  : Icons.qr_code_scanner_rounded,
+              size: 18,
+            ),
             label: Text(
               value == null
                   ? 'SCAN LOCATION'
