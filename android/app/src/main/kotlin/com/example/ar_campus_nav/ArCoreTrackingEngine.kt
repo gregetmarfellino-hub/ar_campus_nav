@@ -1133,6 +1133,15 @@ class ArCoreTrackingEngine(
 
             if (navigationMode) {
                 if (!navigationAligned &&
+                    navigationCloudAnchorId != null
+                ) {
+                    beginPersistentPortalResolve(activeSession)
+                    emitTrackingState("TRACKING")
+                    setNavigationArrowVisible(false)
+                    return
+                }
+
+                if (!navigationAligned &&
                     navigationVisualAnchorEnabled &&
                     navigationCalibrationStart == null
                 ) {
@@ -1186,6 +1195,22 @@ class ArCoreTrackingEngine(
                         }
                     }
                     return
+                }
+
+                if (navigationCloudAnchorId != null) {
+                    drawPersistentNavigationPortal(
+                        camera = camera,
+                        anchor = routeAnchor,
+                    )
+                    if (!updatePersistentPortalActivation(
+                            currentPose = currentPose,
+                            anchor = routeAnchor,
+                        )
+                    ) {
+                        emitTrackingState("TRACKING")
+                        setNavigationArrowVisible(false)
+                        return
+                    }
                 }
 
                 if (!acceptNavigationPose(
