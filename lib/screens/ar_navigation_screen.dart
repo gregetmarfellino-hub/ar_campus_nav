@@ -247,6 +247,35 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
     ];
   }
 
+  List<Map<String, dynamic>> _persistentRouteLocalPoints(
+    AnchorPoint anchor,
+  ) {
+    final nodes = _route.nodes;
+    if (nodes.length < 2 || anchor.headingDegrees == null) {
+      return const [];
+    }
+
+    final start = nodes.first;
+    final theta = anchor.headingDegrees! * math.pi / 180.0;
+    final cosTheta = math.cos(theta);
+    final sinTheta = math.sin(theta);
+
+    // Inverse of VenueTransform2D's mapping-local -> venue transform.
+    // Persistent Cloud Anchor local +X is route-right and local -Z is
+    // route-forward, exactly matching the mapping frame hosted at the portal.
+    return [
+      for (final node in nodes)
+        {
+          'right': (node.x - start.x) * cosTheta +
+              (node.y - start.y) * sinTheta,
+          'forward': (node.x - start.x) * sinTheta -
+              (node.y - start.y) * cosTheta,
+          'label': node.label,
+          'semantic': node.type != 'path',
+        },
+    ];
+  }
+
   double? _visualAnchorRouteOffsetDegrees(AnchorPoint anchor) {
     if (!anchor.visualPoseReady) return null;
     final basis = _routeFrameBasis();
@@ -318,7 +347,9 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
             ? startAnchor
             : null;
     final portalPreviewAnchor = persistentAnchor ?? visualAnchor;
-    final points = _routeLocalPoints();
+    final points = persistentAnchor == null
+        ? _routeLocalPoints()
+        : _persistentRouteLocalPoints(persistentAnchor);
     if (points.length < 2) {
       setState(() {
         _status = 'This route does not contain enough spatial points.';
