@@ -201,8 +201,10 @@ class _RouteScreenState extends State<RouteScreen> {
               label: Text(
                 anchor == null
                     ? 'START AR MANUAL PREVIEW'
-                    : anchor.persistentPoseReady
-                        ? 'START AR PORTAL'
+                    : anchor.localDevPortal
+                        ? 'START AR PORTAL (DEV)'
+                        : anchor.persistentPoseReady
+                            ? 'START AR PORTAL'
                         : anchor.visualPoseReady
                             ? 'START AR & LOCK QR'
                             : 'START AR + MANUAL ALIGN',
@@ -358,9 +360,13 @@ class _SpatialAlignmentCard extends StatelessWidget {
         ? const Color(0xFF3DDC97)
         : const Color(0xFFF9C74F);
 
-    final message = persistentReady
-        ? '${value!.label} has a saved persistent AR portal. Open AR near the '
-            'mapped entrance; the floating QR should resolve back into place.'
+    final message = value?.localDevPortal == true
+        ? '${value!.label} uses the local development portal. The floating QR '
+            'will be recreated near the camera so you can test portal scanning '
+            'and route guidance; its old physical spot is not restored.'
+        : persistentReady
+            ? '${value!.label} has a saved persistent AR portal. Open AR near the '
+                'mapped entrance; the floating QR should resolve back into place.'
         : visualReady
             ? 'Expected QR: ${value!.label}. Open AR and point the camera at '
                 'the physical marker to localize.'
