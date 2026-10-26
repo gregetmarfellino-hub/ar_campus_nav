@@ -65,6 +65,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
 
   String? _placedStartQrId;
   String? _placedStartQrLabel;
+  String? _startCloudAnchorId;
 
   int _stablePoseSamples = 0;
   int _recoveryPoseSamples = 0;
@@ -158,7 +159,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     }
   }
 
-  Future<void> _startBootstrapRecording() async {
+  Future<void> _startPersistentPortalRecording() async {
     if (_starting || _mappingActive) return;
 
     final existing = _startAnchor;
@@ -168,210 +169,12 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     setState(() {
       _starting = true;
       _arming = false;
-      _awaitingStartQr = false;
-      _recording = false;
-      _placedStartQrId = anchorId;
-      _placedStartQrLabel = label;
-      _trackingState = 'STARTING';
-      _message = null;
-      _savedPath = null;
-      _savedJson = null;
-    });
-
-    try {
-      final permission = await _ar.ensureCameraPermission();
-      if (!permission) {
-        if (!mounted) return;
-        setState(() {
-          _starting = false;
-          _placedStartQrId = null;
-          _placedStartQrLabel = null;
-          _trackingState = 'STOPPED';
-          _message = 'Camera permission is required for ARCore spatial mapping.';
-        });
-        return;
-      }
-
-      if (_arStarted) {
-        await _ar.stop();
-        _arStarted = false;
-      }
-
-      final result = await _ar.start();
-      if (!mounted) return;
-
-      if (result == 'INSTALL_REQUESTED') {
-        setState(() {
-          _starting = false;
-          _placedStartQrId = null;
-          _placedStartQrLabel = null;
-          _trackingState = 'STOPPED';
-          _message =
-              'Google Play Services for AR needs installation/update. '
-              'Return here and start again afterward.';
-        });
-        return;
-      }
-
-      if (result != 'STARTED') {
-        setState(() {
-          _starting = false;
-          _placedStartQrId = null;
-          _placedStartQrLabel = null;
-          _trackingState = 'STOPPED';
-          _message = 'Could not start ARCore: $result';
-        });
-        return;
-      }
-
-      setState(() {
-        _arStarted = true;
-        _arming = true;
-        _awaitingStartQr = false;
-        _recording = false;
-        _trackingInterrupted = false;
-        _stablePoseSamples = 0;
-        _recoveryPoseSamples = 0;
-        _trackingInterruptions = 0;
-        _rejectedPoseJumps = 0;
-        _consecutiveRejectedPoseJumps = 0;
-        _recordedDistanceMeters = 0;
-        _starting = false;
-        _trackingState = 'ACQUIRING';
-        _pose = const ArPose(tracking: 'INITIALIZING');
-        _points.clear();
-        _markers.clear();
-        _message =
-            'WAIT — hold the phone steady until ARCore locks. Then recording '
-            'starts automatically from $label as a provisional entrance.';
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _starting = false;
-        _arming = false;
-        _placedStartQrId = null;
-        _placedStartQrLabel = null;
-        _trackingState = 'STOPPED';
-        _message = 'Could not start spatial mapping: $error';
-      });
-    }
-  }
-  Future<void> _startSpatialRecording() async {
-    if (_starting || _mappingActive) return;
-
-    String label;
-    String anchorId;
-    final existing = _startAnchor;
-
-    if (existing != null) {
-      label = existing.label;
-      anchorId = existing.id;
-    } else {
-      var draftLabel = 'Main Entrance';
-      final entered = await showDialog<String>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Create start QR'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Name the physical entrance/start marker for this route.',
-                style: TextStyle(height: 1.4),
-              ),
-              const SizedBox(height: 14),
-              TextFormField(
-                initialValue: draftLabel,
-                autofocus: true,
-                decoration: const InputDecoration(labelText: 'Start label'),
-                onChanged: (value) => draftLabel = value,
-                onFieldSubmitted: (value) {
-                  final trimmed = value.trim();
-                  if (trimmed.isNotEmpty) {
-                    Navigator.of(dialogContext).pop(trimmed);
-                  }
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final value = draftLabel.trim();
-                if (value.isNotEmpty) {
-                  Navigator.of(dialogContext).pop(value);
-                }
-              },
-              child: const Text('Continue'),
-            ),
-          ],
-        ),
-      );
-      if (!mounted || entered == null) return;
-      label = entered;
-      anchorId = _uniqueVisualAnchorId(label);
-    }
-
-    final payload = _qrPayloadForAnchorId(anchorId);
-    final deployed = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('Deploy $label QR'),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                color: Colors.white,
-                padding: const EdgeInsets.all(14),
-                child: QrImageView(
-                  data: payload,
-                  size: 220,
-                  backgroundColor: Colors.white,
-                ),
-              ),
-              const SizedBox(height: 14),
-              Text(
-                'Print or display this exact QR on another device/support at '
-                '${(VisualAnchorSpec.qrWidthMeters * 100).toStringAsFixed(0)} cm '
-                'wide and keep it upright. The mapping camera must physically '
-                'see this marker; a virtual-only QR cannot relocalize a later session.',
-                textAlign: TextAlign.center,
-                style: const TextStyle(height: 1.4),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton.icon(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            icon: const Icon(Icons.qr_code_scanner_rounded),
-            label: const Text('QR IS DEPLOYED — SCAN'),
-          ),
-        ],
-      ),
-    );
-    if (!mounted || deployed != true) return;
-
-    setState(() {
-      _starting = true;
-      _arming = false;
       _awaitingStartQr = true;
       _recording = false;
       _placedStartQrId = anchorId;
       _placedStartQrLabel = label;
-      _trackingState = 'SCAN START QR';
+      _startCloudAnchorId = null;
+      _trackingState = 'PLACING PORTAL';
       _message = null;
       _savedPath = null;
       _savedJson = null;
@@ -398,7 +201,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       }
 
       final qrPng = await _qrPngForAnchorId(anchorId);
-      final result = await _ar.startMappingWithVisualAnchor(
+      final result = await _ar.startPersistentPortalMapping(
         qrPng: qrPng,
         widthMeters: VisualAnchorSpec.qrWidthMeters,
         label: label,
@@ -409,8 +212,6 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         setState(() {
           _starting = false;
           _awaitingStartQr = false;
-          _placedStartQrId = null;
-          _placedStartQrLabel = null;
           _trackingState = 'STOPPED';
           _message =
               'Google Play Services for AR needs installation/update. '
@@ -423,19 +224,15 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         setState(() {
           _starting = false;
           _awaitingStartQr = false;
-          _placedStartQrId = null;
-          _placedStartQrLabel = null;
           _trackingState = 'STOPPED';
-          _message = 'Could not start ARCore QR mapping: $result';
+          _message = 'Could not start persistent AR mapping: $result';
         });
         return;
       }
 
       setState(() {
         _arStarted = true;
-        _arming = false;
-        _awaitingStartQr = true;
-        _recording = false;
+        _starting = false;
         _trackingInterrupted = false;
         _stablePoseSamples = 0;
         _recoveryPoseSamples = 0;
@@ -443,29 +240,26 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         _rejectedPoseJumps = 0;
         _consecutiveRejectedPoseJumps = 0;
         _recordedDistanceMeters = 0;
-        _starting = false;
-        _trackingState = 'SCAN START QR';
+        _trackingState = 'PLACE START PORTAL';
         _pose = const ArPose(tracking: 'INITIALIZING');
         _points.clear();
         _markers.clear();
-        _placedStartQrId = anchorId;
-        _placedStartQrLabel = label;
         _message =
-            'Do not walk yet. Point the AR camera at the deployed $label QR. '
-            'Recording starts automatically after its physical pose is locked.';
+            'Place the floating QR start portal where the route entrance should '
+            'live. Recording begins automatically after the portal is saved.';
       });
     } catch (error) {
       if (!mounted) return;
       setState(() {
         _starting = false;
         _awaitingStartQr = false;
-        _placedStartQrId = null;
-        _placedStartQrLabel = null;
+        _arStarted = false;
         _trackingState = 'STOPPED';
-        _message = 'Could not start spatial mapping: $error';
+        _message = 'Could not start persistent AR mapping: $error';
       });
     }
   }
+
   void _onPose(ArPose pose) {
     if (!mounted) return;
 
