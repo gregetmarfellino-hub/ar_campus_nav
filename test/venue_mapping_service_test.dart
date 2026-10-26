@@ -92,6 +92,64 @@ void main() {
     expect(anchor.visualPoseReady, isFalse);
   });
 
+  test('placed start QR upgrades an existing legacy entrance anchor', () {
+    final session = MappingSession(
+      id: 'upgrade_main_entrance',
+      venueId: 'venue',
+      venueName: 'Venue',
+      floor: 1,
+      createdAt: DateTime.utc(2026, 1, 1),
+      startAnchorId: 'main_anchor',
+      startAnchorLabel: 'Main Entrance',
+      originHeadingDegrees: 0,
+      stepLengthMeters: 0,
+      source: 'arcore_spatial',
+      points: const [
+        MappingPoint(
+          xMeters: 0,
+          yMeters: 0,
+          headingDegrees: 0,
+          stepIndex: 0,
+          timestampMs: 0,
+        ),
+        MappingPoint(
+          xMeters: 0,
+          yMeters: 3,
+          headingDegrees: 0,
+          stepIndex: 1,
+          timestampMs: 1000,
+        ),
+      ],
+      markers: const [
+        MappingMarker(
+          id: 'main_anchor',
+          label: 'Main Entrance',
+          type: 'anchor',
+          floor: 1,
+          xMeters: 0.6,
+          yMeters: 0.3,
+          upMeters: 1.2,
+          pointIndex: 0,
+          anchorFacingDegrees: 90,
+        ),
+      ],
+    );
+
+    final venue = service.applySession(
+      venue: baseVenue(),
+      session: session,
+    );
+
+    final anchor = venue.anchorById('main_anchor');
+    final node = venue.nodeById(anchor.nodeId);
+
+    expect(venue.anchors.where((a) => a.id == 'main_anchor').length, 1);
+    expect(anchor.nodeId, 'old_start');
+    expect(anchor.visualPoseReady, isTrue);
+    expect(anchor.headingDegrees, closeTo(90, 1e-9));
+    expect(node.x, closeTo(10, 1e-9));
+    expect(node.y, closeTo(10, 1e-9));
+  });
   test('visual QR marker at first point creates a pose-ready start anchor', () {
     final session = MappingSession(
       id: 'visual_start',
