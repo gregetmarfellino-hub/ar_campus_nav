@@ -292,6 +292,8 @@ class VenueMappingService {
               : _markerAnchorHeading(visualUpgrade, transform),
           visualHeadingVerified:
               visualUpgrade != null || startAnchor.visualHeadingVerified,
+          cloudAnchorId:
+              session.startCloudAnchorId ?? startAnchor.cloudAnchorId,
         ),
       );
       usedAnchorIds.add(startAnchor.id);
@@ -344,6 +346,10 @@ class VenueMappingService {
             floor: session.floor,
             headingDegrees: _markerAnchorHeading(marker, transform),
             visualHeadingVerified: marker.anchorFacingDegrees != null,
+            cloudAnchorId:
+                startAnchor == null && marker.pointIndex == selected.first
+                    ? session.startCloudAnchorId
+                    : null,
           ),
         );
       }
