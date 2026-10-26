@@ -267,6 +267,12 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
 
     setState(() {
       _starting = true;
+      _arming = false;
+      _awaitingStartQr = true;
+      _recording = false;
+      _placedStartQrId = anchorId;
+      _placedStartQrLabel = label;
+      _trackingState = 'SCAN START QR';
       _message = null;
       _savedPath = null;
       _savedJson = null;
@@ -278,6 +284,10 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         if (!mounted) return;
         setState(() {
           _starting = false;
+          _awaitingStartQr = false;
+          _placedStartQrId = null;
+          _placedStartQrLabel = null;
+          _trackingState = 'STOPPED';
           _message = 'Camera permission is required for ARCore spatial mapping.';
         });
         return;
@@ -299,6 +309,10 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       if (result == 'INSTALL_REQUESTED') {
         setState(() {
           _starting = false;
+          _awaitingStartQr = false;
+          _placedStartQrId = null;
+          _placedStartQrLabel = null;
+          _trackingState = 'STOPPED';
           _message =
               'Google Play Services for AR needs installation/update. '
               'Return here and start again afterward.';
@@ -309,6 +323,10 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       if (result != 'STARTED') {
         setState(() {
           _starting = false;
+          _awaitingStartQr = false;
+          _placedStartQrId = null;
+          _placedStartQrLabel = null;
+          _trackingState = 'STOPPED';
           _message = 'Could not start ARCore QR mapping: $result';
         });
         return;
@@ -341,6 +359,10 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       if (!mounted) return;
       setState(() {
         _starting = false;
+        _awaitingStartQr = false;
+        _placedStartQrId = null;
+        _placedStartQrLabel = null;
+        _trackingState = 'STOPPED';
         _message = 'Could not start spatial mapping: $error';
       });
     }
