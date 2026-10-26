@@ -583,6 +583,10 @@ class ArCoreTrackingEngine(
                 "PLACE QR HERE"
             }
             textSize = 15f
+            if (persistentPortalMappingMode) {
+                isEnabled = false
+                alpha = 0.45f
+            }
             setTextColor(Color.BLACK)
             background = roundedBackground(0xFF3DDC97.toInt(), dp(24).toFloat())
             setOnClickListener {
@@ -2888,6 +2892,9 @@ class ArCoreTrackingEngine(
                 }
             }
         }
+        if (navigationCloudAnchorId != null) {
+            align.visibility = android.view.View.GONE
+        }
         navigationAlignButton = align
 
         val reanchor = Button(activity).apply {
@@ -2968,7 +2975,12 @@ class ArCoreTrackingEngine(
                 isEnabled = true
                 alpha = 1f
             }
-            navigationReanchorButton?.visibility = android.view.View.VISIBLE
+            navigationReanchorButton?.visibility =
+                if (navigationCloudAnchorId == null) {
+                    android.view.View.VISIBLE
+                } else {
+                    android.view.View.GONE
+                }
         }
     }
 
