@@ -290,7 +290,18 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         _consecutiveRejectedPoseJumps = 0;
         _recordedDistanceMeters = 0;
         _trackingState = 'READY';
-        _points.clear();
+        _points
+          ..clear()
+          ..add(
+            MappingPoint(
+              xMeters: 0,
+              yMeters: 0,
+              upMeters: 0,
+              headingDegrees: 0,
+              stepIndex: 0,
+              timestampMs: DateTime.now().millisecondsSinceEpoch,
+            ),
+          );
         _markers
           ..clear()
           ..add(
@@ -1012,7 +1023,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                 ),
                 SizedBox(height: 10),
                 Text(
-                  'Map now. Bind a QR when ready.',
+                  'Drop a start portal, then walk.',
                   style: TextStyle(
                     fontSize: 25,
                     fontWeight: FontWeight.w900,
@@ -1020,9 +1031,8 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                 ),
                 SizedBox(height: 8),
                 Text(
-                  'ARCore can record a brand-new path immediately from a '
-                  'provisional entrance. A deployed QR can be scanned when '
-                  'you want persistent one-scan localization.',
+                  'Place one floating QR portal at the route entrance. Once '
+                  'it is saved, walk the path and mark the destination.',
                   style: TextStyle(color: Colors.white60, height: 1.45),
                 ),
               ],
@@ -1043,7 +1053,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                   items: [
                     const DropdownMenuItem<String?>(
                       value: null,
-                      child: Text('Create a new provisional start'),
+                      child: Text('Create a new route start'),
                     ),
                     for (final anchor in widget.venue.anchors)
                       DropdownMenuItem<String?>(
@@ -1340,8 +1350,6 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                       _markerButton('waypoint', Icons.add_road_rounded),
                       _markerButton('destination', Icons.flag_rounded),
                       _markerButton('stairs', Icons.stairs_rounded),
-
-                      _markerButton('anchor', Icons.link_rounded),
                     ],
                   ),
                   const SizedBox(height: 12),
@@ -1417,23 +1425,6 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
               ),
             ),
           ],
-          const SizedBox(height: 18),
-          _section('LEGACY / DEBUG'),
-          OutlinedButton.icon(
-            onPressed: _mappingActive || _starting ? null : _openLegacyMapper,
-            icon: const Icon(Icons.directions_walk_rounded),
-            label: const Text('OPEN STEP + COMPASS MAPPER'),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Legacy mapping is kept only for fallback/testing. New venue '
-            'geometry should be captured with ARCore Spatial Mapping.',
-            style: TextStyle(
-              color: Colors.white38,
-              fontSize: 11,
-              height: 1.4,
-            ),
-          ),
         ],
       ),
     );
