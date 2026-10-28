@@ -2555,7 +2555,12 @@ class ArCoreTrackingEngine(
             navigationStatusText?.text =
                 "POSITION UNCERTAIN — STOP WALKING\\n$detail\\n" +
                     "Tap SCAN LOCATION to re-localize."
-            navigationReanchorButton?.visibility = android.view.View.VISIBLE
+            navigationReanchorButton?.visibility =
+                if (navigationOfflineEnabled) {
+                    android.view.View.GONE
+                } else {
+                    android.view.View.VISIBLE
+                }
         }
     }
 
@@ -3079,6 +3084,9 @@ class ArCoreTrackingEngine(
 
         val statusText = TextView(activity).apply {
             text = when {
+                navigationOfflineEnabled ->
+                    "OFFLINE START SEARCH\nLook around the mapped entrance and " +
+                        "aim at the same detailed door/sign/wall area saved during mapping."
                 navigationVisualAnchorEnabled ->
                     "VISUAL LOCALIZATION\nPoint the camera at the upright " +
                         "16 cm $navigationVisualAnchorLabel QR and hold steady."
@@ -3115,6 +3123,7 @@ class ArCoreTrackingEngine(
 
         val align = Button(activity).apply {
             text = when {
+                navigationOfflineEnabled -> "MANUAL FALLBACK"
                 navigationVisualAnchorEnabled -> "MANUAL FALLBACK"
                 navigationAnchorLocalized -> "SET QR POSITION"
                 else -> "SET START"
@@ -3126,6 +3135,10 @@ class ArCoreTrackingEngine(
                 dp(22).toFloat(),
             )
             setOnClickListener {
+                if (navigationOfflineEnabled) {
+                    navigationOfflineEnabled = false
+                    resetOfflineVisualSamples()
+                }
                 if (navigationVisualAnchorEnabled) {
                     navigationVisualAnchorEnabled = false
                     resetVisualAnchorSamples()
