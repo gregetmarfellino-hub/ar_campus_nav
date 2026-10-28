@@ -338,7 +338,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                 'this start can now be restored in a future AR session.';
           });
         }).catchError((Object error) {
-          if (!mounted) return '';
+          if (!mounted) return;
           setState(() {
             _persistentHostError = error.toString();
             _message =
@@ -346,7 +346,6 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                 'You can keep mapping; configure ARCore Cloud Anchor access '
                 'before relying on cross-session restore.';
           });
-          return '';
         }),
       );
     } catch (error) {
