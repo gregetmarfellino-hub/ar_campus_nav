@@ -145,6 +145,14 @@ class MappingSession {
     required this.createdAt,
     required this.startAnchorId,
     required this.startAnchorLabel,
+    this.offlineVisualReferencePngBase64,
+    this.offlineVisualReferenceWidthMeters,
+    this.offlineVisualStartOffsetX,
+    this.offlineVisualStartOffsetY,
+    this.offlineVisualStartOffsetZ,
+    this.offlineVisualStartForwardX,
+    this.offlineVisualStartForwardY,
+    this.offlineVisualStartForwardZ,
     required this.originHeadingDegrees,
     required this.stepLengthMeters,
     required this.points,
@@ -162,6 +170,15 @@ class MappingSession {
   final DateTime createdAt;
   final String? startAnchorId;
   final String? startAnchorLabel;
+
+  final String? offlineVisualReferencePngBase64;
+  final double? offlineVisualReferenceWidthMeters;
+  final double? offlineVisualStartOffsetX;
+  final double? offlineVisualStartOffsetY;
+  final double? offlineVisualStartOffsetZ;
+  final double? offlineVisualStartForwardX;
+  final double? offlineVisualStartForwardY;
+  final double? offlineVisualStartForwardZ;
 
   /// One rotation metadata value for placing separate sessions into a shared
   /// 2D venue frame. ARCore still owns the actual path geometry.
@@ -242,6 +259,22 @@ class MappingSession {
         'created_at': createdAt.toIso8601String(),
         'start_anchor_id': startAnchorId,
         'start_anchor_label': startAnchorLabel,
+        if (offlineVisualReferencePngBase64 != null)
+          'offline_visual_reference_png_b64': offlineVisualReferencePngBase64,
+        if (offlineVisualReferenceWidthMeters != null)
+          'offline_visual_reference_width_m': offlineVisualReferenceWidthMeters,
+        if (offlineVisualStartOffsetX != null)
+          'offline_visual_start_offset_x': offlineVisualStartOffsetX,
+        if (offlineVisualStartOffsetY != null)
+          'offline_visual_start_offset_y': offlineVisualStartOffsetY,
+        if (offlineVisualStartOffsetZ != null)
+          'offline_visual_start_offset_z': offlineVisualStartOffsetZ,
+        if (offlineVisualStartForwardX != null)
+          'offline_visual_start_forward_x': offlineVisualStartForwardX,
+        if (offlineVisualStartForwardY != null)
+          'offline_visual_start_forward_y': offlineVisualStartForwardY,
+        if (offlineVisualStartForwardZ != null)
+          'offline_visual_start_forward_z': offlineVisualStartForwardZ,
         'origin_heading_deg': originHeadingDegrees,
         'step_length_m': stepLengthMeters,
         'source': source,
@@ -261,6 +294,22 @@ class MappingSession {
       createdAt: DateTime.parse(json['created_at'] as String),
       startAnchorId: json['start_anchor_id'] as String?,
       startAnchorLabel: json['start_anchor_label'] as String?,
+      offlineVisualReferencePngBase64:
+          json['offline_visual_reference_png_b64'] as String?,
+      offlineVisualReferenceWidthMeters:
+          (json['offline_visual_reference_width_m'] as num?)?.toDouble(),
+      offlineVisualStartOffsetX:
+          (json['offline_visual_start_offset_x'] as num?)?.toDouble(),
+      offlineVisualStartOffsetY:
+          (json['offline_visual_start_offset_y'] as num?)?.toDouble(),
+      offlineVisualStartOffsetZ:
+          (json['offline_visual_start_offset_z'] as num?)?.toDouble(),
+      offlineVisualStartForwardX:
+          (json['offline_visual_start_forward_x'] as num?)?.toDouble(),
+      offlineVisualStartForwardY:
+          (json['offline_visual_start_forward_y'] as num?)?.toDouble(),
+      offlineVisualStartForwardZ:
+          (json['offline_visual_start_forward_z'] as num?)?.toDouble(),
       originHeadingDegrees:
           (json['origin_heading_deg'] as num?)?.toDouble() ?? 0,
       stepLengthMeters: (json['step_length_m'] as num?)?.toDouble() ?? 0,
