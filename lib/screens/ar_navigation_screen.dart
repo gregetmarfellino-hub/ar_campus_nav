@@ -579,12 +579,16 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
                   ),
                 ),
                 const SizedBox(height: 22),
-                const Text(
-                  'Visual-ready QR anchors localize both translation and '
-                  'horizontal direction directly in AR. Legacy anchors fall '
-                  'back to the manual 2–3 m direction calibration.',
+                Text(
+                  _anchor?.offlineVisualReady == true
+                      ? 'This route restores its start fully offline from the '
+                          'saved entrance scene. No GPS, internet, printed QR, '
+                          'or direction walk is required.'
+                      : 'Older routes may still use the visual-QR or manual '
+                          'alignment fallback until they are re-mapped with an '
+                          'offline visual start.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: const TextStyle(
                     color: Colors.white38,
                     fontSize: 12,
                     height: 1.45,
