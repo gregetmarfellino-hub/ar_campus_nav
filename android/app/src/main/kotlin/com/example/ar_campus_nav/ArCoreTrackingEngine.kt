@@ -709,6 +709,285 @@ class ArCoreTrackingEngine(
         }
     }
 
+    private fun captureOfflineStartReference(
+        frame: Frame,
+        currentPose: Pose,
+    ): Pair<Map<String, Any>?, String?> {
+        val view = surfaceView
+            ?: return Pair(null, "AR view is not ready. Try again.")
+        val startAnchor = mappingStartWorldAnchor
+            ?: return Pair(null, "Start QR anchor is missing. Re-place the start.")
+
+        if (view.width < 100 || view.height < 100) {
+            return Pair(null, "AR view is still sizing. Hold steady and retry.")
+        }
+
+        val centerX = view.width * 0.5f
+        val centerY = view.height * 0.5f
+        val half = minOf(view.width, view.height) * 0.23f
+
+        val centerHit = findPlaneHit(frame, centerX, centerY, null)
+            ?: return Pair(
+                null,
+                "NO FLAT SURFACE — aim the center at a textured door, sign, " +
+                    "poster, tiles, or detailed wall and move slowly until " +
+                    "ARCore recognizes the surface.",
+            )
+        val plane = centerHit.trackable as Plane
+
+        val leftHit = findPlaneHit(frame, centerX - half, centerY, plane)
+        val rightHit = findPlaneHit(frame, centerX + half, centerY, plane)
+        val topHit = findPlaneHit(frame, centerX, centerY - half, plane)
+        val bottomHit = findPlaneHit(frame, centerX, centerY + half, plane)
+
+        if (leftHit == null || rightHit == null || topHit == null || bottomHit == null) {
+            return Pair(
+                null,
+                "KEEP THE SQUARE ON ONE SURFACE — step back a little so the " +
+                    "center reference area fits entirely on the same flat detail.",
+            )
+        }
+
+        val left = leftHit.hitPose.translation
+        val right = rightHit.hitPose.translation
+        val top = topHit.hitPose.translation
+        val bottom = bottomHit.hitPose.translation
+        val referenceWidthMeters = vectorDistance(left, right)
+
+        if (referenceWidthMeters < 0.15f || referenceWidthMeters > 2.5f) {
+            return Pair(
+                null,
+                "REFERENCE SIZE LOOKS WRONG — move about 0.5–2 m from the " +
+                    "surface and retry.",
+            )
+        }
+
+        val xAxis = normalizeVector(
+            floatArrayOf(
+                right[0] - left[0],
+                right[1] - left[1],
+                right[2] - left[2],
+            ),
+        ) ?: return Pair(null, "Could not determine reference orientation.")
+
+        val downRaw = floatArrayOf(
+            bottom[0] - top[0],
+            bottom[1] - top[1],
+            bottom[2] - top[2],
+        )
+        val planeNormalRaw = plane.centerPose.getTransformedAxis(1, 1f)
+        var yAxis = normalizeVector(planeNormalRaw)
+            ?: return Pair(null, "Could not determine surface normal.")
+        var zAxis = normalizeVector(crossVector(xAxis, yAxis))
+            ?: return Pair(null, "Could not determine reference up/down axis.")
+
+        // Pick the plane-normal sign whose +Z follows the captured image's
+        // screen-down direction. This makes our saved basis match the bitmap
+        // orientation ARCore will use when recognizing it later.
+        if (dotVector(zAxis, downRaw) < 0f) {
+            yAxis = floatArrayOf(-yAxis[0], -yAxis[1], -yAxis[2])
+            zAxis = floatArrayOf(-zAxis[0], -zAxis[1], -zAxis[2])
+        }
+
+        val bitmap = try {
+            captureReferenceBitmap(frame)
+        } catch (_: NotYetAvailableException) {
+            return Pair(
+                null,
+                "CAMERA FRAME NOT READY — hold still for a moment and retry.",
+            )
+        } catch (error: Exception) {
+            return Pair(
+                null,
+                "Could not capture the entrance image: " +
+                    error.javaClass.simpleName,
+            )
+        }
+
+        val quality = referenceTextureScore(bitmap)
+        if (quality < 7.0) {
+            bitmap.recycle()
+            return Pair(
+                null,
+                "NOT ENOUGH VISUAL DETAIL — choose something with edges/text/" +
+                    "patterns (door frame, sign, poster, tiles), not a blank wall.",
+            )
+        }
+
+        val png = ByteArrayOutputStream().use { stream ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+            stream.toByteArray()
+        }
+        bitmap.recycle()
+
+        val referenceCenter = centerHit.hitPose.translation
+        val startPosition = startAnchor.pose.translation
+        val startDelta = floatArrayOf(
+            startPosition[0] - referenceCenter[0],
+            startPosition[1] - referenceCenter[1],
+            startPosition[2] - referenceCenter[2],
+        )
+        val startForwardWorld = floatArrayOf(
+            trackingForwardX,
+            0f,
+            trackingForwardZ,
+        )
+
+        return Pair(
+            mapOf(
+                "offline_reference_png" to png,
+                "offline_reference_width_m" to referenceWidthMeters.toDouble(),
+                "offline_start_offset_x" to dotVector(startDelta, xAxis).toDouble(),
+                "offline_start_offset_y" to dotVector(startDelta, yAxis).toDouble(),
+                "offline_start_offset_z" to dotVector(startDelta, zAxis).toDouble(),
+                "offline_start_forward_x" to
+                    dotVector(startForwardWorld, xAxis).toDouble(),
+                "offline_start_forward_y" to
+                    dotVector(startForwardWorld, yAxis).toDouble(),
+                "offline_start_forward_z" to
+                    dotVector(startForwardWorld, zAxis).toDouble(),
+                "offline_reference_quality" to quality,
+            ),
+            null,
+        )
+    }
+
+    private fun findPlaneHit(
+        frame: Frame,
+        x: Float,
+        y: Float,
+        requiredPlane: Plane?,
+    ): com.google.ar.core.HitResult? {
+        for (hit in frame.hitTest(x, y)) {
+            val plane = hit.trackable as? Plane ?: continue
+            if (requiredPlane != null && plane != requiredPlane) continue
+            if (plane.trackingState != TrackingState.TRACKING) continue
+            if (!plane.isPoseInPolygon(hit.hitPose)) continue
+            return hit
+        }
+        return null
+    }
+
+    @Throws(NotYetAvailableException::class)
+    private fun captureReferenceBitmap(frame: Frame): Bitmap {
+        val image = frame.acquireCameraImage()
+        try {
+            val outputSize = 384
+            val inputCoords = FloatBuffer.allocate(8).apply {
+                put(
+                    floatArrayOf(
+                        0.27f, 0.27f,
+                        0.73f, 0.27f,
+                        0.73f, 0.73f,
+                        0.27f, 0.73f,
+                    ),
+                )
+                rewind()
+            }
+            val imageCoords = FloatBuffer.allocate(8)
+            frame.transformCoordinates2d(
+                Coordinates2d.VIEW_NORMALIZED,
+                inputCoords,
+                Coordinates2d.IMAGE_PIXELS,
+                imageCoords,
+            )
+            imageCoords.rewind()
+            val corners = FloatArray(8)
+            imageCoords.get(corners)
+
+            val yPlane = image.planes[0]
+            val buffer = yPlane.buffer.duplicate()
+            val rowStride = yPlane.rowStride
+            val pixelStride = yPlane.pixelStride
+            val pixels = IntArray(outputSize * outputSize)
+
+            for (oy in 0 until outputSize) {
+                val v = oy.toFloat() / (outputSize - 1).toFloat()
+
+                val leftX = lerp(corners[0], corners[6], v)
+                val leftY = lerp(corners[1], corners[7], v)
+                val rightX = lerp(corners[2], corners[4], v)
+                val rightY = lerp(corners[3], corners[5], v)
+
+                for (ox in 0 until outputSize) {
+                    val u = ox.toFloat() / (outputSize - 1).toFloat()
+                    val imageX = lerp(leftX, rightX, u)
+                        .toInt()
+                        .coerceIn(0, image.width - 1)
+                    val imageY = lerp(leftY, rightY, u)
+                        .toInt()
+                        .coerceIn(0, image.height - 1)
+                    val index = imageY * rowStride + imageX * pixelStride
+                    val gray = buffer.get(index).toInt() and 0xFF
+                    pixels[oy * outputSize + ox] =
+                        Color.argb(255, gray, gray, gray)
+                }
+            }
+
+            return Bitmap.createBitmap(
+                pixels,
+                outputSize,
+                outputSize,
+                Bitmap.Config.ARGB_8888,
+            )
+        } finally {
+            image.close()
+        }
+    }
+
+    private fun referenceTextureScore(bitmap: Bitmap): Double {
+        val width = bitmap.width
+        val height = bitmap.height
+        if (width < 8 || height < 8) return 0.0
+
+        var total = 0.0
+        var count = 0
+        val step = 4
+        for (y in 0 until height - step step step) {
+            for (x in 0 until width - step step step) {
+                val here = Color.red(bitmap.getPixel(x, y))
+                val right = Color.red(bitmap.getPixel(x + step, y))
+                val down = Color.red(bitmap.getPixel(x, y + step))
+                total += abs(here - right) + abs(here - down)
+                count += 2
+            }
+        }
+        return if (count == 0) 0.0 else total / count.toDouble()
+    }
+
+    private fun vectorDistance(a: FloatArray, b: FloatArray): Float {
+        val dx = a[0] - b[0]
+        val dy = a[1] - b[1]
+        val dz = a[2] - b[2]
+        return sqrt(dx * dx + dy * dy + dz * dz)
+    }
+
+    private fun normalizeVector(value: FloatArray): FloatArray? {
+        val length = sqrt(
+            value[0] * value[0] +
+                value[1] * value[1] +
+                value[2] * value[2],
+        )
+        if (length < 1e-5f) return null
+        return floatArrayOf(
+            value[0] / length,
+            value[1] / length,
+            value[2] / length,
+        )
+    }
+
+    private fun dotVector(a: FloatArray, b: FloatArray): Float =
+        a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+    private fun crossVector(a: FloatArray, b: FloatArray): FloatArray =
+        floatArrayOf(
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        )
+
+    private fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
+
     private fun setQrPlacementTrackingReady(ready: Boolean) {
         if (qrPlacementTrackingReady == ready) return
         qrPlacementTrackingReady = ready
