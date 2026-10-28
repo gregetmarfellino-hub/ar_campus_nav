@@ -12,6 +12,7 @@ import '../models/destination.dart';
 import '../models/route_result.dart';
 import '../models/venue.dart';
 import '../services/ar_pose_service.dart';
+import '../services/ar_route_coordinates.dart';
 import '../services/anchor_codec.dart';
 import '../services/route_engine.dart';
 import '../services/visual_anchor_spec.dart';
@@ -234,15 +235,7 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
     // would rotate the entire saved route independently of that QR.
     if (_anchor?.offlineVisualReady == true &&
         _anchor?.nodeId == start.id) {
-      return [
-        for (final node in nodes)
-          {
-            'right': node.x - start.x,
-            'forward': node.y - start.y,
-            'label': node.label,
-            'semantic': node.type != 'path',
-          },
-      ];
+      return ArRouteCoordinates.fromMappedVenueNodes(nodes);
     }
 
     // Backward-compatible fallback for older/manual routes, which lack a
