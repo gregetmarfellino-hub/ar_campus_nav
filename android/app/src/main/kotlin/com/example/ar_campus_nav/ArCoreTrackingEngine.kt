@@ -258,7 +258,10 @@ class ArCoreTrackingEngine(
         clearVisualAnchorConfiguration()
         clearMappingVisualAnchorConfiguration()
         clearPersistentPortalState()
-        persistentPortalLocalDevMode = !hasArCoreCloudApiKey()
+        if (!hasArCoreCloudApiKey()) {
+            return "CLOUD_ANCHOR_NOT_CONFIGURED"
+        }
+        persistentPortalLocalDevMode = false
 
         val bitmap = BitmapFactory.decodeByteArray(qrPng, 0, qrPng.size)
             ?: return "PORTAL_QR_DECODE_FAILED"
