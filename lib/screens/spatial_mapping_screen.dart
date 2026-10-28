@@ -66,6 +66,14 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
 
   String? _placedStartQrId;
   String? _placedStartQrLabel;
+  String? _offlineVisualReferencePngBase64;
+  double? _offlineVisualReferenceWidthMeters;
+  double? _offlineVisualStartOffsetX;
+  double? _offlineVisualStartOffsetY;
+  double? _offlineVisualStartOffsetZ;
+  double? _offlineVisualStartForwardX;
+  double? _offlineVisualStartForwardY;
+  double? _offlineVisualStartForwardZ;
 
   int _stablePoseSamples = 0;
   int _recoveryPoseSamples = 0;
@@ -174,6 +182,14 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       _recording = false;
       _placedStartQrId = anchorId;
       _placedStartQrLabel = label;
+      _offlineVisualReferencePngBase64 = null;
+      _offlineVisualReferenceWidthMeters = null;
+      _offlineVisualStartOffsetX = null;
+      _offlineVisualStartOffsetY = null;
+      _offlineVisualStartOffsetZ = null;
+      _offlineVisualStartForwardX = null;
+      _offlineVisualStartForwardY = null;
+      _offlineVisualStartForwardZ = null;
       _trackingState = 'STARTING';
       _message = null;
       _savedPath = null;
@@ -264,6 +280,30 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     final label = _placedStartQrLabel;
     if (!_arStarted || anchorId == null || label == null) {
       if (!mounted) return;
+      if (!placement.hasOfflineReference) {
+        setState(() {
+          _placingStartQr = false;
+          _arming = false;
+          _recording = false;
+          _trackingState = 'REFERENCE ERROR';
+          _message =
+              'The start QR was locked, but no offline entrance reference was '
+              'captured. Retry and save a textured wall/sign/door area before '
+              'starting the walk.';
+        });
+        return;
+      }
+
+      _offlineVisualReferencePngBase64 =
+          base64Encode(placement.offlineReferencePng!);
+      _offlineVisualReferenceWidthMeters =
+          placement.offlineReferenceWidthMeters;
+      _offlineVisualStartOffsetX = placement.offlineStartOffsetX;
+      _offlineVisualStartOffsetY = placement.offlineStartOffsetY;
+      _offlineVisualStartOffsetZ = placement.offlineStartOffsetZ;
+      _offlineVisualStartForwardX = placement.offlineStartForwardX;
+      _offlineVisualStartForwardY = placement.offlineStartForwardY;
+      _offlineVisualStartForwardZ = placement.offlineStartForwardZ;
       setState(() {
         _placingStartQr = false;
         _message = 'Start marker could not be prepared. Restart mapping.';
@@ -1091,6 +1131,14 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       createdAt: now,
       startAnchorId: _startAnchor?.id,
       startAnchorLabel: _placedStartQrLabel ?? _startAnchor?.label,
+      offlineVisualReferencePngBase64: _offlineVisualReferencePngBase64,
+      offlineVisualReferenceWidthMeters: _offlineVisualReferenceWidthMeters,
+      offlineVisualStartOffsetX: _offlineVisualStartOffsetX,
+      offlineVisualStartOffsetY: _offlineVisualStartOffsetY,
+      offlineVisualStartOffsetZ: _offlineVisualStartOffsetZ,
+      offlineVisualStartForwardX: _offlineVisualStartForwardX,
+      offlineVisualStartForwardY: _offlineVisualStartForwardY,
+      offlineVisualStartForwardZ: _offlineVisualStartForwardZ,
       originHeadingDegrees: 0,
       stepLengthMeters: 0,
       source: 'arcore_spatial',
@@ -1124,6 +1172,14 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         _pose = const ArPose(tracking: 'STOPPED');
         _placedStartQrId = null;
         _placedStartQrLabel = null;
+        _offlineVisualReferencePngBase64 = null;
+        _offlineVisualReferenceWidthMeters = null;
+        _offlineVisualStartOffsetX = null;
+        _offlineVisualStartOffsetY = null;
+        _offlineVisualStartOffsetZ = null;
+        _offlineVisualStartForwardX = null;
+        _offlineVisualStartForwardY = null;
+        _offlineVisualStartForwardZ = null;
         _message =
             'Spatial mapping saved: $rawPointCount raw samples → '
             '${simplified.points.length} saved geometry points. '
@@ -1159,6 +1215,14 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       _markers.clear();
       _placedStartQrId = null;
       _placedStartQrLabel = null;
+      _offlineVisualReferencePngBase64 = null;
+      _offlineVisualReferenceWidthMeters = null;
+      _offlineVisualStartOffsetX = null;
+      _offlineVisualStartOffsetY = null;
+      _offlineVisualStartOffsetZ = null;
+      _offlineVisualStartForwardX = null;
+      _offlineVisualStartForwardY = null;
+      _offlineVisualStartForwardZ = null;
       _pose = const ArPose(tracking: 'STOPPED');
       _message = 'Spatial recording discarded.';
     });
