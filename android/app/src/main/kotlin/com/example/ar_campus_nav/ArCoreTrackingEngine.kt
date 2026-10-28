@@ -186,6 +186,7 @@ class ArCoreTrackingEngine(
     private var navigationOfflineStartForwardY = 0f
     private var navigationOfflineStartForwardZ = -1f
     private var navigationOfflineEnabled = false
+    @Volatile private var navigationOfflineRescanRequested = false
     private var navigationOfflineSampleCount = 0
     private var navigationOfflinePositionX = 0f
     private var navigationOfflinePositionY = 0f
@@ -310,6 +311,7 @@ class ArCoreTrackingEngine(
         navigationAnchorLocalized = anchorLocalized
         navigationPoints = points
         navigationRouteWorldY = null
+        navigationOfflineRescanRequested = false
 
         val offlineReady = configureOfflineVisualStart(
             png = offlineReferencePng,
@@ -1264,6 +1266,7 @@ class ArCoreTrackingEngine(
         navigationPoints = emptyList()
         clearVisualAnchorConfiguration()
         clearOfflineVisualStartConfiguration()
+        navigationOfflineRescanRequested = false
         navigationStartMarkerBitmap?.recycle()
         navigationStartMarkerBitmap = null
         clearMappingVisualAnchorConfiguration()
@@ -1366,6 +1369,23 @@ class ArCoreTrackingEngine(
 
             val currentPose = camera.pose
             latestCameraPose = currentPose
+
+            if (navigationMode && navigationOfflineRescanRequested) {
+                navigationOfflineRescanRequested = false
+                releaseNavigationAnchor()
+                navigationAligned = false
+                navigationRouteWorldY = null
+                navigationArrivalShown = false
+                activeRouteIndex = 1
+                resetOfflineVisualSamples()
+                resetNavigationContinuity()
+                resetNavigationCalibration()
+                setNavigationArrowVisible(false)
+                setNavigationHud(
+                    "RE-LOCALIZING — return near the saved entrance and look " +
+                        "at the same detailed reference surface.",
+                )
+            }
 
             if (!navigationMode && mappingStartQrVisible && !qrPlacementMode) {
                 drawLockedMappingStartQr(camera)
@@ -1878,8 +1898,9 @@ class ArCoreTrackingEngine(
         resetOfflineVisualSamples()
         setNavigationAlignedUi()
         setNavigationHud(
-            "START RESTORED OFFLINE — the virtual QR and route are back at " +
-                "$navigationStartLabel.",
+            "OFFLINE START RESTORED — ${navigationPoints.size} saved route " +
+                "points connected. Follow the BLUE PATH toward " +
+                "$navigationDestination; look down to see the ground ribbon.",
         )
         emitStatus("OFFLINE_VISUAL_START_LOCKED")
         return true
@@ -3232,8 +3253,17 @@ class ArCoreTrackingEngine(
                 dp(22).toFloat(),
             )
             setOnClickListener {
-                setNavigationHud("Opening location QR scanner...")
-                emitStatus("REANCHOR_REQUEST")
+                if (navigationOfflineEnabled) {
+                    navigationOfflineRescanRequested = true
+                    visibility = android.view.View.GONE
+                    setNavigationHud(
+                        "RE-LOCALIZING — look at the same entrance surface " +
+                            "used during mapping. No physical QR required.",
+                    )
+                } else {
+                    setNavigationHud("Opening location QR scanner...")
+                    emitStatus("REANCHOR_REQUEST")
+                }
             }
         }
         navigationReanchorButton = reanchor
@@ -3300,7 +3330,15 @@ class ArCoreTrackingEngine(
                 isEnabled = true
                 alpha = 1f
             }
-            navigationReanchorButton?.visibility = android.view.View.VISIBLE
+            navigationReanchorButton?.apply {
+                text = if (navigationOfflineEnabled) {
+                    "RE-LOCK START"
+                } else {
+                    "SCAN LOCATION"
+                }
+                // Offline routes can re-localize without the physical scanner.
+                visibility = android.view.View.VISIBLE
+            }
         }
     }
 
