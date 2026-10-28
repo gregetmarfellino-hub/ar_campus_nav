@@ -60,6 +60,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
   bool _arStarted = false;
   bool _arming = false;
   bool _awaitingStartQr = false;
+  bool _placingStartQr = false;
   bool _recording = false;
   bool _trackingInterrupted = false;
 
@@ -84,7 +85,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
   String? _savedJson;
 
   bool get _mappingActive =>
-      _arming || _awaitingStartQr || _recording;
+      _arming || _awaitingStartQr || _placingStartQr || _recording;
 
   @override
   void initState() {
@@ -169,6 +170,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       _starting = true;
       _arming = false;
       _awaitingStartQr = false;
+      _placingStartQr = false;
       _recording = false;
       _placedStartQrId = anchorId;
       _placedStartQrLabel = label;
@@ -257,6 +259,81 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       });
     }
   }
+  Future<void> _placeVirtualStartAndBegin() async {
+    final anchorId = _placedStartQrId;
+    final label = _placedStartQrLabel;
+    if (!_arStarted || anchorId == null || label == null) {
+      if (!mounted) return;
+      setState(() {
+        _placingStartQr = false;
+        _message = 'Start marker could not be prepared. Restart mapping.';
+      });
+      return;
+    }
+
+    try {
+      final qrPng = await _qrPngForAnchorId(anchorId);
+      final placement = await _ar.placeVisualQrAnchor(
+        qrPng: qrPng,
+        widthMeters: VisualAnchorSpec.qrWidthMeters,
+      );
+
+      if (!mounted) return;
+      if (placement == null) {
+        setState(() {
+          _placingStartQr = false;
+          _arming = false;
+          _recording = false;
+          _trackingState = 'START CANCELLED';
+          _message = 'Start marker placement cancelled. Tap START MAPPING to retry.';
+        });
+        if (_arStarted) {
+          await _ar.stop();
+          _arStarted = false;
+        }
+        return;
+      }
+
+      setState(() {
+        _placingStartQr = false;
+        _arming = false;
+        _awaitingStartQr = false;
+        _recording = true;
+        _trackingInterrupted = false;
+        _recordedDistanceMeters = 0;
+        _trackingState = 'READY';
+        _points.clear();
+        _markers
+          ..clear()
+          ..add(
+            MappingMarker(
+              id: anchorId,
+              label: label,
+              type: 'anchor',
+              floor: _floor,
+              xMeters: 0,
+              yMeters: 0,
+              upMeters: 0,
+              pointIndex: 0,
+              anchorFacingDegrees: 0,
+            ),
+          );
+        _message =
+            'START LOCKED — the virtual QR is now a real ARCore world anchor. '
+            'Walk the route; rotating the phone must not move this start marker.';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _placingStartQr = false;
+        _arming = false;
+        _recording = false;
+        _trackingState = 'START ERROR';
+        _message = 'Could not place the start marker: $error';
+      });
+    }
+  }
+
   Future<void> _startSpatialRecording() async {
     if (_starting || _mappingActive) return;
 
@@ -564,33 +641,14 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       _stablePoseSamples++;
 
       if (_stablePoseSamples >= _stablePoseSamplesRequired) {
-        final anchorId = _placedStartQrId;
-        final label = _placedStartQrLabel;
         _arming = false;
-        _awaitingStartQr = false;
-        _recording = true;
-        _trackingState = 'READY';
-        _recordedDistanceMeters = 0;
-        _points.clear();
-        _markers.clear();
-        if (anchorId != null && label != null) {
-          _markers.add(
-            MappingMarker(
-              id: anchorId,
-              label: label,
-              type: 'anchor',
-              floor: _floor,
-              xMeters: 0,
-              yMeters: 0,
-              upMeters: 0,
-              pointIndex: 0,
-            ),
-          );
-        }
+        _placingStartQr = true;
+        _trackingState = 'PLACE START';
         _message =
-            'RECORDING READY — start walking. $label is the provisional start '
-            'location; you can map geometry now even without a deployed QR.';
+            'ARCore locked. Place the virtual start QR where this route begins, '
+            'then lock it before walking.';
         _refreshUi(force: true);
+        unawaited(_placeVirtualStartAndBegin());
         return;
       }
 
@@ -605,6 +663,12 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
 
     if (_awaitingStartQr) {
       _trackingState = 'START QR';
+      _refreshUi();
+      return;
+    }
+
+    if (_placingStartQr) {
+      _trackingState = 'PLACE START';
       _refreshUi();
       return;
     }
@@ -1425,7 +1489,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                   ),
                 ],
                 const SizedBox(height: 14),
-                if (!_mappingActive) ...[
+                if (!_mappingActive)
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.icon(
@@ -1440,36 +1504,12 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                               height: 18,
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
-                          : const Icon(Icons.route_rounded),
+                          : const Icon(Icons.view_in_ar_rounded),
                       label: Text(
-                        _starting
-                            ? 'STARTING ARCORE...'
-                            : 'START MAPPING NOW',
+                        _starting ? 'STARTING ARCORE...' : 'START MAPPING',
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: _starting ? null : _startSpatialRecording,
-                      icon: const Icon(Icons.qr_code_scanner_rounded),
-                      label: const Text('SET UP & SCAN START QR'),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'You can map a brand-new route immediately. Scanning a '
-                    'deployed QR is optional here, but required later for '
-                    'one-scan persistent localization.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.white38,
-                      fontSize: 11,
-                      height: 1.35,
-                    ),
-                  ),
-                ]
+                  )
                 else if (_awaitingStartQr) ...[
                   const Text(
                     'DO NOT WALK YET. The AR camera is scanning the deployed '
@@ -1494,8 +1534,8 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                   ),
                 ] else if (!_recording) ...[
                   const Text(
-                    'DO NOT WALK YET. ARCore is acquiring a stable spatial '
-                    'lock. Recording starts automatically when it is ready.',
+                    'DO NOT WALK YET. ARCore is stabilizing first; next you '
+                    'will place and lock the virtual start QR.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: Color(0xFFF9D976),
