@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -89,6 +90,15 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
           if (!_handlingReanchor) {
             unawaited(_reanchorFromQr());
           }
+          return;
+        }
+
+        if (pose.tracking == 'OFFLINE_VISUAL_START_LOCKED') {
+          setState(() {
+            _status =
+                'Start restored offline. The virtual QR and route are locked '
+                'to the saved entrance scene.';
+          });
           return;
         }
 
@@ -292,6 +302,13 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
   Future<bool> _startNavigation() async {
     if (!mounted) return false;
 
+    final offlineAnchor = _anchor != null &&
+            _anchor!.offlineVisualReady &&
+            _route.nodes.isNotEmpty &&
+            _route.nodes.first.id == _anchor!.nodeId
+        ? _anchor
+        : null;
+
     final visualAnchor = _anchor != null &&
             _anchor!.visualPoseReady &&
             _route.nodes.isNotEmpty &&
@@ -321,6 +338,17 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
     try {
       final visualPng =
           visualAnchor == null ? null : await _visualAnchorPng(visualAnchor);
+      Uint8List? offlineReferencePng;
+      if (offlineAnchor != null) {
+        try {
+          offlineReferencePng = base64Decode(
+            offlineAnchor.offlineVisualReferencePngBase64!,
+          );
+        } on FormatException {
+          offlineReferencePng = null;
+        }
+      }
+
       final result = await _ar.startNavigation(
         destinationName: widget.destination.name,
         startLabel: _route.nodes.first.label,
@@ -334,21 +362,34 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
         visualAnchorRouteOffsetDegrees: visualAnchor == null
             ? null
             : _visualAnchorRouteOffsetDegrees(visualAnchor),
+        offlineReferencePng: offlineReferencePng,
+        offlineReferenceWidthMeters:
+            offlineAnchor?.offlineVisualReferenceWidthMeters,
+        offlineStartOffsetX: offlineAnchor?.offlineVisualStartOffsetX,
+        offlineStartOffsetY: offlineAnchor?.offlineVisualStartOffsetY,
+        offlineStartOffsetZ: offlineAnchor?.offlineVisualStartOffsetZ,
+        offlineStartForwardX: offlineAnchor?.offlineVisualStartForwardX,
+        offlineStartForwardY: offlineAnchor?.offlineVisualStartForwardY,
+        offlineStartForwardZ: offlineAnchor?.offlineVisualStartForwardZ,
       );
       if (!mounted) return false;
 
       setState(() {
         _status = switch (result) {
-          'STARTED' => visualAnchor != null
-              ? 'Visual localization ready. Point the AR camera at the '
-                  '16 cm ${visualAnchor.label} QR and hold it steady until '
-                  'the app locks position + direction.'
-              : _anchor == null
-                  ? 'Manual preview: stand exactly at the selected map start, '
-                      'tap SET START, walk 2–3 m along the first real path, then '
-                      'LOCK DIRECTION.'
-                  : 'This anchor is position-only. Use manual alignment now, '
-                      'or re-map it as a visual QR anchor for one-scan pose.',
+          'STARTED' => offlineAnchor != null
+              ? 'Finding saved start offline. Look around the mapped entrance '
+                  'and aim at the same detailed door/sign/wall area used when '
+                  'the route was recorded.'
+              : visualAnchor != null
+                  ? 'Visual localization ready. Point the AR camera at the '
+                      '16 cm ${visualAnchor.label} QR and hold it steady until '
+                      'the app locks position + direction.'
+                  : _anchor == null
+                      ? 'Manual preview: stand exactly at the selected map start, '
+                          'tap SET START, walk 2–3 m along the first real path, then '
+                          'LOCK DIRECTION.'
+                      : 'This anchor is position-only. Use manual alignment now, '
+                          'or re-map it with an offline visual start.',
           'INSTALL_REQUESTED' =>
             'Install/update Google Play Services for AR, then retry.',
           _ => 'ARCore: $result',
