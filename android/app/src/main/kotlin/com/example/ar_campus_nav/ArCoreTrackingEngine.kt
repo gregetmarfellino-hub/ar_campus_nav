@@ -152,17 +152,6 @@ class ArCoreTrackingEngine(
     private var navigationVisualRouteOffsetDegrees = 0f
     private var navigationVisualAnchorEnabled = false
     private var navigationVisualSetupWarning: String? = null
-
-    // Persistent start pose. Mapping hosts the locked local start anchor to
-    // ARCore Cloud Anchors; navigation resolves the saved ID and uses that
-    // resolved anchor as the entire route coordinate frame.
-    private var mappingCloudHostAnchor: Anchor? = null
-    private var mappingCloudHostCompletion: ((String?, String?) -> Unit)? = null
-    private var navigationPersistentAnchorId: String? = null
-    private var navigationPersistentResolveAnchor: Anchor? = null
-    private var navigationPersistentResolved = false
-    private var navigationStartMarkerBitmap: Bitmap? = null
-    private var navigationStartMarkerWidthMeters = 0.16f
     private var navigationVisualSampleCount = 0
     private var navigationVisualPositionX = 0f
     private var navigationVisualPositionZ = 0f
@@ -268,7 +257,6 @@ class ArCoreTrackingEngine(
         visualAnchorWidthMeters: Float? = null,
         visualAnchorLabel: String? = null,
         visualAnchorRouteOffsetDegrees: Float? = null,
-        persistentAnchorId: String? = null,
     ): String {
         if (points.size < 2) return "ROUTE_TOO_SHORT"
 
@@ -277,28 +265,12 @@ class ArCoreTrackingEngine(
         navigationStartLabel = startLabel
         navigationAnchorLocalized = anchorLocalized
         navigationPoints = points
-        navigationPersistentAnchorId = persistentAnchorId?.takeIf { it.isNotBlank() }
-        navigationPersistentResolveAnchor = null
-        navigationPersistentResolved = false
-
-        if (navigationPersistentAnchorId != null) {
-            clearVisualAnchorConfiguration()
-            navigationStartMarkerBitmap?.recycle()
-            navigationStartMarkerBitmap =
-                visualAnchorPng?.let {
-                    BitmapFactory.decodeByteArray(it, 0, it.size)
-                }
-            navigationStartMarkerWidthMeters =
-                visualAnchorWidthMeters?.takeIf { it > 0f } ?: 0.16f
-            navigationStartMarkerBitmap?.let { qrPlacementRenderer.setBitmap(it) }
-        } else {
-            configureVisualAnchor(
-                png = visualAnchorPng,
-                widthMeters = visualAnchorWidthMeters,
-                label = visualAnchorLabel,
-                routeOffsetDegrees = visualAnchorRouteOffsetDegrees,
-            )
-        }
+        configureVisualAnchor(
+            png = visualAnchorPng,
+            widthMeters = visualAnchorWidthMeters,
+            label = visualAnchorLabel,
+            routeOffsetDegrees = visualAnchorRouteOffsetDegrees,
+        )
         navigationAligned = false
         alignmentRequested = false
         resetNavigationCalibration()
@@ -338,7 +310,6 @@ class ArCoreTrackingEngine(
                 updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
                 planeFindingMode = Config.PlaneFindingMode.DISABLED
                 lightEstimationMode = Config.LightEstimationMode.DISABLED
-                cloudAnchorMode = Config.CloudAnchorMode.ENABLED
             }
             configureVisualImageDatabase(newSession, config)
             newSession.configure(config)
@@ -390,58 +361,6 @@ class ArCoreTrackingEngine(
         } catch (error: Exception) {
             cleanupFailedStart()
             "START_ERROR:${error.javaClass.simpleName}:${error.message ?: "unknown"}"
-        }
-    }
-
-    @Suppress("DEPRECATION")
-    fun beginHostMappingStartAnchor(
-        ttlDays: Int,
-        onComplete: (String?, String?) -> Unit,
-    ): String? {
-        val activeSession = session
-            ?: return "ARCore session is not running."
-        val localAnchor = mappingStartWorldAnchor
-            ?: return "Lock the virtual start marker before hosting it."
-        if (mappingCloudHostAnchor != null || mappingCloudHostCompletion != null) {
-            return "Persistent start anchor is already being hosted."
-        }
-
-        return try {
-            mappingCloudHostCompletion = onComplete
-            mappingCloudHostAnchor = activeSession.hostCloudAnchorWithTtl(
-                localAnchor,
-                ttlDays.coerceIn(1, 365),
-            )
-            null
-        } catch (error: Exception) {
-            mappingCloudHostCompletion = null
-            mappingCloudHostAnchor = null
-            "Cloud Anchor host start failed: " +
-                error.javaClass.simpleName +
-                ": " +
-                (error.message ?: "unknown")
-        }
-    }
-
-    private fun pollMappingCloudHost() {
-        val anchor = mappingCloudHostAnchor ?: return
-        val callback = mappingCloudHostCompletion ?: return
-        val state = anchor.cloudAnchorState
-
-        when (state) {
-            Anchor.CloudAnchorState.SUCCESS -> {
-                val id = anchor.cloudAnchorId
-                mappingCloudHostAnchor = null
-                mappingCloudHostCompletion = null
-                mainHandler.post { callback(id, null) }
-            }
-            Anchor.CloudAnchorState.NONE,
-            Anchor.CloudAnchorState.TASK_IN_PROGRESS -> Unit
-            else -> {
-                mappingCloudHostAnchor = null
-                mappingCloudHostCompletion = null
-                mainHandler.post { callback(null, state.name) }
-            }
         }
     }
 
@@ -911,21 +830,6 @@ class ArCoreTrackingEngine(
         resetNavigationContinuity()
         navigationArrivalShown = false
         navigationPoints = emptyList()
-        try {
-            mappingCloudHostAnchor?.detach()
-        } catch (_: Exception) {
-        }
-        mappingCloudHostAnchor = null
-        mappingCloudHostCompletion = null
-        try {
-            navigationPersistentResolveAnchor?.detach()
-        } catch (_: Exception) {
-        }
-        navigationPersistentResolveAnchor = null
-        navigationPersistentAnchorId = null
-        navigationPersistentResolved = false
-        navigationStartMarkerBitmap?.recycle()
-        navigationStartMarkerBitmap = null
         clearVisualAnchorConfiguration()
         clearMappingVisualAnchorConfiguration()
         emitStatus("STOPPED")
@@ -984,7 +888,6 @@ class ArCoreTrackingEngine(
         try {
             val frame = activeSession.update()
             val camera = frame.camera
-            pollMappingCloudHost()
 
             if (
                 navigationMode ||
@@ -1070,12 +973,7 @@ class ArCoreTrackingEngine(
             lastCameraTrackingReason = null
 
             if (navigationMode) {
-                if (!navigationAligned && navigationPersistentAnchorId != null) {
-                    updatePersistentNavigationResolve(activeSession)
-                }
-
                 if (!navigationAligned &&
-                    navigationPersistentAnchorId == null &&
                     navigationVisualAnchorEnabled &&
                     navigationCalibrationStart == null
                 ) {
@@ -1150,10 +1048,6 @@ class ArCoreTrackingEngine(
                     originRightX = worldBasis.rightX,
                     originRightZ = worldBasis.rightZ,
                 )
-
-                if (navigationPersistentResolved) {
-                    drawPersistentNavigationStartMarker(camera)
-                }
 
                 val worldPoints = routeWorldPoints()
                 updateNavigationProgress(
@@ -1344,91 +1238,6 @@ class ArCoreTrackingEngine(
             mappingVisualStatusText?.text = text
         }
     }
-    @Suppress("DEPRECATION")
-    private fun updatePersistentNavigationResolve(
-        activeSession: Session,
-    ) {
-        if (navigationPersistentResolved) return
-        val id = navigationPersistentAnchorId ?: return
-
-        var anchor = navigationPersistentResolveAnchor
-        if (anchor == null) {
-            try {
-                anchor = activeSession.resolveCloudAnchor(id)
-                navigationPersistentResolveAnchor = anchor
-                setNavigationHud(
-                    "RESTORING START — look around the mapped entrance so " +
-                        "ARCore can recognize the environment.",
-                )
-            } catch (error: Exception) {
-                navigationPersistentAnchorId = null
-                setNavigationHud(
-                    "Persistent start could not begin resolving: " +
-                        error.javaClass.simpleName,
-                )
-                emitStatus("PERSISTENT_ANCHOR_RESOLVE_FAILED")
-                return
-            }
-        }
-
-        when (anchor.cloudAnchorState) {
-            Anchor.CloudAnchorState.SUCCESS -> {
-                releaseNavigationAnchor()
-                navigationWorldAnchor = anchor
-                navigationPersistentResolveAnchor = null
-                navigationForwardX = 0f
-                navigationForwardZ = -1f
-                navigationRightX = 1f
-                navigationRightZ = 0f
-                navigationAligned = true
-                navigationPersistentResolved = true
-                resetNavigationCalibration()
-                resetNavigationContinuity()
-                activeRouteIndex = 1
-                setNavigationAlignedUi()
-                setNavigationHud(
-                    "START RESTORED — the saved virtual QR is back at " +
-                        "$navigationStartLabel. Route orientation is locked " +
-                        "to this persistent anchor, not the phone.",
-                )
-                emitStatus("PERSISTENT_ANCHOR_RESOLVED")
-            }
-            Anchor.CloudAnchorState.NONE,
-            Anchor.CloudAnchorState.TASK_IN_PROGRESS -> Unit
-            else -> {
-                val state = anchor.cloudAnchorState.name
-                try {
-                    anchor.detach()
-                } catch (_: Exception) {
-                }
-                navigationPersistentResolveAnchor = null
-                navigationPersistentAnchorId = null
-                setNavigationHud(
-                    "Persistent start resolve failed: $state. " +
-                        "Move around the mapped entrance and retry.",
-                )
-                emitStatus("PERSISTENT_ANCHOR_RESOLVE_FAILED")
-            }
-        }
-    }
-
-    private fun drawPersistentNavigationStartMarker(
-        camera: com.google.ar.core.Camera,
-    ) {
-        val anchor = navigationWorldAnchor ?: return
-        if (anchor.trackingState != TrackingState.TRACKING) return
-        if (navigationStartMarkerBitmap == null) return
-
-        val pose = anchor.pose
-        qrPlacementRenderer.draw(
-            camera = camera,
-            center = pose.translation,
-            rightAxis = pose.getTransformedAxis(0, 1f),
-            upAxis = pose.getTransformedAxis(1, 1f),
-            sizeMeters = navigationStartMarkerWidthMeters,
-        )
-    }
-
     private fun configureVisualAnchor(
         png: ByteArray?,
         widthMeters: Float?,
