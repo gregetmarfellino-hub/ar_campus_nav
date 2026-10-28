@@ -204,6 +204,68 @@ void main() {
     expect(node.x, closeTo(10, 1e-9));
     expect(node.y, closeTo(10, 1e-9));
   });
+  test('offline visual start reference survives venue generation', () {
+    final session = MappingSession(
+      id: 'offline_visual_start',
+      venueId: 'venue',
+      venueName: 'Venue',
+      floor: 1,
+      createdAt: DateTime.utc(2026, 1, 1),
+      startAnchorId: null,
+      startAnchorLabel: 'Entrance',
+      offlineVisualReferencePngBase64: 'ZmFrZV9wbmc=',
+      offlineVisualReferenceWidthMeters: 0.62,
+      offlineVisualStartOffsetX: 0.15,
+      offlineVisualStartOffsetY: 0.02,
+      offlineVisualStartOffsetZ: -0.40,
+      offlineVisualStartForwardX: 0.0,
+      offlineVisualStartForwardY: 0.0,
+      offlineVisualStartForwardZ: -1.0,
+      originHeadingDegrees: 0,
+      stepLengthMeters: 0,
+      source: 'arcore_spatial',
+      points: const [
+        MappingPoint(
+          xMeters: 0,
+          yMeters: 0,
+          headingDegrees: 0,
+          stepIndex: 0,
+          timestampMs: 0,
+        ),
+        MappingPoint(
+          xMeters: 0,
+          yMeters: 3,
+          headingDegrees: 0,
+          stepIndex: 1,
+          timestampMs: 1000,
+        ),
+      ],
+      markers: const [
+        MappingMarker(
+          id: 'offline_start',
+          label: 'Entrance',
+          type: 'anchor',
+          floor: 1,
+          xMeters: 0,
+          yMeters: 0,
+          pointIndex: 0,
+          anchorFacingDegrees: 0,
+        ),
+      ],
+    );
+
+    final venue = service.applySession(
+      venue: baseVenue(),
+      session: session,
+    );
+
+    final anchor = venue.anchorById('offline_start');
+    expect(anchor.offlineVisualReady, isTrue);
+    expect(anchor.offlineVisualReferencePngBase64, 'ZmFrZV9wbmc=');
+    expect(anchor.offlineVisualReferenceWidthMeters, closeTo(0.62, 1e-9));
+    expect(anchor.offlineVisualStartOffsetX, closeTo(0.15, 1e-9));
+    expect(anchor.offlineVisualStartOffsetZ, closeTo(-0.40, 1e-9));
+  });
   test('visual QR marker at first point creates a pose-ready start anchor', () {
     final session = MappingSession(
       id: 'visual_start',
