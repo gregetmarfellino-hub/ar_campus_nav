@@ -125,6 +125,7 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                             visualAnchorLabel = visualAnchorLabel,
                             visualAnchorRouteOffsetDegrees =
                                 visualAnchorRouteOffsetDegrees,
+                            persistentAnchorId = persistentAnchorId,
                         ),
                     )
                 }
@@ -155,6 +156,30 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                                 null,
                             )
                         }
+                    }
+                }
+                "hostPersistentStartAnchor" -> {
+                    val ttlDays =
+                        (call.argument<Number>("ttl_days"))?.toInt() ?: 1
+                    val error = arEngine().beginHostMappingStartAnchor(
+                        ttlDays = ttlDays,
+                    ) { cloudAnchorId, hostError ->
+                        if (cloudAnchorId != null) {
+                            result.success(cloudAnchorId)
+                        } else {
+                            result.error(
+                                "CLOUD_ANCHOR_HOST_FAILED",
+                                hostError ?: "Unknown Cloud Anchor host error.",
+                                null,
+                            )
+                        }
+                    }
+                    if (error != null) {
+                        result.error(
+                            "CLOUD_ANCHOR_HOST_UNAVAILABLE",
+                            error,
+                            null,
+                        )
                     }
                 }
                 "resetArOrigin" -> {
