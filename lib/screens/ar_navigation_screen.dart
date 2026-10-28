@@ -230,12 +230,15 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
     final start = nodes.first;
 
     // An offline visual start resolves the ORIGINAL mapper's world frame.
-    // For those routes, stored venue X/Y already mean right/forward meters
-    // from the locked QR. Fitting a new PCA heading to the first walk segment
-    // would rotate the entire saved route independently of that QR.
+    // The venue map flips/rotates mapping-local Y into south-positive map Y.
+    // Undo that saved transform rather than inferring a heading from the first
+    // walking segment; both turns and U-turns must remain in the original frame.
     if (_anchor?.offlineVisualReady == true &&
         _anchor?.nodeId == start.id) {
-      return ArRouteCoordinates.fromMappedVenueNodes(nodes);
+      return ArRouteCoordinates.fromMappedVenueNodes(
+        nodes,
+        mapHeadingDegrees: _anchor?.headingDegrees ?? 0,
+      );
     }
 
     // Backward-compatible fallback for older/manual routes, which lack a
