@@ -6,6 +6,8 @@ import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
@@ -833,6 +835,21 @@ class ArCoreTrackingEngine(
         var zAxis = normalizeVector(crossVector(xAxis, yAxis))
             ?: return Pair(null, "Could not determine reference up/down axis.")
 
+        val toCamera = normalizeVector(
+            floatArrayOf(
+                currentPose.tx() - centerHit.hitPose.tx(),
+                currentPose.ty() - centerHit.hitPose.ty(),
+                currentPose.tz() - centerHit.hitPose.tz(),
+            ),
+        )
+        if (toCamera == null || abs(dotVector(yAxis, toCamera)) < 0.72f) {
+            return Pair(
+                null,
+                "FACE THE SURFACE MORE SQUARELY — avoid capturing the entrance " +
+                    "reference from a steep angle.",
+            )
+        }
+
         // Pick the plane-normal sign whose +Z follows the captured image's
         // screen-down direction. This makes our saved basis match the bitmap
         // orientation ARCore will use when recognizing it later.
@@ -925,7 +942,11 @@ class ArCoreTrackingEngine(
         val image = frame.acquireCameraImage()
         try {
             val outputSize = 384
-            val inputCoords = FloatBuffer.allocate(8).apply {
+            val inputCoords = ByteBuffer
+                .allocateDirect(8 * 4)
+                .order(ByteOrder.nativeOrder())
+                .asFloatBuffer()
+                .apply {
                 put(
                     floatArrayOf(
                         0.27f, 0.27f,
@@ -936,7 +957,10 @@ class ArCoreTrackingEngine(
                 )
                 rewind()
             }
-            val imageCoords = FloatBuffer.allocate(8)
+            val imageCoords = ByteBuffer
+                .allocateDirect(8 * 4)
+                .order(ByteOrder.nativeOrder())
+                .asFloatBuffer()
             frame.transformCoordinates2d(
                 Coordinates2d.VIEW_NORMALIZED,
                 inputCoords,
