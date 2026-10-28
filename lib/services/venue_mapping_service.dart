@@ -292,8 +292,6 @@ class VenueMappingService {
               : _markerAnchorHeading(visualUpgrade, transform),
           visualHeadingVerified:
               visualUpgrade != null || startAnchor.visualHeadingVerified,
-          persistentAnchorId:
-              session.persistentStartAnchorId ?? startAnchor.persistentAnchorId,
         ),
       );
       usedAnchorIds.add(startAnchor.id);
@@ -346,7 +344,6 @@ class VenueMappingService {
             floor: session.floor,
             headingDegrees: _markerAnchorHeading(marker, transform),
             visualHeadingVerified: marker.anchorFacingDegrees != null,
-            persistentAnchorId: session.persistentStartAnchorId,
           ),
         );
       }
