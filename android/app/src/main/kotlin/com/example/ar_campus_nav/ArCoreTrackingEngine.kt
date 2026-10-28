@@ -433,14 +433,14 @@ class ArCoreTrackingEngine(
                 val id = anchor.cloudAnchorId
                 mappingCloudHostAnchor = null
                 mappingCloudHostCompletion = null
-                callback(id, null)
+                mainHandler.post { callback(id, null) }
             }
             Anchor.CloudAnchorState.NONE,
             Anchor.CloudAnchorState.TASK_IN_PROGRESS -> Unit
             else -> {
                 mappingCloudHostAnchor = null
                 mappingCloudHostCompletion = null
-                callback(null, state.name)
+                mainHandler.post { callback(null, state.name) }
             }
         }
     }
