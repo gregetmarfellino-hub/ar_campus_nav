@@ -1828,10 +1828,14 @@ class ArCoreTrackingEngine(
         )
         releaseNavigationAnchor()
         navigationWorldAnchor = activeSession.createAnchor(startPose)
-        navigationForwardX = averageForwardX
-        navigationForwardZ = averageForwardZ
-        navigationRightX = -navigationForwardZ
-        navigationRightZ = navigationForwardX
+
+        // startPose already encodes the recovered world heading. Route basis
+        // below is anchor-local; keeping canonical local axes avoids applying
+        // the recovered yaw twice.
+        navigationForwardX = 0f
+        navigationForwardZ = -1f
+        navigationRightX = 1f
+        navigationRightZ = 0f
         navigationAligned = true
         navigationAnchorLocalized = true
         resetNavigationCalibration()
