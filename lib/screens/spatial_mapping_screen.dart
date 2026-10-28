@@ -187,6 +187,21 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         return;
       }
 
+      if (result == 'CLOUD_ANCHOR_NOT_CONFIGURED') {
+        setState(() {
+          _starting = false;
+          _awaitingStartQr = false;
+          _trackingState = 'STOPPED';
+          _message =
+              'Persistent virtual start portals require ARCore Cloud Anchors. '
+              'Set ARCORE_API_KEY in android/local.properties, enable the '
+              'ARCore API for that Google Cloud project, then rebuild. '
+              'The app will not create fake local-dev portals as persistent '
+              'venue data anymore.';
+        });
+        return;
+      }
+
       if (result != 'STARTED') {
         setState(() {
           _starting = false;
@@ -1219,8 +1234,9 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Place the floating start QR portal once, lock it, then '
-                    'walk the route and add the destination.',
+                    'Persistent virtual portals use ARCore Cloud Anchors. '
+                    'If Cloud Anchors are not configured, mapping will stop '
+                    'instead of saving a fake portal that moves next session.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: Colors.white38,
