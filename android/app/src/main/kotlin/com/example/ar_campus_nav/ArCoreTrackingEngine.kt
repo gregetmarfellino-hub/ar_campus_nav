@@ -807,8 +807,11 @@ class ArCoreTrackingEngine(
         val top = topHit.hitPose.translation
         val bottom = bottomHit.hitPose.translation
         val referenceWidthMeters = vectorDistance(left, right)
+        val referenceHeightMeters = vectorDistance(top, bottom)
 
-        if (referenceWidthMeters < 0.15f || referenceWidthMeters > 2.5f) {
+        if (referenceWidthMeters < 0.15f || referenceWidthMeters > 2.5f ||
+            referenceHeightMeters < 0.15f || referenceHeightMeters > 2.5f
+        ) {
             return Pair(
                 null,
                 "REFERENCE SIZE LOOKS WRONG — move about 0.5–2 m from the " +
@@ -859,7 +862,13 @@ class ArCoreTrackingEngine(
         }
 
         val bitmap = try {
-            captureReferenceBitmap(frame)
+            captureReferenceBitmap(
+                frame = frame,
+                halfViewX = half / view.width.toFloat(),
+                halfViewY = half / view.height.toFloat(),
+                physicalAspect =
+                    referenceHeightMeters / referenceWidthMeters,
+            )
         } catch (_: NotYetAvailableException) {
             return Pair(
                 null,
@@ -938,10 +947,18 @@ class ArCoreTrackingEngine(
     }
 
     @Throws(NotYetAvailableException::class)
-    private fun captureReferenceBitmap(frame: Frame): Bitmap {
+    private fun captureReferenceBitmap(
+        frame: Frame,
+        halfViewX: Float,
+        halfViewY: Float,
+        physicalAspect: Float,
+    ): Bitmap {
         val image = frame.acquireCameraImage()
         try {
-            val outputSize = 384
+            val outputWidth = 384
+            val outputHeight = (outputWidth * physicalAspect)
+                .toInt()
+                .coerceIn(240, 640)
             val inputCoords = ByteBuffer
                 .allocateDirect(8 * 4)
                 .order(ByteOrder.nativeOrder())
@@ -949,10 +966,10 @@ class ArCoreTrackingEngine(
                 .apply {
                 put(
                     floatArrayOf(
-                        0.27f, 0.27f,
-                        0.73f, 0.27f,
-                        0.73f, 0.73f,
-                        0.27f, 0.73f,
+                        0.5f - halfViewX, 0.5f - halfViewY,
+                        0.5f + halfViewX, 0.5f - halfViewY,
+                        0.5f + halfViewX, 0.5f + halfViewY,
+                        0.5f - halfViewX, 0.5f + halfViewY,
                     ),
                 )
                 rewind()
@@ -975,18 +992,18 @@ class ArCoreTrackingEngine(
             val buffer = yPlane.buffer.duplicate()
             val rowStride = yPlane.rowStride
             val pixelStride = yPlane.pixelStride
-            val pixels = IntArray(outputSize * outputSize)
+            val pixels = IntArray(outputWidth * outputHeight)
 
-            for (oy in 0 until outputSize) {
-                val v = oy.toFloat() / (outputSize - 1).toFloat()
+            for (oy in 0 until outputHeight) {
+                val v = oy.toFloat() / (outputHeight - 1).toFloat()
 
                 val leftX = lerp(corners[0], corners[6], v)
                 val leftY = lerp(corners[1], corners[7], v)
                 val rightX = lerp(corners[2], corners[4], v)
                 val rightY = lerp(corners[3], corners[5], v)
 
-                for (ox in 0 until outputSize) {
-                    val u = ox.toFloat() / (outputSize - 1).toFloat()
+                for (ox in 0 until outputWidth) {
+                    val u = ox.toFloat() / (outputWidth - 1).toFloat()
                     val imageX = lerp(leftX, rightX, u)
                         .toInt()
                         .coerceIn(0, image.width - 1)
@@ -995,15 +1012,15 @@ class ArCoreTrackingEngine(
                         .coerceIn(0, image.height - 1)
                     val index = imageY * rowStride + imageX * pixelStride
                     val gray = buffer.get(index).toInt() and 0xFF
-                    pixels[oy * outputSize + ox] =
+                    pixels[oy * outputWidth + ox] =
                         Color.argb(255, gray, gray, gray)
                 }
             }
 
             return Bitmap.createBitmap(
                 pixels,
-                outputSize,
-                outputSize,
+                outputWidth,
+                outputHeight,
                 Bitmap.Config.ARGB_8888,
             )
         } finally {
