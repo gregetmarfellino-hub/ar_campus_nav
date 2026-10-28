@@ -75,6 +75,8 @@ class ArCoreTrackingEngine(
     @Volatile private var qrPlacementMode = false
     @Volatile private var qrPlacementRequested = false
     @Volatile private var qrPlacementDistanceMeters = 1.0f
+    private var qrPlacementLocked = false
+    private var qrPlacementLockedPayload: Map<String, Any>? = null
     private var qrPlacementTrackingReady = false
     private var qrPlacementBitmap: Bitmap? = null
     private var qrPlacementWidthMeters = 0.16f
@@ -403,6 +405,8 @@ class ArCoreTrackingEngine(
         qrPlacementCompletion = onComplete
         qrPlacementRequested = false
         qrPlacementTrackingReady = false
+        qrPlacementLocked = false
+        qrPlacementLockedPayload = null
         qrPlacementMode = true
         qrPlacementRenderer.setBitmap(bitmap)
 
@@ -512,8 +516,12 @@ class ArCoreTrackingEngine(
             setTextColor(Color.BLACK)
             background = roundedBackground(0xFF3DDC97.toInt(), dp(24).toFloat())
             setOnClickListener {
-                qrPlacementRequested = true
-                qrPlacementStatusText?.text = "Saving this exact 3D QR pose..."
+                if (qrPlacementLocked) {
+                    finishQrPlacement(qrPlacementLockedPayload)
+                } else {
+                    qrPlacementRequested = true
+                    qrPlacementStatusText?.text = "Locking this exact 3D QR pose..."
+                }
             }
         }
         qrPlacementButton = place
@@ -569,6 +577,11 @@ class ArCoreTrackingEngine(
         currentPose: Pose,
         camera: com.google.ar.core.Camera,
     ) {
+        if (qrPlacementLocked) {
+            drawLockedMappingStartQr(camera)
+            return
+        }
+
         val cameraForward = currentPose.getTransformedAxis(2, -1f)
         val cameraPosition = currentPose.translation
         val distance = qrPlacementDistanceMeters
@@ -626,14 +639,22 @@ class ArCoreTrackingEngine(
 
         // Because we just rebased the frame to this marker, the start marker
         // is exactly local origin with verified facing 0 degrees.
-        finishQrPlacement(
-            mapOf(
-                "right_m" to 0.0,
-                "forward_m" to 0.0,
-                "up_m" to 0.0,
-                "facing_deg" to 0.0,
-            ),
+        qrPlacementLockedPayload = mapOf(
+            "right_m" to 0.0,
+            "forward_m" to 0.0,
+            "up_m" to 0.0,
+            "facing_deg" to 0.0,
         )
+        qrPlacementLocked = true
+
+        mainHandler.post {
+            qrPlacementStatusText?.text =
+                "START LOCKED — move/rotate the phone now. The QR must stay " +
+                    "attached to the same real-world spot. When it looks stable, " +
+                    "tap START RECORDING."
+            qrPlacementButton?.text = "START RECORDING"
+            qrPlacementDistanceText?.visibility = android.view.View.GONE
+        }
     }
 
     private fun setQrPlacementTrackingReady(ready: Boolean) {
@@ -655,9 +676,15 @@ class ArCoreTrackingEngine(
     private fun finishQrPlacement(payload: Map<String, Any>?) {
         if (!qrPlacementMode && qrPlacementCompletion == null) return
 
+        val accepted = payload != null
         qrPlacementMode = false
         qrPlacementRequested = false
         qrPlacementTrackingReady = false
+        qrPlacementLocked = false
+        qrPlacementLockedPayload = null
+        if (!accepted) {
+            releaseMappingStartAnchor()
+        }
         val callback = qrPlacementCompletion
         qrPlacementCompletion = null
 
@@ -759,6 +786,8 @@ class ArCoreTrackingEngine(
         qrPlacementMode = false
         qrPlacementRequested = false
         qrPlacementTrackingReady = false
+        qrPlacementLocked = false
+        qrPlacementLockedPayload = null
         releaseMappingStartAnchor()
         surfaceView = null
 
