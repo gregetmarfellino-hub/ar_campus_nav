@@ -65,6 +65,21 @@ class ArBreadcrumbRenderer {
 
         val start = activeIndex.coerceIn(0, worldPoints.lastIndex)
         val remaining = worldPoints.subList(start, worldPoints.size)
+
+        // Include the previously passed node in the visible trail. When
+        // activeIndex=1 this is the SAVED QR origin (node 0), so the path
+        // visibly grows out of the same place the offline QR reappears.
+        val trailStart = (start - 1).coerceAtLeast(0)
+        val routeTrail = worldPoints.subList(trailStart, worldPoints.size)
+        val trailValues = FloatArray(routeTrail.size * 3)
+        for (i in routeTrail.indices) {
+            val p = routeTrail[i]
+            trailValues[i * 3] = p[0]
+            trailValues[i * 3 + 1] = p[1]
+            trailValues[i * 3 + 2] = p[2]
+        }
+        val trailBuffer = floatBuffer(trailValues)
+
         val values = FloatArray(remaining.size * 3)
 
         for (i in remaining.indices) {
@@ -153,7 +168,7 @@ class ArBreadcrumbRenderer {
 
         // Real metric-width 3D ribbon: GLES20.GL_LINE_STRIP widths above 1px
         // are not guaranteed on Android. Triangles stay visible on every GPU.
-        val ribbon = routeRibbon(remaining, 0.09f)
+        val ribbon = routeRibbon(routeTrail, 0.09f)
         if (ribbon != null) {
             GLES20.glVertexAttribPointer(
                 positionAttrib, 3, GLES20.GL_FLOAT, false, 0, ribbon,
@@ -174,7 +189,16 @@ class ArBreadcrumbRenderer {
         GLES20.glUniform1f(pointSizeUniform, 1f)
         GLES20.glUniform1i(pointModeUniform, 0)
         GLES20.glLineWidth(1f)
-        GLES20.glDrawArrays(GLES20.GL_LINE_STRIP, 0, remaining.size)
+        GLES20.glVertexAttribPointer(
+            positionAttrib, 3, GLES20.GL_FLOAT, false, 0, trailBuffer,
+        )
+        GLES20.glDrawArrays(GLES20.GL_LINE_STRIP, 0, routeTrail.size)
+
+        // Restore the future-route buffer; next marker must be index 0.
+        buffer.position(0)
+        GLES20.glVertexAttribPointer(
+            positionAttrib, 3, GLES20.GL_FLOAT, false, 0, buffer,
+        )
 
         // Sparse future breadcrumbs. The full route geometry remains in the
         // line strip above; dots are presentation-only and are decimated to
