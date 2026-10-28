@@ -169,6 +169,28 @@ class ArCoreTrackingEngine(
     private val navigationVisualSamplesRequired = 6
     private val navigationVisualImageName = "ar_nav_visual_anchor"
 
+    // Offline natural-scene relocalization. This is invisible to the user:
+    // the saved entrance image is recognized locally, then the virtual QR
+    // start pose is reconstructed from the stored reference->start transform.
+    private var navigationOfflineReferenceBitmap: Bitmap? = null
+    private var navigationOfflineReferenceWidthMeters = 0f
+    private var navigationOfflineStartOffsetX = 0f
+    private var navigationOfflineStartOffsetY = 0f
+    private var navigationOfflineStartOffsetZ = 0f
+    private var navigationOfflineStartForwardX = 0f
+    private var navigationOfflineStartForwardY = 0f
+    private var navigationOfflineStartForwardZ = -1f
+    private var navigationOfflineEnabled = false
+    private var navigationOfflineSampleCount = 0
+    private var navigationOfflinePositionX = 0f
+    private var navigationOfflinePositionY = 0f
+    private var navigationOfflinePositionZ = 0f
+    private var navigationOfflineForwardX = 0f
+    private var navigationOfflineForwardZ = 0f
+    private val navigationOfflineSamplesRequired = 5
+    private val navigationOfflineImageName = "ar_nav_offline_start"
+    private var navigationStartMarkerBitmap: Bitmap? = null
+
     // Pass 8.5 robust alignment.
     // Translation is fixed at Point A, but direction is no longer inferred from
     // one fragile A->B vector. We collect a short ARCore trajectory and fit its
@@ -266,6 +288,14 @@ class ArCoreTrackingEngine(
         visualAnchorWidthMeters: Float? = null,
         visualAnchorLabel: String? = null,
         visualAnchorRouteOffsetDegrees: Float? = null,
+        offlineReferencePng: ByteArray? = null,
+        offlineReferenceWidthMeters: Float? = null,
+        offlineStartOffsetX: Float? = null,
+        offlineStartOffsetY: Float? = null,
+        offlineStartOffsetZ: Float? = null,
+        offlineStartForwardX: Float? = null,
+        offlineStartForwardY: Float? = null,
+        offlineStartForwardZ: Float? = null,
     ): String {
         if (points.size < 2) return "ROUTE_TOO_SHORT"
 
@@ -274,12 +304,34 @@ class ArCoreTrackingEngine(
         navigationStartLabel = startLabel
         navigationAnchorLocalized = anchorLocalized
         navigationPoints = points
-        configureVisualAnchor(
-            png = visualAnchorPng,
-            widthMeters = visualAnchorWidthMeters,
-            label = visualAnchorLabel,
-            routeOffsetDegrees = visualAnchorRouteOffsetDegrees,
+
+        val offlineReady = configureOfflineVisualStart(
+            png = offlineReferencePng,
+            widthMeters = offlineReferenceWidthMeters,
+            offsetX = offlineStartOffsetX,
+            offsetY = offlineStartOffsetY,
+            offsetZ = offlineStartOffsetZ,
+            forwardX = offlineStartForwardX,
+            forwardY = offlineStartForwardY,
+            forwardZ = offlineStartForwardZ,
         )
+
+        if (offlineReady) {
+            clearVisualAnchorConfiguration()
+            navigationStartMarkerBitmap?.recycle()
+            navigationStartMarkerBitmap =
+                visualAnchorPng?.let {
+                    BitmapFactory.decodeByteArray(it, 0, it.size)
+                }
+            navigationStartMarkerBitmap?.let { qrPlacementRenderer.setBitmap(it) }
+        } else {
+            configureVisualAnchor(
+                png = visualAnchorPng,
+                widthMeters = visualAnchorWidthMeters,
+                label = visualAnchorLabel,
+                routeOffsetDegrees = visualAnchorRouteOffsetDegrees,
+            )
+        }
         navigationAligned = false
         alignmentRequested = false
         resetNavigationCalibration()
@@ -1166,6 +1218,9 @@ class ArCoreTrackingEngine(
         navigationArrivalShown = false
         navigationPoints = emptyList()
         clearVisualAnchorConfiguration()
+        clearOfflineVisualStartConfiguration()
+        navigationStartMarkerBitmap?.recycle()
+        navigationStartMarkerBitmap = null
         clearMappingVisualAnchorConfiguration()
         emitStatus("STOPPED")
     }
@@ -1242,7 +1297,26 @@ class ArCoreTrackingEngine(
                 if (qrPlacementMode) {
                     setQrPlacementTrackingReady(false)
                 }
-                if (mappingVisualAnchorEnabled) {
+                if (navigationOfflineEnabled) {
+            val bitmap = navigationOfflineReferenceBitmap
+            if (bitmap != null) {
+                try {
+                    database.addImage(
+                        navigationOfflineImageName,
+                        bitmap,
+                        navigationOfflineReferenceWidthMeters,
+                    )
+                    added = true
+                } catch (error: Exception) {
+                    navigationOfflineEnabled = false
+                    navigationVisualSetupWarning =
+                        "Offline start reference could not be registered: " +
+                            error.javaClass.simpleName
+                }
+            }
+        }
+
+        if (mappingVisualAnchorEnabled) {
                     setMappingVisualHud(
                         "TRACKING PAUSED — move slowly until ARCore recovers.",
                     )
@@ -1310,6 +1384,14 @@ class ArCoreTrackingEngine(
 
             if (navigationMode) {
                 if (!navigationAligned &&
+                    navigationOfflineEnabled &&
+                    navigationCalibrationStart == null
+                ) {
+                    tryLockOfflineVisualStart(activeSession)
+                }
+
+                if (!navigationAligned &&
+                    !navigationOfflineEnabled &&
                     navigationVisualAnchorEnabled &&
                     navigationCalibrationStart == null
                 ) {
@@ -1384,6 +1466,10 @@ class ArCoreTrackingEngine(
                     originRightX = worldBasis.rightX,
                     originRightZ = worldBasis.rightZ,
                 )
+
+                if (navigationOfflineEnabled) {
+                    drawOfflineNavigationStartMarker(camera)
+                }
 
                 val worldPoints = routeWorldPoints()
                 updateNavigationProgress(
@@ -1574,6 +1660,210 @@ class ArCoreTrackingEngine(
             mappingVisualStatusText?.text = text
         }
     }
+    private fun configureOfflineVisualStart(
+        png: ByteArray?,
+        widthMeters: Float?,
+        offsetX: Float?,
+        offsetY: Float?,
+        offsetZ: Float?,
+        forwardX: Float?,
+        forwardY: Float?,
+        forwardZ: Float?,
+    ): Boolean {
+        clearOfflineVisualStartConfiguration()
+
+        if (png == null ||
+            png.isEmpty() ||
+            widthMeters == null ||
+            widthMeters <= 0f ||
+            offsetX == null ||
+            offsetY == null ||
+            offsetZ == null ||
+            forwardX == null ||
+            forwardY == null ||
+            forwardZ == null
+        ) {
+            return false
+        }
+
+        val bitmap = BitmapFactory.decodeByteArray(png, 0, png.size)
+            ?: return false
+
+        navigationOfflineReferenceBitmap = bitmap
+        navigationOfflineReferenceWidthMeters = widthMeters
+        navigationOfflineStartOffsetX = offsetX
+        navigationOfflineStartOffsetY = offsetY
+        navigationOfflineStartOffsetZ = offsetZ
+        navigationOfflineStartForwardX = forwardX
+        navigationOfflineStartForwardY = forwardY
+        navigationOfflineStartForwardZ = forwardZ
+        navigationOfflineEnabled = true
+        resetOfflineVisualSamples()
+        return true
+    }
+
+    private fun clearOfflineVisualStartConfiguration() {
+        navigationOfflineReferenceBitmap?.recycle()
+        navigationOfflineReferenceBitmap = null
+        navigationOfflineReferenceWidthMeters = 0f
+        navigationOfflineStartOffsetX = 0f
+        navigationOfflineStartOffsetY = 0f
+        navigationOfflineStartOffsetZ = 0f
+        navigationOfflineStartForwardX = 0f
+        navigationOfflineStartForwardY = 0f
+        navigationOfflineStartForwardZ = -1f
+        navigationOfflineEnabled = false
+        resetOfflineVisualSamples()
+    }
+
+    private fun resetOfflineVisualSamples() {
+        navigationOfflineSampleCount = 0
+        navigationOfflinePositionX = 0f
+        navigationOfflinePositionY = 0f
+        navigationOfflinePositionZ = 0f
+        navigationOfflineForwardX = 0f
+        navigationOfflineForwardZ = 0f
+    }
+
+    private fun tryLockOfflineVisualStart(
+        activeSession: Session,
+    ): Boolean {
+        if (!navigationOfflineEnabled || navigationAligned) return false
+
+        val target = activeSession
+            .getAllTrackables(AugmentedImage::class.java)
+            .firstOrNull { image ->
+                image.name == navigationOfflineImageName &&
+                    image.trackingState == TrackingState.TRACKING &&
+                    image.trackingMethod ==
+                        AugmentedImage.TrackingMethod.FULL_TRACKING
+            }
+            ?: run {
+                resetOfflineVisualSamples()
+                setNavigationHud(
+                    "FINDING START — look around the mapped entrance. Aim at " +
+                        "the same detailed door/sign/wall area saved during mapping.",
+                )
+                return false
+            }
+
+        val pose = target.centerPose
+        val xAxis = pose.getTransformedAxis(0, 1f)
+        val yAxis = pose.getTransformedAxis(1, 1f)
+        val zAxis = pose.getTransformedAxis(2, 1f)
+        val center = pose.translation
+
+        val startX =
+            center[0] +
+                xAxis[0] * navigationOfflineStartOffsetX +
+                yAxis[0] * navigationOfflineStartOffsetY +
+                zAxis[0] * navigationOfflineStartOffsetZ
+        val startY =
+            center[1] +
+                xAxis[1] * navigationOfflineStartOffsetX +
+                yAxis[1] * navigationOfflineStartOffsetY +
+                zAxis[1] * navigationOfflineStartOffsetZ
+        val startZ =
+            center[2] +
+                xAxis[2] * navigationOfflineStartOffsetX +
+                yAxis[2] * navigationOfflineStartOffsetY +
+                zAxis[2] * navigationOfflineStartOffsetZ
+
+        val forwardWorldX =
+            xAxis[0] * navigationOfflineStartForwardX +
+                yAxis[0] * navigationOfflineStartForwardY +
+                zAxis[0] * navigationOfflineStartForwardZ
+        val forwardWorldZ =
+            xAxis[2] * navigationOfflineStartForwardX +
+                yAxis[2] * navigationOfflineStartForwardY +
+                zAxis[2] * navigationOfflineStartForwardZ
+        val horizontalLength = sqrt(
+            forwardWorldX * forwardWorldX +
+                forwardWorldZ * forwardWorldZ,
+        )
+        if (horizontalLength < 0.20f) {
+            resetOfflineVisualSamples()
+            return false
+        }
+
+        val fx = forwardWorldX / horizontalLength
+        val fz = forwardWorldZ / horizontalLength
+
+        navigationOfflineSampleCount++
+        navigationOfflinePositionX += startX
+        navigationOfflinePositionY += startY
+        navigationOfflinePositionZ += startZ
+        navigationOfflineForwardX += fx
+        navigationOfflineForwardZ += fz
+
+        if (navigationOfflineSampleCount < navigationOfflineSamplesRequired) {
+            setNavigationHud(
+                "START AREA FOUND — hold steady " +
+                    "$navigationOfflineSampleCount/$navigationOfflineSamplesRequired",
+            )
+            return false
+        }
+
+        val n = navigationOfflineSampleCount.toFloat()
+        val px = navigationOfflinePositionX / n
+        val py = navigationOfflinePositionY / n
+        val pz = navigationOfflinePositionZ / n
+        var averageForwardX = navigationOfflineForwardX / n
+        var averageForwardZ = navigationOfflineForwardZ / n
+        val averageLength = sqrt(
+            averageForwardX * averageForwardX +
+                averageForwardZ * averageForwardZ,
+        )
+        if (averageLength < 0.20f) {
+            resetOfflineVisualSamples()
+            return false
+        }
+        averageForwardX /= averageLength
+        averageForwardZ /= averageLength
+
+        val startPose = horizontalPoseFromForward(
+            position = floatArrayOf(px, py, pz),
+            forwardX = averageForwardX,
+            forwardZ = averageForwardZ,
+        )
+        releaseNavigationAnchor()
+        navigationWorldAnchor = activeSession.createAnchor(startPose)
+        navigationForwardX = averageForwardX
+        navigationForwardZ = averageForwardZ
+        navigationRightX = -navigationForwardZ
+        navigationRightZ = navigationForwardX
+        navigationAligned = true
+        navigationAnchorLocalized = true
+        resetNavigationCalibration()
+        resetNavigationContinuity()
+        activeRouteIndex = 1
+        resetOfflineVisualSamples()
+        setNavigationAlignedUi()
+        setNavigationHud(
+            "START RESTORED OFFLINE — the virtual QR and route are back at " +
+                "$navigationStartLabel.",
+        )
+        emitStatus("OFFLINE_VISUAL_START_LOCKED")
+        return true
+    }
+
+    private fun drawOfflineNavigationStartMarker(
+        camera: com.google.ar.core.Camera,
+    ) {
+        if (!navigationAligned || navigationStartMarkerBitmap == null) return
+        val anchor = navigationWorldAnchor ?: return
+        if (anchor.trackingState != TrackingState.TRACKING) return
+
+        val pose = anchor.pose
+        qrPlacementRenderer.draw(
+            camera = camera,
+            center = pose.translation,
+            rightAxis = pose.getTransformedAxis(0, 1f),
+            upAxis = floatArrayOf(0f, 1f, 0f),
+            sizeMeters = mappingStartQrWidthMeters.takeIf { it > 0f } ?: 0.16f,
+        )
+    }
+
     private fun configureVisualAnchor(
         png: ByteArray?,
         widthMeters: Float?,
