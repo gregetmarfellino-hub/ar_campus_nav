@@ -66,9 +66,6 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
 
   String? _placedStartQrId;
   String? _placedStartQrLabel;
-  String? _persistentStartAnchorId;
-  String? _persistentHostError;
-  Future<String>? _persistentHostFuture;
 
   int _stablePoseSamples = 0;
   int _recoveryPoseSamples = 0;
@@ -325,29 +322,6 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
             'START LOCKED — the virtual QR is now a real ARCore world anchor. '
             'Walk the route; rotating the phone must not move this start marker.';
       });
-      _persistentHostError = null;
-      _persistentStartAnchorId = null;
-      _persistentHostFuture = _ar.hostPersistentStartAnchor(ttlDays: 1);
-      unawaited(
-        _persistentHostFuture!.then((cloudId) {
-          if (!mounted) return;
-          setState(() {
-            _persistentStartAnchorId = cloudId;
-            _message =
-                'START LOCKED + SAVED — persistent anchor ready. Keep mapping; '
-                'this start can now be restored in a future AR session.';
-          });
-        }).catchError((Object error) {
-          if (!mounted) return;
-          setState(() {
-            _persistentHostError = error.toString();
-            _message =
-                'START LOCKED locally, but persistence is not ready: $error. '
-                'You can keep mapping; configure ARCore Cloud Anchor access '
-                'before relying on cross-session restore.';
-          });
-        }),
-      );
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -1108,19 +1082,6 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       markers: _markers,
     );
 
-    if (_persistentStartAnchorId == null && _persistentHostFuture != null) {
-      try {
-        setState(() {
-          _message =
-              'Finishing route — waiting briefly for the persistent start anchor...';
-        });
-        _persistentStartAnchorId = await _persistentHostFuture!
-            .timeout(const Duration(seconds: 20));
-      } catch (error) {
-        _persistentHostError = error.toString();
-      }
-    }
-
     final now = DateTime.now();
     final session = MappingSession(
       id: 'spatial_floor_${_floor}_${now.millisecondsSinceEpoch}',
@@ -1130,7 +1091,6 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       createdAt: now,
       startAnchorId: _startAnchor?.id,
       startAnchorLabel: _placedStartQrLabel ?? _startAnchor?.label,
-      persistentStartAnchorId: _persistentStartAnchorId,
       originHeadingDegrees: 0,
       stepLengthMeters: 0,
       source: 'arcore_spatial',
@@ -1162,14 +1122,11 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         _savedPath = path;
         _savedJson = prettyJson;
         _pose = const ArPose(tracking: 'STOPPED');
-        final persisted = _persistentStartAnchorId != null;
         _placedStartQrId = null;
         _placedStartQrLabel = null;
-        _persistentHostFuture = null;
         _message =
             'Spatial mapping saved: $rawPointCount raw samples → '
             '${simplified.points.length} saved geometry points. '
-            '${persisted ? 'Persistent start ready.' : 'Start is local-only; persistence failed or is not configured.'} '
             'Review quality before applying or merging.';
       });
 
@@ -1202,9 +1159,6 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       _markers.clear();
       _placedStartQrId = null;
       _placedStartQrLabel = null;
-      _persistentStartAnchorId = null;
-      _persistentHostError = null;
-      _persistentHostFuture = null;
       _pose = const ArPose(tracking: 'STOPPED');
       _message = 'Spatial recording discarded.';
     });
