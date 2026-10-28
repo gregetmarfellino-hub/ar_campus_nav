@@ -54,6 +54,24 @@ class VenueCodec {
             'floor': anchor.floor,
             'heading_degrees': anchor.headingDegrees,
             'visual_heading_verified': anchor.visualHeadingVerified,
+            if (anchor.offlineVisualReferencePngBase64 != null)
+              'offline_visual_reference_png_b64':
+                  anchor.offlineVisualReferencePngBase64,
+            if (anchor.offlineVisualReferenceWidthMeters != null)
+              'offline_visual_reference_width_m':
+                  anchor.offlineVisualReferenceWidthMeters,
+            if (anchor.offlineVisualStartOffsetX != null)
+              'offline_visual_start_offset_x': anchor.offlineVisualStartOffsetX,
+            if (anchor.offlineVisualStartOffsetY != null)
+              'offline_visual_start_offset_y': anchor.offlineVisualStartOffsetY,
+            if (anchor.offlineVisualStartOffsetZ != null)
+              'offline_visual_start_offset_z': anchor.offlineVisualStartOffsetZ,
+            if (anchor.offlineVisualStartForwardX != null)
+              'offline_visual_start_forward_x': anchor.offlineVisualStartForwardX,
+            if (anchor.offlineVisualStartForwardY != null)
+              'offline_visual_start_forward_y': anchor.offlineVisualStartForwardY,
+            if (anchor.offlineVisualStartForwardZ != null)
+              'offline_visual_start_forward_z': anchor.offlineVisualStartForwardZ,
           },
       ],
     };
