@@ -96,6 +96,20 @@ class ArBreadcrumbRenderer {
         // current horizontal ARCore position instead of appearing to spawn
         // at the next routing node a few meters ahead.
         if (userWorldPoint != null && remaining.isNotEmpty()) {
+            val connectorRibbon = routeRibbon(
+                listOf(userWorldPoint, remaining.first()), 0.055f,
+            )
+            if (connectorRibbon != null) {
+                GLES20.glVertexAttribPointer(
+                    positionAttrib, 3, GLES20.GL_FLOAT, false, 0, connectorRibbon,
+                )
+                GLES20.glUniform4f(colorUniform, 0.45f, 0.91f, 1.0f, 0.80f)
+                GLES20.glUniform1i(pointModeUniform, 0)
+                GLES20.glDrawArrays(
+                    GLES20.GL_TRIANGLES, 0, connectorRibbon.limit() / 3,
+                )
+            }
+
             val connectorValues = floatArrayOf(
                 userWorldPoint[0],
                 userWorldPoint[1],
@@ -137,11 +151,29 @@ class ArBreadcrumbRenderer {
             )
         }
 
-        // Route thread.
-        GLES20.glUniform4f(colorUniform, 0.30f, 0.72f, 1.0f, 0.70f)
+        // Real metric-width 3D ribbon: GLES20.GL_LINE_STRIP widths above 1px
+        // are not guaranteed on Android. Triangles stay visible on every GPU.
+        val ribbon = routeRibbon(remaining, 0.09f)
+        if (ribbon != null) {
+            GLES20.glVertexAttribPointer(
+                positionAttrib, 3, GLES20.GL_FLOAT, false, 0, ribbon,
+            )
+            GLES20.glUniform4f(colorUniform, 0.18f, 0.67f, 1.0f, 0.90f)
+            GLES20.glUniform1i(pointModeUniform, 0)
+            GLES20.glDrawArrays(
+                GLES20.GL_TRIANGLES, 0, ribbon.limit() / 3,
+            )
+            buffer.position(0)
+            GLES20.glVertexAttribPointer(
+                positionAttrib, 3, GLES20.GL_FLOAT, false, 0, buffer,
+            )
+        }
+
+        // Thin centerline on top of the ribbon, mainly for turns.
+        GLES20.glUniform4f(colorUniform, 0.80f, 0.96f, 1.0f, 0.95f)
         GLES20.glUniform1f(pointSizeUniform, 1f)
         GLES20.glUniform1i(pointModeUniform, 0)
-        GLES20.glLineWidth(4f)
+        GLES20.glLineWidth(1f)
         GLES20.glDrawArrays(GLES20.GL_LINE_STRIP, 0, remaining.size)
 
         // Sparse future breadcrumbs. The full route geometry remains in the
@@ -201,6 +233,46 @@ class ArBreadcrumbRenderer {
 
         GLES20.glDisableVertexAttribArray(positionAttrib)
         GLES20.glDisable(GLES20.GL_BLEND)
+    }
+
+    // Produces 2 horizontal triangles per segment. Each segment has a
+    // physical width in meters, independent of the driver's GL line support.
+    private fun routeRibbon(
+        points: List<FloatArray>,
+        halfWidthMeters: Float,
+    ): FloatBuffer? {
+        if (points.size < 2) return null
+        val vertices = ArrayList<Float>((points.size - 1) * 18)
+        for (i in 0 until points.lastIndex) {
+            val a = points[i]
+            val b = points[i + 1]
+            val dx = b[0] - a[0]
+            val dz = b[2] - a[2]
+            val length = kotlin.math.sqrt(dx * dx + dz * dz)
+            if (length < 0.001f) continue
+
+            // Perpendicular to the route on the horizontal ground plane.
+            val ox = -dz / length * halfWidthMeters
+            val oz = dx / length * halfWidthMeters
+            val ay = a[1] + 0.015f
+            val by = b[1] + 0.015f
+
+            fun vertex(x: Float, y: Float, z: Float) {
+                vertices.add(x)
+                vertices.add(y)
+                vertices.add(z)
+            }
+
+            // Winding is irrelevant because face culling is disabled for AR.
+            vertex(a[0] + ox, ay, a[2] + oz)
+            vertex(a[0] - ox, ay, a[2] - oz)
+            vertex(b[0] + ox, by, b[2] + oz)
+
+            vertex(b[0] + ox, by, b[2] + oz)
+            vertex(a[0] - ox, ay, a[2] - oz)
+            vertex(b[0] - ox, by, b[2] - oz)
+        }
+        return if (vertices.isEmpty()) null else floatBuffer(vertices.toFloatArray())
     }
 
     private fun sparseBreadcrumbs(
