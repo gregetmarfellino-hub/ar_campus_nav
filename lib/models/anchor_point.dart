@@ -6,7 +6,6 @@ class AnchorPoint {
     required this.floor,
     this.headingDegrees,
     this.visualHeadingVerified = false,
-    this.persistentAnchorId,
   });
 
   final String id;
@@ -18,12 +17,6 @@ class AnchorPoint {
   /// [visualHeadingVerified] is true.
   final double? headingDegrees;
   final bool visualHeadingVerified;
-
-  /// ARCore Cloud Anchor ID for restoring this start pose in a new AR session.
-  final String? persistentAnchorId;
-
-  bool get hasPersistentPose =>
-      persistentAnchorId != null && persistentAnchorId!.isNotEmpty;
 
   bool get visualPoseReady =>
       visualHeadingVerified && headingDegrees != null;
@@ -37,7 +30,6 @@ class AnchorPoint {
       headingDegrees: (json['heading_degrees'] as num?)?.toDouble(),
       visualHeadingVerified:
           json['visual_heading_verified'] as bool? ?? false,
-      persistentAnchorId: json['persistent_anchor_id'] as String?,
     );
   }
 }
