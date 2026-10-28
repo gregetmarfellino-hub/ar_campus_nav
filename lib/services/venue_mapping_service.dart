@@ -292,6 +292,30 @@ class VenueMappingService {
               : _markerAnchorHeading(visualUpgrade, transform),
           visualHeadingVerified:
               visualUpgrade != null || startAnchor.visualHeadingVerified,
+          offlineVisualReferencePngBase64:
+              session.offlineVisualReferencePngBase64 ??
+                  startAnchor.offlineVisualReferencePngBase64,
+          offlineVisualReferenceWidthMeters:
+              session.offlineVisualReferenceWidthMeters ??
+                  startAnchor.offlineVisualReferenceWidthMeters,
+          offlineVisualStartOffsetX:
+              session.offlineVisualStartOffsetX ??
+                  startAnchor.offlineVisualStartOffsetX,
+          offlineVisualStartOffsetY:
+              session.offlineVisualStartOffsetY ??
+                  startAnchor.offlineVisualStartOffsetY,
+          offlineVisualStartOffsetZ:
+              session.offlineVisualStartOffsetZ ??
+                  startAnchor.offlineVisualStartOffsetZ,
+          offlineVisualStartForwardX:
+              session.offlineVisualStartForwardX ??
+                  startAnchor.offlineVisualStartForwardX,
+          offlineVisualStartForwardY:
+              session.offlineVisualStartForwardY ??
+                  startAnchor.offlineVisualStartForwardY,
+          offlineVisualStartForwardZ:
+              session.offlineVisualStartForwardZ ??
+                  startAnchor.offlineVisualStartForwardZ,
         ),
       );
       usedAnchorIds.add(startAnchor.id);
@@ -344,6 +368,16 @@ class VenueMappingService {
             floor: session.floor,
             headingDegrees: _markerAnchorHeading(marker, transform),
             visualHeadingVerified: marker.anchorFacingDegrees != null,
+            offlineVisualReferencePngBase64:
+                session.offlineVisualReferencePngBase64,
+            offlineVisualReferenceWidthMeters:
+                session.offlineVisualReferenceWidthMeters,
+            offlineVisualStartOffsetX: session.offlineVisualStartOffsetX,
+            offlineVisualStartOffsetY: session.offlineVisualStartOffsetY,
+            offlineVisualStartOffsetZ: session.offlineVisualStartOffsetZ,
+            offlineVisualStartForwardX: session.offlineVisualStartForwardX,
+            offlineVisualStartForwardY: session.offlineVisualStartForwardY,
+            offlineVisualStartForwardZ: session.offlineVisualStartForwardZ,
           ),
         );
       }
