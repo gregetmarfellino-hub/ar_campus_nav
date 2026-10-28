@@ -280,30 +280,6 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     final label = _placedStartQrLabel;
     if (!_arStarted || anchorId == null || label == null) {
       if (!mounted) return;
-      if (!placement.hasOfflineReference) {
-        setState(() {
-          _placingStartQr = false;
-          _arming = false;
-          _recording = false;
-          _trackingState = 'REFERENCE ERROR';
-          _message =
-              'The start QR was locked, but no offline entrance reference was '
-              'captured. Retry and save a textured wall/sign/door area before '
-              'starting the walk.';
-        });
-        return;
-      }
-
-      _offlineVisualReferencePngBase64 =
-          base64Encode(placement.offlineReferencePng!);
-      _offlineVisualReferenceWidthMeters =
-          placement.offlineReferenceWidthMeters;
-      _offlineVisualStartOffsetX = placement.offlineStartOffsetX;
-      _offlineVisualStartOffsetY = placement.offlineStartOffsetY;
-      _offlineVisualStartOffsetZ = placement.offlineStartOffsetZ;
-      _offlineVisualStartForwardX = placement.offlineStartForwardX;
-      _offlineVisualStartForwardY = placement.offlineStartForwardY;
-      _offlineVisualStartForwardZ = placement.offlineStartForwardZ;
       setState(() {
         _placingStartQr = false;
         _message = 'Start marker could not be prepared. Restart mapping.';
@@ -333,6 +309,31 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         }
         return;
       }
+
+      if (!placement.hasOfflineReference) {
+        setState(() {
+          _placingStartQr = false;
+          _arming = false;
+          _recording = false;
+          _trackingState = 'REFERENCE ERROR';
+          _message =
+              'The start QR was locked, but no offline entrance reference was '
+              'captured. Retry and save a textured wall/sign/door area before '
+              'starting the walk.';
+        });
+        return;
+      }
+
+      _offlineVisualReferencePngBase64 =
+          base64Encode(placement.offlineReferencePng!);
+      _offlineVisualReferenceWidthMeters =
+          placement.offlineReferenceWidthMeters;
+      _offlineVisualStartOffsetX = placement.offlineStartOffsetX;
+      _offlineVisualStartOffsetY = placement.offlineStartOffsetY;
+      _offlineVisualStartOffsetZ = placement.offlineStartOffsetZ;
+      _offlineVisualStartForwardX = placement.offlineStartForwardX;
+      _offlineVisualStartForwardY = placement.offlineStartForwardY;
+      _offlineVisualStartForwardZ = placement.offlineStartForwardZ;
 
       setState(() {
         _placingStartQr = false;
