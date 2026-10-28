@@ -226,9 +226,29 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
     final nodes = _route.nodes;
     if (nodes.length < 2) return const [];
 
+    final start = nodes.first;
+
+    // An offline visual start resolves the ORIGINAL mapper's world frame.
+    // For those routes, stored venue X/Y already mean right/forward meters
+    // from the locked QR. Fitting a new PCA heading to the first walk segment
+    // would rotate the entire saved route independently of that QR.
+    if (_anchor?.offlineVisualReady == true &&
+        _anchor?.nodeId == start.id) {
+      return [
+        for (final node in nodes)
+          {
+            'right': node.x - start.x,
+            'forward': node.y - start.y,
+            'label': node.label,
+            'semantic': node.type != 'path',
+          },
+      ];
+    }
+
+    // Backward-compatible fallback for older/manual routes, which lack a
+    // preserved physical origin and therefore infer a path heading.
     final basis = _routeFrameBasis();
     if (basis == null) return const [];
-    final start = nodes.first;
 
     return [
       for (final node in nodes)
