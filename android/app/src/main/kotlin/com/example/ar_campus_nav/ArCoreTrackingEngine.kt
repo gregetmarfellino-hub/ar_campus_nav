@@ -3170,6 +3170,7 @@ class ArCoreTrackingEngine(
             text = when {
                 navigationOfflineEnabled -> "MANUAL FALLBACK"
                 navigationVisualAnchorEnabled -> "MANUAL FALLBACK"
+                navigationVisualSetupWarning != null -> "MANUAL FALLBACK"
                 navigationAnchorLocalized -> "SET QR POSITION"
                 else -> "SET START"
             }
