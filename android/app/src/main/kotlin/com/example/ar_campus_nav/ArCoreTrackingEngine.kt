@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import java.io.ByteArrayOutputStream
+import java.nio.FloatBuffer
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
@@ -21,10 +23,14 @@ import com.google.ar.core.ArCoreApk
 import com.google.ar.core.AugmentedImage
 import com.google.ar.core.AugmentedImageDatabase
 import com.google.ar.core.Config
+import com.google.ar.core.Coordinates2d
+import com.google.ar.core.Frame
+import com.google.ar.core.Plane
 import com.google.ar.core.Pose
 import com.google.ar.core.Session
 import com.google.ar.core.TrackingState
 import com.google.ar.core.exceptions.CameraNotAvailableException
+import com.google.ar.core.exceptions.NotYetAvailableException
 import com.google.ar.core.exceptions.UnavailableApkTooOldException
 import com.google.ar.core.exceptions.UnavailableArcoreNotInstalledException
 import com.google.ar.core.exceptions.UnavailableDeviceNotCompatibleException
@@ -33,6 +39,7 @@ import com.google.ar.core.exceptions.UnavailableUserDeclinedInstallationExceptio
 import io.flutter.plugin.common.EventChannel
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
+import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -77,6 +84,8 @@ class ArCoreTrackingEngine(
     @Volatile private var qrPlacementDistanceMeters = 1.0f
     private var qrPlacementLocked = false
     private var qrPlacementLockedPayload: Map<String, Any>? = null
+    @Volatile private var offlineReferenceCaptureRequested = false
+    private var offlineReferenceCaptured = false
     private var qrPlacementTrackingReady = false
     private var qrPlacementBitmap: Bitmap? = null
     private var qrPlacementWidthMeters = 0.16f
@@ -308,7 +317,12 @@ class ArCoreTrackingEngine(
             val config = Config(newSession).apply {
                 focusMode = Config.FocusMode.AUTO
                 updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
-                planeFindingMode = Config.PlaneFindingMode.DISABLED
+                planeFindingMode =
+                    if (navigationMode) {
+                        Config.PlaneFindingMode.DISABLED
+                    } else {
+                        Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
+                    }
                 lightEstimationMode = Config.LightEstimationMode.DISABLED
             }
             configureVisualImageDatabase(newSession, config)
@@ -407,6 +421,8 @@ class ArCoreTrackingEngine(
         qrPlacementTrackingReady = false
         qrPlacementLocked = false
         qrPlacementLockedPayload = null
+        offlineReferenceCaptureRequested = false
+        offlineReferenceCaptured = false
         qrPlacementMode = true
         qrPlacementRenderer.setBitmap(bitmap)
 
@@ -516,11 +532,20 @@ class ArCoreTrackingEngine(
             setTextColor(Color.BLACK)
             background = roundedBackground(0xFF3DDC97.toInt(), dp(24).toFloat())
             setOnClickListener {
-                if (qrPlacementLocked) {
-                    finishQrPlacement(qrPlacementLockedPayload)
-                } else {
-                    qrPlacementRequested = true
-                    qrPlacementStatusText?.text = "Locking this exact 3D QR pose..."
+                when {
+                    qrPlacementLocked && offlineReferenceCaptured -> {
+                        finishQrPlacement(qrPlacementLockedPayload)
+                    }
+                    qrPlacementLocked -> {
+                        offlineReferenceCaptureRequested = true
+                        isEnabled = false
+                        qrPlacementStatusText?.text =
+                            "Capturing this real entrance area for offline restore..."
+                    }
+                    else -> {
+                        qrPlacementRequested = true
+                        qrPlacementStatusText?.text = "Locking this exact 3D QR pose..."
+                    }
                 }
             }
         }
@@ -574,11 +599,38 @@ class ArCoreTrackingEngine(
     }
 
     private fun handleQrPlacementFrame(
+        frame: Frame,
         currentPose: Pose,
         camera: com.google.ar.core.Camera,
     ) {
         if (qrPlacementLocked) {
             drawLockedMappingStartQr(camera)
+
+            if (offlineReferenceCaptureRequested) {
+                offlineReferenceCaptureRequested = false
+                val capture = captureOfflineStartReference(
+                    frame = frame,
+                    currentPose = currentPose,
+                )
+                mainHandler.post {
+                    val button = qrPlacementButton
+                    button?.isEnabled = true
+                    if (capture.first != null) {
+                        qrPlacementLockedPayload =
+                            (qrPlacementLockedPayload ?: emptyMap()) + capture.first!!
+                        offlineReferenceCaptured = true
+                        qrPlacementStatusText?.text =
+                            "START AREA SAVED — this route now carries its own " +
+                                "offline visual fingerprint. Move the phone once " +
+                                "more if you want, then tap START RECORDING."
+                        button?.text = "START RECORDING"
+                    } else {
+                        qrPlacementStatusText?.text =
+                            capture.second ?: "Could not capture start area. Try again."
+                        button?.text = "SAVE START AREA"
+                    }
+                }
+            }
             return
         }
 
@@ -649,10 +701,10 @@ class ArCoreTrackingEngine(
 
         mainHandler.post {
             qrPlacementStatusText?.text =
-                "START LOCKED — move/rotate the phone now. The QR must stay " +
-                    "attached to the same real-world spot. When it looks stable, " +
-                    "tap START RECORDING."
-            qrPlacementButton?.text = "START RECORDING"
+                "START LOCKED — the QR is fixed. Now aim the center of the " +
+                    "camera at ONE nearby textured flat surface (door, sign, " +
+                    "tiles, poster, wall detail), then tap SAVE START AREA."
+            qrPlacementButton?.text = "SAVE START AREA"
             qrPlacementDistanceText?.visibility = android.view.View.GONE
         }
     }
@@ -682,6 +734,8 @@ class ArCoreTrackingEngine(
         qrPlacementTrackingReady = false
         qrPlacementLocked = false
         qrPlacementLockedPayload = null
+        offlineReferenceCaptureRequested = false
+        offlineReferenceCaptured = false
         if (!accepted) {
             releaseMappingStartAnchor()
         }
@@ -788,6 +842,8 @@ class ArCoreTrackingEngine(
         qrPlacementTrackingReady = false
         qrPlacementLocked = false
         qrPlacementLockedPayload = null
+        offlineReferenceCaptureRequested = false
+        offlineReferenceCaptured = false
         releaseMappingStartAnchor()
         surfaceView = null
 
@@ -939,6 +995,7 @@ class ArCoreTrackingEngine(
             if (qrPlacementMode) {
                 setQrPlacementTrackingReady(true)
                 handleQrPlacementFrame(
+                    frame = frame,
                     currentPose = currentPose,
                     camera = camera,
                 )
