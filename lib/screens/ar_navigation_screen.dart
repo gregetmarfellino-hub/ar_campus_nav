@@ -92,24 +92,6 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
           return;
         }
 
-        if (pose.tracking == 'PERSISTENT_ANCHOR_RESOLVED') {
-          setState(() {
-            _status =
-                'Start restored. The virtual QR and route are anchored to the '
-                'saved real-world entrance pose.';
-          });
-          return;
-        }
-
-        if (pose.tracking == 'PERSISTENT_ANCHOR_RESOLVE_FAILED') {
-          setState(() {
-            _status =
-                'Could not restore the saved start anchor. Move around the '
-                'mapped entrance and retry.';
-          });
-          return;
-        }
-
         if (pose.tracking == 'VISUAL_ANCHOR_LOCKED') {
           setState(() {
             _status =
@@ -310,20 +292,12 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
   Future<bool> _startNavigation() async {
     if (!mounted) return false;
 
-    final persistentAnchor = _anchor != null &&
-            _anchor!.hasPersistentPose &&
+    final visualAnchor = _anchor != null &&
+            _anchor!.visualPoseReady &&
             _route.nodes.isNotEmpty &&
             _route.nodes.first.id == _anchor!.nodeId
         ? _anchor
         : null;
-
-    final visualAnchor = persistentAnchor ??
-        (_anchor != null &&
-                _anchor!.visualPoseReady &&
-                _route.nodes.isNotEmpty &&
-                _route.nodes.first.id == _anchor!.nodeId
-            ? _anchor
-            : null);
     final points = _routeLocalPoints();
     if (points.length < 2) {
       setState(() {
@@ -360,26 +334,21 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
         visualAnchorRouteOffsetDegrees: visualAnchor == null
             ? null
             : _visualAnchorRouteOffsetDegrees(visualAnchor),
-        persistentAnchorId: persistentAnchor?.persistentAnchorId,
       );
       if (!mounted) return false;
 
       setState(() {
         _status = switch (result) {
-          'STARTED' => persistentAnchor != null
-              ? 'Restoring ${persistentAnchor.label} from its saved AR anchor. '
-                  'Look around the mapped entrance; the virtual QR will reappear '
-                  'when ARCore recognizes the environment.'
-              : visualAnchor != null
-                  ? 'Visual localization ready. Point the AR camera at the '
-                      '16 cm ${visualAnchor.label} QR and hold it steady until '
-                      'the app locks position + direction.'
-                  : _anchor == null
-                      ? 'Manual preview: stand exactly at the selected map start, '
-                          'tap SET START, walk 2–3 m along the first real path, then '
-                          'LOCK DIRECTION.'
-                      : 'This anchor is position-only. Use manual alignment now, '
-                          'or re-map it with a persistent start anchor.',
+          'STARTED' => visualAnchor != null
+              ? 'Visual localization ready. Point the AR camera at the '
+                  '16 cm ${visualAnchor.label} QR and hold it steady until '
+                  'the app locks position + direction.'
+              : _anchor == null
+                  ? 'Manual preview: stand exactly at the selected map start, '
+                      'tap SET START, walk 2–3 m along the first real path, then '
+                      'LOCK DIRECTION.'
+                  : 'This anchor is position-only. Use manual alignment now, '
+                      'or re-map it as a visual QR anchor for one-scan pose.',
           'INSTALL_REQUESTED' =>
             'Install/update Google Play Services for AR, then retry.',
           _ => 'ARCore: $result',
