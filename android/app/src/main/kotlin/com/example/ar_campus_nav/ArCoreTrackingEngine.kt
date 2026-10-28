@@ -133,6 +133,9 @@ class ArCoreTrackingEngine(
     // Navigation alignment frame. The physical origin is a real ARCore
     // Anchor; route basis vectors live in that anchor-local X/Z plane.
     private var navigationWorldAnchor: Anchor? = null
+    // Fixed world height of the visible AR path. Estimated once at relocalization
+    // from the actual phone pose; never tied to the floating QR's elevation.
+    private var navigationRouteWorldY: Float? = null
     private var navigationForwardX = 0f
     private var navigationForwardZ = -1f
     private var navigationRightX = 1f
@@ -306,6 +309,7 @@ class ArCoreTrackingEngine(
         navigationStartLabel = startLabel
         navigationAnchorLocalized = anchorLocalized
         navigationPoints = points
+        navigationRouteWorldY = null
 
         val offlineReady = configureOfflineVisualStart(
             png = offlineReferencePng,
@@ -1409,7 +1413,10 @@ class ArCoreTrackingEngine(
                     navigationOfflineEnabled &&
                     navigationCalibrationStart == null
                 ) {
-                    tryLockOfflineVisualStart(activeSession)
+                    tryLockOfflineVisualStart(
+                        activeSession = activeSession,
+                        currentCameraPose = currentPose,
+                    )
                 }
 
                 if (!navigationAligned &&
@@ -1749,6 +1756,7 @@ class ArCoreTrackingEngine(
 
     private fun tryLockOfflineVisualStart(
         activeSession: Session,
+        currentCameraPose: Pose,
     ): Boolean {
         if (!navigationOfflineEnabled || navigationAligned) return false
 
@@ -1850,6 +1858,10 @@ class ArCoreTrackingEngine(
         )
         releaseNavigationAnchor()
         navigationWorldAnchor = activeSession.createAnchor(startPose)
+        // Estimate a stable, walkable ribbon height about one meter under
+        // the phone at the moment the entrance is recognized. It cannot drift
+        // when the phone moves later; future floor-plane support can refine it.
+        navigationRouteWorldY = currentCameraPose.ty() - 0.95f
 
         // startPose already encodes the recovered world heading. Route basis
         // below is anchor-local; keeping canonical local axes avoids applying
@@ -2632,6 +2644,7 @@ class ArCoreTrackingEngine(
 
     private fun clearNavigationFrame() {
         releaseNavigationAnchor()
+        navigationRouteWorldY = null
         navigationForwardX = 0f
         navigationForwardZ = -1f
         navigationRightX = 1f
@@ -2703,10 +2716,12 @@ class ArCoreTrackingEngine(
     private fun navigationUserWorldPoint(local: LocalPosition): FloatArray {
         val anchor = navigationWorldAnchor
             ?: return floatArrayOf(0f, -1.10f, 0f)
+        val routeLocalHeight = navigationRouteWorldY?.let { it - anchor.pose.ty() }
+            ?: -1.10f
         val anchorLocal = floatArrayOf(
             navigationRightX * local.right +
                 navigationForwardX * local.forward,
-            -1.10f,
+            routeLocalHeight,
             navigationRightZ * local.right +
                 navigationForwardZ * local.forward,
         )
@@ -2929,11 +2944,13 @@ class ArCoreTrackingEngine(
         if (anchor.trackingState != TrackingState.TRACKING) return emptyList()
 
         val anchorPose = anchor.pose
+        val routeLocalHeight = navigationRouteWorldY?.let { it - anchorPose.ty() }
+            ?: -1.10f
         return navigationPoints.map { point ->
             val anchorLocal = floatArrayOf(
                 navigationRightX * point.rightMeters +
                     navigationForwardX * point.forwardMeters,
-                -1.10f,
+                routeLocalHeight,
                 navigationRightZ * point.rightMeters +
                     navigationForwardZ * point.forwardMeters,
             )
