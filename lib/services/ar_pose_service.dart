@@ -164,15 +164,6 @@ class ArPoseService {
     return VisualQrPlacement.fromMap(result);
   }
 
-  Future<String> hostPersistentStartAnchor({int ttlDays = 1}) async {
-    if (!platformSupported) return 'ANDROID_ONLY';
-    return await _native.invokeMethod<String>(
-          'hostPersistentStartAnchor',
-          <String, dynamic>{'ttl_days': ttlDays},
-        ) ??
-        'UNKNOWN';
-  }
-
   Future<void> resetOrigin() async {
     if (!platformSupported) return;
     await _native.invokeMethod<void>('resetArOrigin');
@@ -187,7 +178,6 @@ class ArPoseService {
     double? visualAnchorWidthMeters,
     String? visualAnchorLabel,
     double? visualAnchorRouteOffsetDegrees,
-    String? persistentAnchorId,
   }) async {
     if (!platformSupported) return 'ANDROID_ONLY';
     return await _native.invokeMethod<String>(
@@ -206,8 +196,6 @@ class ArPoseService {
             if (visualAnchorRouteOffsetDegrees != null)
               'visual_anchor_route_offset_deg':
                   visualAnchorRouteOffsetDegrees,
-            if (persistentAnchorId != null)
-              'persistent_anchor_id': persistentAnchorId,
           },
         ) ??
         'UNKNOWN';
