@@ -1538,6 +1538,7 @@ class ArCoreTrackingEngine(
                         worldPoints,
                         activeRouteIndex.coerceAtMost(worldPoints.lastIndex),
                         userWorldPoint,
+                        if (navigationOfflineEnabled) routeAnchor.pose.translation else null,
                     )
                 }
                 return
