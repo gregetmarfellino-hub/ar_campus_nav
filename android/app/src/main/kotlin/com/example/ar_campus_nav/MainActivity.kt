@@ -96,6 +96,22 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                         (call.argument<Number>(
                             "visual_anchor_route_offset_deg",
                         ))?.toFloat()
+                    val offlineReferencePng =
+                        call.argument<ByteArray>("offline_reference_png")
+                    val offlineReferenceWidthMeters =
+                        (call.argument<Number>("offline_reference_width_m"))?.toFloat()
+                    val offlineStartOffsetX =
+                        (call.argument<Number>("offline_start_offset_x"))?.toFloat()
+                    val offlineStartOffsetY =
+                        (call.argument<Number>("offline_start_offset_y"))?.toFloat()
+                    val offlineStartOffsetZ =
+                        (call.argument<Number>("offline_start_offset_z"))?.toFloat()
+                    val offlineStartForwardX =
+                        (call.argument<Number>("offline_start_forward_x"))?.toFloat()
+                    val offlineStartForwardY =
+                        (call.argument<Number>("offline_start_forward_y"))?.toFloat()
+                    val offlineStartForwardZ =
+                        (call.argument<Number>("offline_start_forward_z"))?.toFloat()
                     val rawPoints =
                         call.argument<List<Map<String, Any?>>>("points") ?: emptyList()
 
@@ -125,6 +141,15 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                             visualAnchorLabel = visualAnchorLabel,
                             visualAnchorRouteOffsetDegrees =
                                 visualAnchorRouteOffsetDegrees,
+                            offlineReferencePng = offlineReferencePng,
+                            offlineReferenceWidthMeters =
+                                offlineReferenceWidthMeters,
+                            offlineStartOffsetX = offlineStartOffsetX,
+                            offlineStartOffsetY = offlineStartOffsetY,
+                            offlineStartOffsetZ = offlineStartOffsetZ,
+                            offlineStartForwardX = offlineStartForwardX,
+                            offlineStartForwardY = offlineStartForwardY,
+                            offlineStartForwardZ = offlineStartForwardZ,
                         ),
                     )
                 }
