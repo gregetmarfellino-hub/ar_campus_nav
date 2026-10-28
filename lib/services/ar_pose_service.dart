@@ -80,12 +80,38 @@ class VisualQrPlacement {
     required this.forwardMeters,
     required this.upMeters,
     required this.facingDegrees,
+    this.offlineReferencePng,
+    this.offlineReferenceWidthMeters,
+    this.offlineStartOffsetX,
+    this.offlineStartOffsetY,
+    this.offlineStartOffsetZ,
+    this.offlineStartForwardX,
+    this.offlineStartForwardY,
+    this.offlineStartForwardZ,
   });
 
   final double rightMeters;
   final double forwardMeters;
   final double upMeters;
   final double facingDegrees;
+  final Uint8List? offlineReferencePng;
+  final double? offlineReferenceWidthMeters;
+  final double? offlineStartOffsetX;
+  final double? offlineStartOffsetY;
+  final double? offlineStartOffsetZ;
+  final double? offlineStartForwardX;
+  final double? offlineStartForwardY;
+  final double? offlineStartForwardZ;
+
+  bool get hasOfflineReference =>
+      offlineReferencePng?.isNotEmpty == true &&
+      offlineReferenceWidthMeters != null &&
+      offlineStartOffsetX != null &&
+      offlineStartOffsetY != null &&
+      offlineStartOffsetZ != null &&
+      offlineStartForwardX != null &&
+      offlineStartForwardY != null &&
+      offlineStartForwardZ != null;
 
   factory VisualQrPlacement.fromMap(Map<dynamic, dynamic> map) {
     double number(String key) {
@@ -101,6 +127,23 @@ class VisualQrPlacement {
       forwardMeters: number('forward_m'),
       upMeters: number('up_m'),
       facingDegrees: number('facing_deg'),
+      offlineReferencePng: map['offline_reference_png'] is Uint8List
+          ? map['offline_reference_png'] as Uint8List
+          : null,
+      offlineReferenceWidthMeters:
+          (map['offline_reference_width_m'] as num?)?.toDouble(),
+      offlineStartOffsetX:
+          (map['offline_start_offset_x'] as num?)?.toDouble(),
+      offlineStartOffsetY:
+          (map['offline_start_offset_y'] as num?)?.toDouble(),
+      offlineStartOffsetZ:
+          (map['offline_start_offset_z'] as num?)?.toDouble(),
+      offlineStartForwardX:
+          (map['offline_start_forward_x'] as num?)?.toDouble(),
+      offlineStartForwardY:
+          (map['offline_start_forward_y'] as num?)?.toDouble(),
+      offlineStartForwardZ:
+          (map['offline_start_forward_z'] as num?)?.toDouble(),
     );
   }
 }
