@@ -221,6 +221,14 @@ class ArPoseService {
     double? visualAnchorWidthMeters,
     String? visualAnchorLabel,
     double? visualAnchorRouteOffsetDegrees,
+    Uint8List? offlineReferencePng,
+    double? offlineReferenceWidthMeters,
+    double? offlineStartOffsetX,
+    double? offlineStartOffsetY,
+    double? offlineStartOffsetZ,
+    double? offlineStartForwardX,
+    double? offlineStartForwardY,
+    double? offlineStartForwardZ,
   }) async {
     if (!platformSupported) return 'ANDROID_ONLY';
     return await _native.invokeMethod<String>(
@@ -239,6 +247,22 @@ class ArPoseService {
             if (visualAnchorRouteOffsetDegrees != null)
               'visual_anchor_route_offset_deg':
                   visualAnchorRouteOffsetDegrees,
+            if (offlineReferencePng != null)
+              'offline_reference_png': offlineReferencePng,
+            if (offlineReferenceWidthMeters != null)
+              'offline_reference_width_m': offlineReferenceWidthMeters,
+            if (offlineStartOffsetX != null)
+              'offline_start_offset_x': offlineStartOffsetX,
+            if (offlineStartOffsetY != null)
+              'offline_start_offset_y': offlineStartOffsetY,
+            if (offlineStartOffsetZ != null)
+              'offline_start_offset_z': offlineStartOffsetZ,
+            if (offlineStartForwardX != null)
+              'offline_start_forward_x': offlineStartForwardX,
+            if (offlineStartForwardY != null)
+              'offline_start_forward_y': offlineStartForwardY,
+            if (offlineStartForwardZ != null)
+              'offline_start_forward_z': offlineStartForwardZ,
           },
         ) ??
         'UNKNOWN';
