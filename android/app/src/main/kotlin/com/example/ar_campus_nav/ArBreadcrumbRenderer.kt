@@ -52,6 +52,7 @@ class ArBreadcrumbRenderer {
         worldPoints: List<FloatArray>,
         activeIndex: Int,
         userWorldPoint: FloatArray? = null,
+        startAnchorWorldPoint: FloatArray? = null,
     ) {
         if (program == 0 || worldPoints.isEmpty()) return
 
@@ -106,6 +107,31 @@ class ArBreadcrumbRenderer {
             0,
             buffer,
         )
+
+        // The saved start QR is normally above the walking ribbon.
+        // A subtle vertical tether makes the QR -> original route connection
+        // immediately visible without shifting route points up to QR height.
+        if (startAnchorWorldPoint != null && worldPoints.isNotEmpty()) {
+            val tetherBuffer = verticalStartTether(
+                camera = camera,
+                qrCenter = startAnchorWorldPoint,
+                routeStart = worldPoints.first(),
+            )
+            if (tetherBuffer != null) {
+                GLES20.glVertexAttribPointer(
+                    positionAttrib, 3, GLES20.GL_FLOAT, false, 0, tetherBuffer,
+                )
+                GLES20.glUniform4f(colorUniform, 0.35f, 0.98f, 0.91f, 0.74f)
+                GLES20.glUniform1i(pointModeUniform, 0)
+                GLES20.glDrawArrays(
+                    GLES20.GL_TRIANGLES, 0, tetherBuffer.limit() / 3,
+                )
+                buffer.position(0)
+                GLES20.glVertexAttribPointer(
+                    positionAttrib, 3, GLES20.GL_FLOAT, false, 0, buffer,
+                )
+            }
+        }
 
         // Live connector: makes the route visibly begin at the user's
         // current horizontal ARCore position instead of appearing to spawn
@@ -257,6 +283,32 @@ class ArBreadcrumbRenderer {
 
         GLES20.glDisableVertexAttribArray(positionAttrib)
         GLES20.glDisable(GLES20.GL_BLEND)
+    }
+
+    private fun verticalStartTether(
+        camera: Camera,
+        qrCenter: FloatArray,
+        routeStart: FloatArray,
+    ): FloatBuffer? {
+        if (kotlin.math.abs(qrCenter[1] - routeStart[1]) < 0.1f) return null
+        val cameraPosition = camera.pose.translation
+        val dx = qrCenter[0] - cameraPosition[0]
+        val dz = qrCenter[2] - cameraPosition[2]
+        val length = kotlin.math.sqrt(dx * dx + dz * dz)
+        if (length < 0.01f) return null
+        val ox = -dz / length * 0.048f
+        val oz = dx / length * 0.048f
+        return floatBuffer(
+            floatArrayOf(
+                qrCenter[0] + ox, qrCenter[1], qrCenter[2] + oz,
+                qrCenter[0] - ox, qrCenter[1], qrCenter[2] - oz,
+                routeStart[0] + ox, routeStart[1], routeStart[2] + oz,
+
+                routeStart[0] + ox, routeStart[1], routeStart[2] + oz,
+                qrCenter[0] - ox, qrCenter[1], qrCenter[2] - oz,
+                routeStart[0] - ox, routeStart[1], routeStart[2] - oz,
+            ),
+        )
     }
 
     // Produces 2 horizontal triangles per segment. Each segment has a
