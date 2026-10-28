@@ -80,6 +80,13 @@ class ArCoreTrackingEngine(
     private var qrPlacementWidthMeters = 0.16f
     private var qrPlacementCompletion: ((Map<String, Any>?) -> Unit)? = null
 
+    // Once PLACE QR HERE is confirmed, the start marker becomes a real ARCore
+    // Anchor. From that point on its pose is no longer derived from the live
+    // camera, and the mapping frame is rebased to this anchor.
+    private var mappingStartWorldAnchor: Anchor? = null
+    private var mappingStartQrVisible = false
+    private var mappingStartQrWidthMeters = 0.16f
+
     // Physical start QR localization for mapping. The image database is loaded
     // before the ARCore session starts, then the mapper camera waits for this
     // real-world QR and uses its measured center + outward normal as the
@@ -591,47 +598,40 @@ class ArCoreTrackingEngine(
         if (!qrPlacementRequested) return
         qrPlacementRequested = false
 
-        val origin = trackingOriginPosition ?: run {
+        val activeSession = session ?: run {
             mainHandler.post {
                 qrPlacementStatusText?.text =
-                    "Mapping origin is unavailable. Cancel and restart mapping."
+                    "ARCore session is unavailable. Cancel and restart mapping."
             }
             return
         }
 
-        val targetPose = Pose.makeTranslation(
-            center[0],
-            center[1],
-            center[2],
-        )
-        val local = localPosition(
-            pose = targetPose,
-            origin = origin,
-            forwardX = trackingForwardX,
-            forwardZ = trackingForwardZ,
-            rightX = trackingRightX,
-            rightZ = trackingRightZ,
+        val anchorPose = horizontalPoseFromForward(
+            position = center,
+            forwardX = outwardX,
+            forwardZ = outwardZ,
         )
 
-        val forwardComponent =
-            outwardX * trackingForwardX + outwardZ * trackingForwardZ
-        val rightComponent =
-            outwardX * trackingRightX + outwardZ * trackingRightZ
+        releaseMappingStartAnchor()
+        mappingStartWorldAnchor = activeSession.createAnchor(anchorPose)
+        mappingStartQrVisible = true
+        mappingStartQrWidthMeters = qrPlacementWidthMeters
 
-        var facingDegrees = (
-            atan2(rightComponent, forwardComponent) *
-                180.0 /
-                Math.PI
-            ).toFloat()
-        facingDegrees %= 360f
-        if (facingDegrees < 0f) facingDegrees += 360f
+        // This anchor is now the mapping coordinate frame itself.
+        trackingOriginPosition = anchorPose.translation.copyOf()
+        trackingForwardX = outwardX
+        trackingForwardZ = outwardZ
+        trackingRightX = -trackingForwardZ
+        trackingRightZ = trackingForwardX
 
+        // Because we just rebased the frame to this marker, the start marker
+        // is exactly local origin with verified facing 0 degrees.
         finishQrPlacement(
             mapOf(
-                "right_m" to local.right.toDouble(),
-                "forward_m" to local.forward.toDouble(),
-                "up_m" to local.up.toDouble(),
-                "facing_deg" to facingDegrees.toDouble(),
+                "right_m" to 0.0,
+                "forward_m" to 0.0,
+                "up_m" to 0.0,
+                "facing_deg" to 0.0,
             ),
         )
     }
@@ -673,12 +673,42 @@ class ArCoreTrackingEngine(
                 gravity = Gravity.BOTTOM or Gravity.END
             }
 
-            qrPlacementRenderer.setBitmap(null)
-            qrPlacementBitmap?.recycle()
-            qrPlacementBitmap = null
+            if (!mappingStartQrVisible) {
+                qrPlacementRenderer.setBitmap(null)
+                qrPlacementBitmap?.recycle()
+                qrPlacementBitmap = null
+            }
 
             callback?.invoke(payload)
         }
+    }
+
+    private fun drawLockedMappingStartQr(
+        camera: com.google.ar.core.Camera,
+    ) {
+        val anchor = mappingStartWorldAnchor ?: return
+        if (anchor.trackingState != TrackingState.TRACKING) return
+
+        val pose = anchor.pose
+        val rightAxis = pose.getTransformedAxis(0, 1f)
+        val upAxis = floatArrayOf(0f, 1f, 0f)
+
+        qrPlacementRenderer.draw(
+            camera = camera,
+            center = pose.translation,
+            rightAxis = rightAxis,
+            upAxis = upAxis,
+            sizeMeters = mappingStartQrWidthMeters,
+        )
+    }
+
+    private fun releaseMappingStartAnchor() {
+        try {
+            mappingStartWorldAnchor?.detach()
+        } catch (_: Exception) {
+        }
+        mappingStartWorldAnchor = null
+        mappingStartQrVisible = false
     }
 
     fun pause() {
@@ -729,6 +759,7 @@ class ArCoreTrackingEngine(
         qrPlacementMode = false
         qrPlacementRequested = false
         qrPlacementTrackingReady = false
+        releaseMappingStartAnchor()
         surfaceView = null
 
         val removeViews = Runnable {
@@ -829,7 +860,12 @@ class ArCoreTrackingEngine(
             val frame = activeSession.update()
             val camera = frame.camera
 
-            if (navigationMode || qrPlacementMode || mappingVisualAnchorEnabled) {
+            if (
+                navigationMode ||
+                qrPlacementMode ||
+                mappingVisualAnchorEnabled ||
+                mappingStartQrVisible
+            ) {
                 backgroundRenderer.draw(frame, cameraTextureId)
             }
 
@@ -866,6 +902,10 @@ class ArCoreTrackingEngine(
 
             val currentPose = camera.pose
             latestCameraPose = currentPose
+
+            if (!navigationMode && mappingStartQrVisible && !qrPlacementMode) {
+                drawLockedMappingStartQr(camera)
+            }
 
             if (qrPlacementMode) {
                 setQrPlacementTrackingReady(true)
