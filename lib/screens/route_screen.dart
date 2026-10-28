@@ -201,9 +201,11 @@ class _RouteScreenState extends State<RouteScreen> {
               label: Text(
                 anchor == null
                     ? 'START AR MANUAL PREVIEW'
-                    : anchor.visualPoseReady
-                        ? 'START AR & LOCK QR'
-                        : 'START AR + MANUAL ALIGN',
+                    : anchor.offlineVisualReady
+                        ? 'START AR & FIND START'
+                        : anchor.visualPoseReady
+                            ? 'START AR & LOCK QR'
+                            : 'START AR + MANUAL ALIGN',
               ),
               style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 15),
@@ -270,9 +272,11 @@ class _RouteScreenState extends State<RouteScreen> {
                 : 'Start at ${start.label}',
             subtitle: anchor == null
                 ? 'Start point selected manually.'
-                : anchor.visualPoseReady
-                    ? 'AR camera will confirm this visual QR pose.'
-                    : 'Legacy QR start; direction still needs calibration.',
+                : anchor.offlineVisualReady
+                    ? 'AR will recognize the saved entrance scene offline.'
+                    : anchor.visualPoseReady
+                        ? 'AR camera will confirm this visual QR pose.'
+                        : 'Legacy QR start; direction still needs calibration.',
             isLast: route.legs.isEmpty,
           ),
           for (var stepIndex = 0;
@@ -341,33 +345,39 @@ class _SpatialAlignmentCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final value = anchor;
+    final offlineReady = value?.offlineVisualReady ?? false;
     final visualReady = value?.visualPoseReady ?? false;
     final hasAnchor = value != null;
 
-    final title = visualReady
-        ? 'VISUAL QR LOCALIZATION'
-        : hasAnchor
-            ? 'LEGACY QR + MANUAL DIRECTION'
-            : 'MANUAL PREVIEW MODE';
-    final color = visualReady
+    final title = offlineReady
+        ? 'OFFLINE VISUAL START'
+        : visualReady
+            ? 'VISUAL QR LOCALIZATION'
+            : hasAnchor
+                ? 'LEGACY QR + MANUAL DIRECTION'
+                : 'MANUAL PREVIEW MODE';
+    final color = offlineReady || visualReady
         ? const Color(0xFF3DDC97)
         : const Color(0xFFF9C74F);
 
-    final message = visualReady
-        ? 'Expected QR: ${value!.label}. Open AR and point the camera at that '
-            'physical 16 cm marker. ARCore will lock both position and '
-            'direction from the marker pose.'
-        : hasAnchor
-            ? 'The QR identifies ${value.label}, but this older anchor has no '
-                'verified installation facing. Navigation falls back to the '
-                '2–3 m direction walk.'
-            : 'No physical anchor is selected. AR assumes you are standing '
-                'exactly on the selected map start and uses manual alignment.';
+    final message = offlineReady
+        ? 'Saved start: ${value!.label}. Open AR near the mapped entrance and '
+            'look around the same detailed door/sign/wall area. The app will '
+            'recognize it locally and respawn the virtual start QR.'
+        : visualReady
+            ? 'Expected QR: ${value!.label}. Open AR and point the camera at that '
+                'physical 16 cm marker. ARCore will lock both position and '
+                'direction from the marker pose.'
+            : hasAnchor
+                ? 'This older anchor has no offline entrance reference. '
+                    'Navigation falls back to manual alignment.'
+                : 'No anchor is selected. AR assumes you are standing exactly '
+                    'on the selected map start and uses manual alignment.';
 
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: visualReady
+        color: offlineReady || visualReady
             ? const Color(0x143DDC97)
             : const Color(0x14F9C74F),
         borderRadius: BorderRadius.circular(18),
@@ -377,9 +387,11 @@ class _SpatialAlignmentCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(
-            visualReady
-                ? Icons.center_focus_strong_rounded
-                : hasAnchor
+            offlineReady
+                ? Icons.visibility_rounded
+                : visualReady
+                    ? Icons.center_focus_strong_rounded
+                    : hasAnchor
                     ? Icons.qr_code_2_rounded
                     : Icons.science_outlined,
             color: color,
