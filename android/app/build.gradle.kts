@@ -1,5 +1,11 @@
 import java.util.Properties
 
+plugins {
+    id("com.android.application")
+    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    id("dev.flutter.flutter-gradle-plugin")
+}
+
 val localProperties = Properties().apply {
     val file = rootProject.file("local.properties")
     if (file.exists()) {
@@ -7,13 +13,6 @@ val localProperties = Properties().apply {
     }
 }
 val arCoreApiKey = localProperties.getProperty("ARCORE_API_KEY", "")
-
-plugins {
-    id("com.android.application")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
-    id("dev.flutter.flutter-gradle-plugin")
-}
-
 android {
     namespace = "com.example.ar_campus_nav"
     compileSdk = flutter.compileSdkVersion
