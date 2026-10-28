@@ -1263,7 +1263,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                 ),
                 SizedBox(height: 10),
                 Text(
-                  'Map now. Bind a QR when ready.',
+                  'Place the start, then walk.',
                   style: TextStyle(
                     fontSize: 25,
                     fontWeight: FontWeight.w900,
@@ -1271,9 +1271,9 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                 ),
                 SizedBox(height: 8),
                 Text(
-                  'ARCore can record a brand-new path immediately from a '
-                  'provisional entrance. A deployed QR can be scanned when '
-                  'you want persistent one-scan localization.',
+                  'ARCore locks a virtual start marker into the real world. '
+                  'The walked path and destination are recorded relative to '
+                  'that fixed start.',
                   style: TextStyle(color: Colors.white60, height: 1.45),
                 ),
               ],
@@ -1288,13 +1288,13 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                   key: ValueKey(_startAnchor?.id),
                   initialValue: _startAnchor?.id,
                   decoration: const InputDecoration(
-                    labelText: 'Start location / entrance',
+                    labelText: 'Start location',
                     prefixIcon: Icon(Icons.qr_code_2_rounded),
                   ),
                   items: [
                     const DropdownMenuItem<String?>(
                       value: null,
-                      child: Text('Create a new provisional start'),
+                      child: Text('Create new start'),
                     ),
                     for (final anchor in widget.venue.anchors)
                       DropdownMenuItem<String?>(
