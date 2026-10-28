@@ -327,7 +327,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       });
       _persistentHostError = null;
       _persistentStartAnchorId = null;
-      _persistentHostFuture = _ar.hostPersistentStartAnchor(ttlDays: 7);
+      _persistentHostFuture = _ar.hostPersistentStartAnchor(ttlDays: 1);
       unawaited(
         _persistentHostFuture!.then((cloudId) {
           if (!mounted) return;
