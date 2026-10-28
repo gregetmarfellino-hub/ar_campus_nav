@@ -309,19 +309,23 @@ class _RouteScreenState extends State<RouteScreen> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    anchor?.visualPoseReady == true
-                        ? 'Point the AR camera at the deployed 16 cm QR. '
-                            'ARCore will measure its physical position and '
-                            'orientation directly; no 2–3 m calibration walk '
-                            'is required.'
-                        : anchor != null
-                            ? 'This is a legacy position-only QR. ARCore still '
-                                'needs the manual 2–3 m direction calibration. '
-                                'Re-map the anchor with visual facing to remove '
-                                'that step.'
-                            : 'Manual preview assumes you are physically at the '
-                                'selected start and still requires the 2–3 m '
-                                'direction calibration.',
+                    anchor?.offlineVisualReady == true
+                        ? 'Look around the mapped entrance and aim at the same '
+                            'detailed door/sign/wall area saved during mapping. '
+                            'The app will recognize it fully offline and respawn '
+                            'the virtual start QR at the original pose.'
+                        : anchor?.visualPoseReady == true
+                            ? 'Point the AR camera at the deployed 16 cm QR. '
+                                'ARCore will measure its physical position and '
+                                'orientation directly; no 2–3 m calibration walk '
+                                'is required.'
+                            : anchor != null
+                                ? 'This older route has no offline entrance '
+                                    'reference, so manual alignment remains as '
+                                    'a fallback.'
+                                : 'Manual preview assumes you are physically at '
+                                    'the selected start and still requires '
+                                    'manual alignment.',
                     style: const TextStyle(
                       color: Colors.white70,
                       height: 1.45,
@@ -472,9 +476,11 @@ class _AnchorCard extends StatelessWidget {
                 Text(
                   value == null
                       ? 'Manual preview start'
-                      : value.visualPoseReady
-                          ? 'Visual QR target'
-                          : 'Legacy QR start',
+                      : value.offlineVisualReady
+                          ? 'Offline visual start'
+                          : value.visualPoseReady
+                              ? 'Visual QR target'
+                              : 'Legacy QR start',
                   style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 2),
@@ -497,9 +503,11 @@ class _AnchorCard extends StatelessWidget {
             label: Text(
               value == null
                   ? 'SCAN LOCATION'
-                  : value.visualPoseReady
-                      ? 'SCANNER FALLBACK'
-                      : 'UPDATE LOCATION',
+                  : value.offlineVisualReady
+                      ? 'MANUAL FALLBACK'
+                      : value.visualPoseReady
+                          ? 'SCANNER FALLBACK'
+                          : 'UPDATE LOCATION',
             ),
           ),
         ],
