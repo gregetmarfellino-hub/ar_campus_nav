@@ -1338,26 +1338,7 @@ class ArCoreTrackingEngine(
                 if (qrPlacementMode) {
                     setQrPlacementTrackingReady(false)
                 }
-                if (navigationOfflineEnabled) {
-            val bitmap = navigationOfflineReferenceBitmap
-            if (bitmap != null) {
-                try {
-                    database.addImage(
-                        navigationOfflineImageName,
-                        bitmap,
-                        navigationOfflineReferenceWidthMeters,
-                    )
-                    added = true
-                } catch (error: Exception) {
-                    navigationOfflineEnabled = false
-                    navigationVisualSetupWarning =
-                        "Offline start reference could not be registered: " +
-                            error.javaClass.simpleName
-                }
-            }
-        }
-
-        if (mappingVisualAnchorEnabled) {
+                if (mappingVisualAnchorEnabled) {
                     setMappingVisualHud(
                         "TRACKING PAUSED — move slowly until ARCore recovers.",
                     )
@@ -1946,6 +1927,25 @@ class ArCoreTrackingEngine(
     ) {
         val database = AugmentedImageDatabase(activeSession)
         var added = false
+
+        if (navigationOfflineEnabled) {
+            val bitmap = navigationOfflineReferenceBitmap
+            if (bitmap != null) {
+                try {
+                    database.addImage(
+                        navigationOfflineImageName,
+                        bitmap,
+                        navigationOfflineReferenceWidthMeters,
+                    )
+                    added = true
+                } catch (error: Exception) {
+                    navigationOfflineEnabled = false
+                    navigationVisualSetupWarning =
+                        "Offline start reference could not be registered: " +
+                            error.javaClass.simpleName
+                }
+            }
+        }
 
         if (navigationVisualAnchorEnabled) {
             val bitmap = navigationVisualAnchorBitmap
