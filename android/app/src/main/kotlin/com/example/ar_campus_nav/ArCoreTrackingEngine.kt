@@ -200,6 +200,18 @@ class ArCoreTrackingEngine(
     private var navigationOfflineForwardZ = 0f
     private val navigationOfflineSamplesRequired = 5
     private val navigationOfflineImageName = "ar_nav_offline_start"
+    private val navigationOfflineExtraImageName = "ar_nav_offline_start_extra"
+    private data class OfflineExtraReference(
+        val bitmap: Bitmap,
+        val widthMeters: Float,
+        val offsetX: Float,
+        val offsetY: Float,
+        val offsetZ: Float,
+        val forwardX: Float,
+        val forwardY: Float,
+        val forwardZ: Float,
+    )
+    private var navigationOfflineExtraReference: OfflineExtraReference? = null
     private var navigationStartMarkerBitmap: Bitmap? = null
 
     // Pass 8.5 robust alignment.
@@ -307,6 +319,7 @@ class ArCoreTrackingEngine(
         offlineStartForwardX: Float? = null,
         offlineStartForwardY: Float? = null,
         offlineStartForwardZ: Float? = null,
+        offlineExtraReferenceJson: String? = null,
     ): String {
         if (points.size < 2) return "ROUTE_TOO_SHORT"
 
@@ -330,6 +343,7 @@ class ArCoreTrackingEngine(
         )
 
         if (offlineReady) {
+            configureOfflineExtraReference(offlineExtraReferenceJson)
             clearVisualAnchorConfiguration()
             navigationStartMarkerBitmap?.recycle()
             navigationStartMarkerBitmap =
@@ -1441,7 +1455,21 @@ class ArCoreTrackingEngine(
                 if (qrPlacementMode) {
                     setQrPlacementTrackingReady(false)
                 }
-                if (mappingVisualAnchorEnabled) {
+                navigationOfflineExtraReference?.let { extra ->
+            try {
+                database.addImage(
+                    navigationOfflineExtraImageName,
+                    extra.bitmap,
+                    extra.widthMeters,
+                )
+                added = true
+            } catch (_: Exception) {
+                // The primary reference still works even if a second patch
+                // is not distinctive enough for ARCore to register.
+            }
+        }
+
+        if (mappingVisualAnchorEnabled) {
                     setMappingVisualHud(
                         "TRACKING PAUSED — move slowly until ARCore recovers.",
                     )
@@ -1848,7 +1876,41 @@ class ArCoreTrackingEngine(
         return true
     }
 
+    private fun configureOfflineExtraReference(json: String?) {
+        navigationOfflineExtraReference?.bitmap?.recycle()
+        navigationOfflineExtraReference = null
+        if (json.isNullOrBlank()) return
+        try {
+            val objectData = JSONObject(json)
+            val bytes = Base64.decode(
+                objectData.getString("png_b64"),
+                Base64.DEFAULT,
+            )
+            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                ?: return
+            val width = objectData.getDouble("offline_reference_width_m").toFloat()
+            if (!width.isFinite() || width <= 0.05f || width > 4f) {
+                bitmap.recycle()
+                return
+            }
+            navigationOfflineExtraReference = OfflineExtraReference(
+                bitmap = bitmap,
+                widthMeters = width,
+                offsetX = objectData.getDouble("offline_start_offset_x").toFloat(),
+                offsetY = objectData.getDouble("offline_start_offset_y").toFloat(),
+                offsetZ = objectData.getDouble("offline_start_offset_z").toFloat(),
+                forwardX = objectData.getDouble("offline_start_forward_x").toFloat(),
+                forwardY = objectData.getDouble("offline_start_forward_y").toFloat(),
+                forwardZ = objectData.getDouble("offline_start_forward_z").toFloat(),
+            )
+        } catch (_: Exception) {
+            // Invalid optional metadata must never break the primary reference.
+        }
+    }
+
     private fun clearOfflineVisualStartConfiguration() {
+        navigationOfflineExtraReference?.bitmap?.recycle()
+        navigationOfflineExtraReference = null
         navigationOfflineReferenceBitmap?.recycle()
         navigationOfflineReferenceBitmap = null
         navigationOfflineReferenceWidthMeters = 0f
@@ -1880,7 +1942,9 @@ class ArCoreTrackingEngine(
         val target = activeSession
             .getAllTrackables(AugmentedImage::class.java)
             .firstOrNull { image ->
-                image.name == navigationOfflineImageName &&
+                (image.name == navigationOfflineImageName ||
+                    (navigationOfflineExtraReference != null &&
+                        image.name == navigationOfflineExtraImageName)) &&
                     image.trackingState == TrackingState.TRACKING &&
                     image.trackingMethod ==
                         AugmentedImage.TrackingMethod.FULL_TRACKING
@@ -1895,6 +1959,17 @@ class ArCoreTrackingEngine(
             }
 
         val pose = target.centerPose
+        val extra = if (target.name == navigationOfflineExtraImageName) {
+            navigationOfflineExtraReference
+        } else {
+            null
+        }
+        val startOffsetX = extra?.offsetX ?: navigationOfflineStartOffsetX
+        val startOffsetY = extra?.offsetY ?: navigationOfflineStartOffsetY
+        val startOffsetZ = extra?.offsetZ ?: navigationOfflineStartOffsetZ
+        val startForwardX = extra?.forwardX ?: navigationOfflineStartForwardX
+        val startForwardY = extra?.forwardY ?: navigationOfflineStartForwardY
+        val startForwardZ = extra?.forwardZ ?: navigationOfflineStartForwardZ
         val xAxis = pose.getTransformedAxis(0, 1f)
         val yAxis = pose.getTransformedAxis(1, 1f)
         val zAxis = pose.getTransformedAxis(2, 1f)
@@ -1902,28 +1977,28 @@ class ArCoreTrackingEngine(
 
         val startX =
             center[0] +
-                xAxis[0] * navigationOfflineStartOffsetX +
-                yAxis[0] * navigationOfflineStartOffsetY +
-                zAxis[0] * navigationOfflineStartOffsetZ
+                xAxis[0] * startOffsetX +
+                yAxis[0] * startOffsetY +
+                zAxis[0] * startOffsetZ
         val startY =
             center[1] +
-                xAxis[1] * navigationOfflineStartOffsetX +
-                yAxis[1] * navigationOfflineStartOffsetY +
-                zAxis[1] * navigationOfflineStartOffsetZ
+                xAxis[1] * startOffsetX +
+                yAxis[1] * startOffsetY +
+                zAxis[1] * startOffsetZ
         val startZ =
             center[2] +
-                xAxis[2] * navigationOfflineStartOffsetX +
-                yAxis[2] * navigationOfflineStartOffsetY +
-                zAxis[2] * navigationOfflineStartOffsetZ
+                xAxis[2] * startOffsetX +
+                yAxis[2] * startOffsetY +
+                zAxis[2] * startOffsetZ
 
         val forwardWorldX =
-            xAxis[0] * navigationOfflineStartForwardX +
-                yAxis[0] * navigationOfflineStartForwardY +
-                zAxis[0] * navigationOfflineStartForwardZ
+            xAxis[0] * startForwardX +
+                yAxis[0] * startForwardY +
+                zAxis[0] * startForwardZ
         val forwardWorldZ =
-            xAxis[2] * navigationOfflineStartForwardX +
-                yAxis[2] * navigationOfflineStartForwardY +
-                zAxis[2] * navigationOfflineStartForwardZ
+            xAxis[2] * startForwardX +
+                yAxis[2] * startForwardY +
+                zAxis[2] * startForwardZ
         val horizontalLength = sqrt(
             forwardWorldX * forwardWorldX +
                 forwardWorldZ * forwardWorldZ,
