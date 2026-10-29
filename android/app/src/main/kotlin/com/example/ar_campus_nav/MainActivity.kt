@@ -112,6 +112,8 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                         (call.argument<Number>("offline_start_forward_y"))?.toFloat()
                     val offlineStartForwardZ =
                         (call.argument<Number>("offline_start_forward_z"))?.toFloat()
+                    val offlineExtraReferenceJson =
+                        call.argument<String>("offline_extra_reference_json")
                     val rawPoints =
                         call.argument<List<Map<String, Any?>>>("points") ?: emptyList()
 
@@ -150,6 +152,7 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                             offlineStartForwardX = offlineStartForwardX,
                             offlineStartForwardY = offlineStartForwardY,
                             offlineStartForwardZ = offlineStartForwardZ,
+                            offlineExtraReferenceJson = offlineExtraReferenceJson,
                         ),
                     )
                 }
