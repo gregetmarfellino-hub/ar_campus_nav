@@ -869,6 +869,7 @@ class ArCoreTrackingEngine(
             cameraPosition[2] + cameraForward[2] * distance,
         )
 
+        var snappedWallNormal: FloatArray? = null
         if (qrPlacementSnapToSurface) {
             val view = surfaceView ?: return
             val hit = findPlaneHit(
@@ -910,6 +911,16 @@ class ArCoreTrackingEngine(
                     cameraPosition[2] - center[2],
                 )
                 val sign = if (dotVector(normal, towardCamera) >= 0f) 1f else -1f
+                val horizontalLength = sqrt(
+                    normal[0] * normal[0] + normal[2] * normal[2],
+                )
+                if (horizontalLength > 0.1f) {
+                    snappedWallNormal = floatArrayOf(
+                        normal[0] * sign / horizontalLength,
+                        0f,
+                        normal[2] * sign / horizontalLength,
+                    )
+                }
                 center[0] += normal[0] * sign * 0.02f
                 center[1] += normal[1] * sign * 0.02f
                 center[2] += normal[2] * sign * 0.02f
@@ -919,8 +930,10 @@ class ArCoreTrackingEngine(
         // Keep the QR upright regardless of phone pitch/roll. Its outward
         // normal faces back toward the user at placement time.
         val horizontal = horizontalForward(currentPose)
-        val outwardX = -horizontal[0]
-        val outwardZ = -horizontal[2]
+        // Surface-snapped wall QRs face the actual wall normal, not whatever
+        // oblique viewing direction the phone happened to have at placement.
+        val outwardX = snappedWallNormal?.get(0) ?: -horizontal[0]
+        val outwardZ = snappedWallNormal?.get(2) ?: -horizontal[2]
         val rightAxis = floatArrayOf(outwardZ, 0f, -outwardX)
         val upAxis = floatArrayOf(0f, 1f, 0f)
 
