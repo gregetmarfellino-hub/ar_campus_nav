@@ -970,11 +970,11 @@ class ArCoreTrackingEngine(
                 currentPose.tz() - centerHit.hitPose.tz(),
             ),
         )
-        if (toCamera == null || abs(dotVector(yAxis, toCamera)) < 0.72f) {
+        if (toCamera == null || abs(dotVector(yAxis, toCamera)) < 0.94f) {
             return Pair(
                 null,
-                "FACE THE SURFACE MORE SQUARELY — avoid capturing the entrance " +
-                    "reference from a steep angle.",
+                "FACE THE SURFACE STRAIGHT ON — angled shots distort the " +
+                    "reference dimensions. Avoid diagonal captures.",
             )
         }
 
@@ -1012,8 +1012,8 @@ class ArCoreTrackingEngine(
             bitmap.recycle()
             return Pair(
                 null,
-                "NOT ENOUGH VISUAL DETAIL — choose something with edges/text/" +
-                    "patterns (door frame, sign, poster, tiles), not a blank wall.",
+                "NOT ENOUGH UNIQUE DETAIL — choose text, signs, or a unique " +
+                    "doorframe/door poster. Avoid repeating mosaic tiles.",
             )
         }
 
@@ -1030,11 +1030,12 @@ class ArCoreTrackingEngine(
             startPosition[1] - referenceCenter[1],
             startPosition[2] - referenceCenter[2],
         )
-        val startForwardWorld = floatArrayOf(
-            trackingForwardX,
-            0f,
-            trackingForwardZ,
-        )
+        // ARCore can refine an Anchor's pose after the original placement.
+        // Preserve the forward vector from the LIVE anchored pose, not the
+        // initial trackingForwardX/Z snapshot captured when QR was placed.
+        // Otherwise the visual-reference -> start transform can disagree
+        // with the QR's actual stabilized orientation by several degrees.
+        val startForwardWorld = startAnchor.pose.getTransformedAxis(2, -1f)
 
         return Pair(
             mapOf(
