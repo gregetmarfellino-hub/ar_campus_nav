@@ -72,6 +72,8 @@ class VenueCodec {
               'offline_visual_start_forward_y': anchor.offlineVisualStartForwardY,
             if (anchor.offlineVisualStartForwardZ != null)
               'offline_visual_start_forward_z': anchor.offlineVisualStartForwardZ,
+            if (anchor.offlineExtraReferenceJson != null)
+              'offline_extra_reference_json': anchor.offlineExtraReferenceJson,
           },
       ],
     };
