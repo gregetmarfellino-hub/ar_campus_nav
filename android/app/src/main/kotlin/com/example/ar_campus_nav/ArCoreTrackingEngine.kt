@@ -1973,6 +1973,45 @@ class ArCoreTrackingEngine(
         navigationOfflineMaxCameraBaseline = 0f
     }
 
+    private data class OfflineStartEstimate(
+        val x: Float,
+        val y: Float,
+        val z: Float,
+        val forwardX: Float,
+        val forwardZ: Float,
+    )
+
+    private fun estimateOfflineStart(image: AugmentedImage): OfflineStartEstimate? {
+        val extra = if (image.name == navigationOfflineExtraImageName) {
+            navigationOfflineExtraReference ?: return null
+        } else {
+            null
+        }
+        val dx = extra?.offsetX ?: navigationOfflineStartOffsetX
+        val dy = extra?.offsetY ?: navigationOfflineStartOffsetY
+        val dz = extra?.offsetZ ?: navigationOfflineStartOffsetZ
+        val forwardX = extra?.forwardX ?: navigationOfflineStartForwardX
+        val forwardY = extra?.forwardY ?: navigationOfflineStartForwardY
+        val forwardZ = extra?.forwardZ ?: navigationOfflineStartForwardZ
+
+        val pose = image.centerPose
+        val xAxis = pose.getTransformedAxis(0, 1f)
+        val yAxis = pose.getTransformedAxis(1, 1f)
+        val zAxis = pose.getTransformedAxis(2, 1f)
+        val center = pose.translation
+        val resultX = center[0] + xAxis[0] * dx + yAxis[0] * dy + zAxis[0] * dz
+        val resultY = center[1] + xAxis[1] * dx + yAxis[1] * dy + zAxis[1] * dz
+        val resultZ = center[2] + xAxis[2] * dx + yAxis[2] * dy + zAxis[2] * dz
+        val worldFx = xAxis[0] * forwardX + yAxis[0] * forwardY + zAxis[0] * forwardZ
+        val worldFz = xAxis[2] * forwardX + yAxis[2] * forwardY + zAxis[2] * forwardZ
+        val length = sqrt(worldFx * worldFx + worldFz * worldFz)
+        if (length < 0.2f || !length.isFinite()) return null
+        if (!resultX.isFinite() || !resultY.isFinite() || !resultZ.isFinite()) return null
+        return OfflineStartEstimate(
+            x = resultX, y = resultY, z = resultZ,
+            forwardX = worldFx / length, forwardZ = worldFz / length,
+        )
+    }
     private fun tryLockOfflineVisualStart(
         activeSession: Session,
         currentCameraPose: Pose,
@@ -1980,78 +2019,60 @@ class ArCoreTrackingEngine(
     ): Boolean {
         if (!navigationOfflineEnabled || navigationAligned) return false
 
-        val target = activeSession
+        val observed = activeSession
             .getAllTrackables(AugmentedImage::class.java)
-            .firstOrNull { image ->
+            .filter { image ->
                 (image.name == navigationOfflineImageName ||
                     (navigationOfflineExtraReference != null &&
                         image.name == navigationOfflineExtraImageName)) &&
                     image.trackingState == TrackingState.TRACKING &&
-                    image.trackingMethod ==
-                        AugmentedImage.TrackingMethod.FULL_TRACKING
+                    image.trackingMethod == AugmentedImage.TrackingMethod.FULL_TRACKING
             }
+        // Prefer the primary reference when both are observed so the chosen
+        // coordinate frame never depends on collection iteration order.
+        val target = observed.firstOrNull { it.name == navigationOfflineImageName }
+            ?: observed.firstOrNull()
             ?: run {
                 resetOfflineVisualSamples()
                 setNavigationHud(
-                    "FINDING START — look around the mapped entrance. Aim at " +
-                        "the same detailed door/sign/wall area saved during mapping.",
+                    "FINDING START — look at the saved distinctive entrance " +
+                        "detail (sign/doorframe), not repeating tiles.",
                 )
                 return false
             }
 
-        val pose = target.centerPose
-        val extra = if (target.name == navigationOfflineExtraImageName) {
-            navigationOfflineExtraReference
-        } else {
-            null
-        }
-        val startOffsetX = extra?.offsetX ?: navigationOfflineStartOffsetX
-        val startOffsetY = extra?.offsetY ?: navigationOfflineStartOffsetY
-        val startOffsetZ = extra?.offsetZ ?: navigationOfflineStartOffsetZ
-        val startForwardX = extra?.forwardX ?: navigationOfflineStartForwardX
-        val startForwardY = extra?.forwardY ?: navigationOfflineStartForwardY
-        val startForwardZ = extra?.forwardZ ?: navigationOfflineStartForwardZ
-        val xAxis = pose.getTransformedAxis(0, 1f)
-        val yAxis = pose.getTransformedAxis(1, 1f)
-        val zAxis = pose.getTransformedAxis(2, 1f)
-        val center = pose.translation
-
-        val startX =
-            center[0] +
-                xAxis[0] * startOffsetX +
-                yAxis[0] * startOffsetY +
-                zAxis[0] * startOffsetZ
-        val startY =
-            center[1] +
-                xAxis[1] * startOffsetX +
-                yAxis[1] * startOffsetY +
-                zAxis[1] * startOffsetZ
-        val startZ =
-            center[2] +
-                xAxis[2] * startOffsetX +
-                yAxis[2] * startOffsetY +
-                zAxis[2] * startOffsetZ
-
-        val forwardWorldX =
-            xAxis[0] * startForwardX +
-                yAxis[0] * startForwardY +
-                zAxis[0] * startForwardZ
-        val forwardWorldZ =
-            xAxis[2] * startForwardX +
-                yAxis[2] * startForwardY +
-                zAxis[2] * startForwardZ
-        val horizontalLength = sqrt(
-            forwardWorldX * forwardWorldX +
-                forwardWorldZ * forwardWorldZ,
-        )
-        if (horizontalLength < 0.20f) {
+        val estimate = estimateOfflineStart(target) ?: run {
             resetOfflineVisualSamples()
             return false
         }
+        val startX = estimate.x
+        val startY = estimate.y
+        val startZ = estimate.z
+        val fx = estimate.forwardX
+        val fz = estimate.forwardZ
 
-        val fx = forwardWorldX / horizontalLength
-        val fz = forwardWorldZ / horizontalLength
-
+        // When both independently saved scene patches are in view, they must
+        // reconstruct the SAME start pose. A plausible-looking but false
+        // image match must not swing the entire route into another direction.
+        val other = observed.firstOrNull { it.name != target.name }
+        if (other != null) {
+            val check = estimateOfflineStart(other)
+            if (check != null) {
+                val dx = startX - check.x
+                val dy = startY - check.y
+                val dz = startZ - check.z
+                val distance = sqrt(dx * dx + dy * dy + dz * dz)
+                val alignment = fx * check.forwardX + fz * check.forwardZ
+                if (distance > 0.18f || alignment < 0.991f) {
+                    resetOfflineVisualSamples()
+                    setNavigationHud(
+                        "START REFERENCES DISAGREE — move slowly toward a " +
+                            "unique sign/door detail; cannot safely lock route.",
+                    )
+                    return false
+                }
+            }
+        }
         if (navigationOfflineCandidateImageName != target.name) {
             resetOfflineVisualSamples()
             navigationOfflineCandidateImageName = target.name
