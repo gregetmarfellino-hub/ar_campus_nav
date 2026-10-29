@@ -209,6 +209,7 @@ class ArCoreTrackingEngine(
     private var navigationOfflineFirstCameraX = 0f
     private var navigationOfflineFirstCameraY = 0f
     private var navigationOfflineFirstCameraZ = 0f
+    private var navigationOfflineFirstCameraRight = floatArrayOf(1f, 0f, 0f)
     private var navigationOfflineMaxCameraBaseline = 0f
     private val navigationOfflineImageName = "ar_nav_offline_start"
     private val navigationOfflineExtraImageName = "ar_nav_offline_start_extra"
@@ -1970,6 +1971,7 @@ class ArCoreTrackingEngine(
         navigationOfflineFirstCameraX = 0f
         navigationOfflineFirstCameraY = 0f
         navigationOfflineFirstCameraZ = 0f
+        navigationOfflineFirstCameraRight = floatArrayOf(1f, 0f, 0f)
         navigationOfflineMaxCameraBaseline = 0f
     }
 
@@ -2107,6 +2109,8 @@ class ArCoreTrackingEngine(
             navigationOfflineFirstCameraX = currentCameraPose.tx()
             navigationOfflineFirstCameraY = currentCameraPose.ty()
             navigationOfflineFirstCameraZ = currentCameraPose.tz()
+            navigationOfflineFirstCameraRight =
+                currentCameraPose.getTransformedAxis(0, 1f)
         }
         if (frameTimestampNanos <= navigationOfflineLastSampleNanos) return false
         navigationOfflineLastSampleNanos = frameTimestampNanos
@@ -2117,8 +2121,13 @@ class ArCoreTrackingEngine(
         val cameraDx = currentCameraPose.tx() - navigationOfflineFirstCameraX
         val cameraDy = currentCameraPose.ty() - navigationOfflineFirstCameraY
         val cameraDz = currentCameraPose.tz() - navigationOfflineFirstCameraZ
-        val cameraBaseline = sqrt(
-            cameraDx * cameraDx + cameraDy * cameraDy + cameraDz * cameraDz,
+        // Measure sideways translation in the INITIAL camera-right axis;
+        // raising the phone or leaning toward the image does not count as
+        // independent parallax for this navigation lock.
+        val cameraBaseline = abs(
+            cameraDx * navigationOfflineFirstCameraRight[0] +
+                cameraDy * navigationOfflineFirstCameraRight[1] +
+                cameraDz * navigationOfflineFirstCameraRight[2],
         )
         navigationOfflineMaxCameraBaseline = maxOf(
             navigationOfflineMaxCameraBaseline, cameraBaseline,
