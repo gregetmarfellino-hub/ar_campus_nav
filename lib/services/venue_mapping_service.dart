@@ -316,6 +316,8 @@ class VenueMappingService {
           offlineVisualStartForwardZ:
               session.offlineVisualStartForwardZ ??
                   startAnchor.offlineVisualStartForwardZ,
+          offlineExtraReferenceJson: session.offlineExtraReferenceJson ??
+              startAnchor.offlineExtraReferenceJson,
         ),
       );
       usedAnchorIds.add(startAnchor.id);
@@ -378,6 +380,7 @@ class VenueMappingService {
             offlineVisualStartForwardX: session.offlineVisualStartForwardX,
             offlineVisualStartForwardY: session.offlineVisualStartForwardY,
             offlineVisualStartForwardZ: session.offlineVisualStartForwardZ,
+            offlineExtraReferenceJson: session.offlineExtraReferenceJson,
           ),
         );
       }
