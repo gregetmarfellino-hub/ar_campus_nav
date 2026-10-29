@@ -14,6 +14,7 @@ class AnchorPoint {
     this.offlineVisualStartForwardX,
     this.offlineVisualStartForwardY,
     this.offlineVisualStartForwardZ,
+    this.offlineExtraReferenceJson,
   });
 
   final String id;
@@ -34,6 +35,9 @@ class AnchorPoint {
   final double? offlineVisualStartForwardX;
   final double? offlineVisualStartForwardY;
   final double? offlineVisualStartForwardZ;
+
+  /// Optional second locally captured image reference (JSON, backward compatible).
+  final String? offlineExtraReferenceJson;
 
   bool get offlineVisualReady =>
       offlineVisualReferencePngBase64?.isNotEmpty == true &&
@@ -73,6 +77,7 @@ class AnchorPoint {
           (json['offline_visual_start_forward_y'] as num?)?.toDouble(),
       offlineVisualStartForwardZ:
           (json['offline_visual_start_forward_z'] as num?)?.toDouble(),
+      offlineExtraReferenceJson: json['offline_extra_reference_json'] as String?,
     );
   }
 }
