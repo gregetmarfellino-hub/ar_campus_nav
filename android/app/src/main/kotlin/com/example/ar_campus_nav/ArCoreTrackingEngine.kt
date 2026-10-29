@@ -1149,7 +1149,7 @@ class ArCoreTrackingEngine(
         if (anchor.trackingState != TrackingState.TRACKING) return
 
         val pose = anchor.pose
-        val rightAxis = pose.getTransformedAxis(0, 1f)
+        val rightAxis = pose.getTransformedAxis(0, -1f)
         val upAxis = floatArrayOf(0f, 1f, 0f)
 
         qrPlacementRenderer.draw(
@@ -1918,7 +1918,9 @@ class ArCoreTrackingEngine(
         qrPlacementRenderer.draw(
             camera = camera,
             center = pose.translation,
-            rightAxis = pose.getTransformedAxis(0, 1f),
+            // The preview uses -anchor.right so its QR front faces the user.
+            // Use the same billboard axis after locking/relocalizing.
+            rightAxis = pose.getTransformedAxis(0, -1f),
             upAxis = floatArrayOf(0f, 1f, 0f),
             sizeMeters = mappingStartQrWidthMeters.takeIf { it > 0f } ?: 0.16f,
         )
