@@ -141,6 +141,7 @@ class ArCoreTrackingEngine(
     // Fixed world height of the visible AR path. Estimated once at relocalization
     // from the actual phone pose; never tied to the floating QR's elevation.
     private var navigationRouteWorldY: Float? = null
+    private var navigationFloorTargetY: Float? = null
     private var navigationFloorVerified = false
     private var navigationForwardX = 0f
     private var navigationForwardZ = -1f
@@ -333,6 +334,7 @@ class ArCoreTrackingEngine(
         navigationAnchorLocalized = anchorLocalized
         navigationPoints = points
         navigationRouteWorldY = null
+        navigationFloorTargetY = null
         navigationFloorVerified = false
         navigationOfflineRescanRequested = false
 
@@ -1504,6 +1506,7 @@ class ArCoreTrackingEngine(
                 releaseNavigationAnchor()
                 navigationAligned = false
                 navigationRouteWorldY = null
+                navigationFloorTargetY = null
                 navigationFloorVerified = false
                 navigationArrivalShown = false
                 activeRouteIndex = 1
@@ -1657,8 +1660,21 @@ class ArCoreTrackingEngine(
                         cameraPose = currentPose,
                     )
                     if (floorY != null) {
-                        navigationRouteWorldY = floorY
+                        navigationFloorTargetY = floorY
                         navigationFloorVerified = true
+                    }
+                }
+                // Ease the ribbon onto the measured pavement height.
+                val targetFloor = navigationFloorTargetY
+                val currentFloor = navigationRouteWorldY
+                if (targetFloor != null && currentFloor != null) {
+                    val delta = targetFloor - currentFloor
+                    if (kotlin.math.abs(delta) <= 0.025f) {
+                        navigationRouteWorldY = targetFloor
+                        navigationFloorTargetY = null
+                    } else {
+                        navigationRouteWorldY = currentFloor +
+                            delta.coerceIn(-0.025f, 0.025f)
                     }
                 }
 
@@ -2111,6 +2127,7 @@ class ArCoreTrackingEngine(
         // when the phone moves later; future floor-plane support can refine it.
         val floorY = findTrackedNavigationFloor(activeSession, currentCameraPose)
         navigationFloorVerified = floorY != null
+        navigationFloorTargetY = null
         navigationRouteWorldY = floorY ?: (currentCameraPose.ty() - 1.35f)
 
         // startPose already encodes the recovered world heading. Route basis
