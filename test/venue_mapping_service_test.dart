@@ -4,6 +4,7 @@ import 'package:ar_campus_nav/models/mapping_session.dart';
 import 'package:ar_campus_nav/models/nav_node.dart';
 import 'package:ar_campus_nav/models/venue.dart';
 import 'package:ar_campus_nav/services/venue_mapping_service.dart';
+import 'package:ar_campus_nav/services/venue_codec.dart';
 
 void main() {
   const service = VenueMappingService();
@@ -221,6 +222,7 @@ void main() {
       offlineVisualStartForwardX: 0.0,
       offlineVisualStartForwardY: 0.0,
       offlineVisualStartForwardZ: -1.0,
+      offlineExtraReferenceJson: '{"png_b64":"Zg==","offline_reference_width_m":0.7}',
       originHeadingDegrees: 0,
       stepLengthMeters: 0,
       source: 'arcore_spatial',
@@ -265,6 +267,18 @@ void main() {
     expect(anchor.offlineVisualReferenceWidthMeters, closeTo(0.62, 1e-9));
     expect(anchor.offlineVisualStartOffsetX, closeTo(0.15, 1e-9));
     expect(anchor.offlineVisualStartOffsetZ, closeTo(-0.40, 1e-9));
+    expect(anchor.offlineExtraReferenceJson, contains('png_b64'));
+
+    // Both the recorded walk and the generated venue must preserve V2's
+    // optional extra patch so app restarts cannot silently discard it.
+    final restoredSession = MappingSession.fromJson(session.toJson());
+    expect(restoredSession.offlineExtraReferenceJson,
+        session.offlineExtraReferenceJson);
+    const codec = VenueCodec();
+    final roundTripVenue = codec.fromJson(codec.toJson(venue));
+    final restoredAnchor = roundTripVenue.anchorById('offline_start');
+    expect(restoredAnchor.offlineExtraReferenceJson,
+        anchor.offlineExtraReferenceJson);
   });
   test('visual QR marker at first point creates a pose-ready start anchor', () {
     final session = MappingSession(
