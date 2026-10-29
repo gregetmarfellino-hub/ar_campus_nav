@@ -141,6 +141,7 @@ class ArCoreTrackingEngine(
     // Fixed world height of the visible AR path. Estimated once at relocalization
     // from the actual phone pose; never tied to the floating QR's elevation.
     private var navigationRouteWorldY: Float? = null
+    private var navigationFloorVerified = false
     private var navigationForwardX = 0f
     private var navigationForwardZ = -1f
     private var navigationRightX = 1f
@@ -198,7 +199,10 @@ class ArCoreTrackingEngine(
     private var navigationOfflinePositionZ = 0f
     private var navigationOfflineForwardX = 0f
     private var navigationOfflineForwardZ = 0f
-    private val navigationOfflineSamplesRequired = 5
+    private val navigationOfflineSamplesRequired = 14
+    private var navigationOfflineCandidateImageName: String? = null
+    private var navigationOfflineFirstSampleNanos = 0L
+    private var navigationOfflineLastSampleNanos = 0L
     private val navigationOfflineImageName = "ar_nav_offline_start"
     private val navigationOfflineExtraImageName = "ar_nav_offline_start_extra"
     private data class OfflineExtraReference(
@@ -329,6 +333,7 @@ class ArCoreTrackingEngine(
         navigationAnchorLocalized = anchorLocalized
         navigationPoints = points
         navigationRouteWorldY = null
+        navigationFloorVerified = false
         navigationOfflineRescanRequested = false
 
         val offlineReady = configureOfflineVisualStart(
@@ -398,7 +403,7 @@ class ArCoreTrackingEngine(
                 updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
                 planeFindingMode =
                     if (navigationMode) {
-                        Config.PlaneFindingMode.DISABLED
+                        Config.PlaneFindingMode.HORIZONTAL
                     } else {
                         Config.PlaneFindingMode.HORIZONTAL_AND_VERTICAL
                     }
@@ -1499,6 +1504,7 @@ class ArCoreTrackingEngine(
                 releaseNavigationAnchor()
                 navigationAligned = false
                 navigationRouteWorldY = null
+                navigationFloorVerified = false
                 navigationArrivalShown = false
                 activeRouteIndex = 1
                 resetOfflineVisualSamples()
@@ -1560,6 +1566,7 @@ class ArCoreTrackingEngine(
                     tryLockOfflineVisualStart(
                         activeSession = activeSession,
                         currentCameraPose = currentPose,
+                        frameTimestampNanos = frame.timestamp,
                     )
                 }
 
@@ -1642,6 +1649,17 @@ class ArCoreTrackingEngine(
 
                 if (navigationOfflineEnabled) {
                     drawOfflineNavigationStartMarker(camera)
+                }
+
+                if (navigationOfflineEnabled && !navigationFloorVerified) {
+                    val floorY = findTrackedNavigationFloor(
+                        activeSession = activeSession,
+                        cameraPose = currentPose,
+                    )
+                    if (floorY != null) {
+                        navigationRouteWorldY = floorY
+                        navigationFloorVerified = true
+                    }
                 }
 
                 val worldPoints = routeWorldPoints()
@@ -1931,11 +1949,15 @@ class ArCoreTrackingEngine(
         navigationOfflinePositionZ = 0f
         navigationOfflineForwardX = 0f
         navigationOfflineForwardZ = 0f
+        navigationOfflineCandidateImageName = null
+        navigationOfflineFirstSampleNanos = 0L
+        navigationOfflineLastSampleNanos = 0L
     }
 
     private fun tryLockOfflineVisualStart(
         activeSession: Session,
         currentCameraPose: Pose,
+        frameTimestampNanos: Long,
     ): Boolean {
         if (!navigationOfflineEnabled || navigationAligned) return false
 
@@ -2011,6 +2033,37 @@ class ArCoreTrackingEngine(
         val fx = forwardWorldX / horizontalLength
         val fz = forwardWorldZ / horizontalLength
 
+        if (navigationOfflineCandidateImageName != target.name) {
+            resetOfflineVisualSamples()
+            navigationOfflineCandidateImageName = target.name
+        }
+
+        // ARCore often refines a natural-image pose substantially during the
+        // first few frames. Do not freeze the map on the first five frames.
+        // Require a tightly grouped pose over multiple CAMERA timestamps.
+        if (navigationOfflineSampleCount > 0) {
+            val nPrevious = navigationOfflineSampleCount.toFloat()
+            val dx = startX - navigationOfflinePositionX / nPrevious
+            val dy = startY - navigationOfflinePositionY / nPrevious
+            val dz = startZ - navigationOfflinePositionZ / nPrevious
+            val positionError = sqrt(dx * dx + dy * dy + dz * dz)
+            val previousForwardX = navigationOfflineForwardX / nPrevious
+            val previousForwardZ = navigationOfflineForwardZ / nPrevious
+            val facingAgreement = fx * previousForwardX + fz * previousForwardZ
+            if (positionError > 0.23f || facingAgreement < 0.965f) {
+                resetOfflineVisualSamples()
+                navigationOfflineCandidateImageName = target.name
+                setNavigationHud(
+                    "REFINING START POSE — move slowly; image pose still shifting.",
+                )
+            }
+        }
+
+        if (navigationOfflineSampleCount == 0) {
+            navigationOfflineFirstSampleNanos = frameTimestampNanos
+        }
+        if (frameTimestampNanos <= navigationOfflineLastSampleNanos) return false
+        navigationOfflineLastSampleNanos = frameTimestampNanos
         navigationOfflineSampleCount++
         navigationOfflinePositionX += startX
         navigationOfflinePositionY += startY
@@ -2018,7 +2071,10 @@ class ArCoreTrackingEngine(
         navigationOfflineForwardX += fx
         navigationOfflineForwardZ += fz
 
-        if (navigationOfflineSampleCount < navigationOfflineSamplesRequired) {
+        if (navigationOfflineSampleCount < navigationOfflineSamplesRequired ||
+            frameTimestampNanos - navigationOfflineFirstSampleNanos <
+                400_000_000L
+        ) {
             setNavigationHud(
                 "START AREA FOUND — hold steady " +
                     "$navigationOfflineSampleCount/$navigationOfflineSamplesRequired",
@@ -2053,7 +2109,9 @@ class ArCoreTrackingEngine(
         // Estimate a stable, walkable ribbon height about one meter under
         // the phone at the moment the entrance is recognized. It cannot drift
         // when the phone moves later; future floor-plane support can refine it.
-        navigationRouteWorldY = currentCameraPose.ty() - 0.95f
+        val floorY = findTrackedNavigationFloor(activeSession, currentCameraPose)
+        navigationFloorVerified = floorY != null
+        navigationRouteWorldY = floorY ?: (currentCameraPose.ty() - 1.35f)
 
         // startPose already encodes the recovered world heading. Route basis
         // below is anchor-local; keeping canonical local axes avoids applying
@@ -2840,6 +2898,7 @@ class ArCoreTrackingEngine(
     private fun clearNavigationFrame() {
         releaseNavigationAnchor()
         navigationRouteWorldY = null
+        navigationFloorVerified = false
         navigationForwardX = 0f
         navigationForwardZ = -1f
         navigationRightX = 1f
@@ -3132,6 +3191,40 @@ class ArCoreTrackingEngine(
                 180.0 /
                 Math.PI
             ).toFloat()
+    }
+
+    private fun findTrackedNavigationFloor(
+        activeSession: Session,
+        cameraPose: Pose,
+    ): Float? {
+        val cameraY = cameraPose.ty()
+        val cameraX = cameraPose.tx()
+        val cameraZ = cameraPose.tz()
+        var bestHeight: Float? = null
+        var bestScore = Float.POSITIVE_INFINITY
+
+        for (plane in activeSession.getAllTrackables(Plane::class.java)) {
+            if (plane.trackingState != TrackingState.TRACKING ||
+                plane.type != Plane.Type.HORIZONTAL_UPWARD_FACING ||
+                plane.subsumedBy != null
+            ) continue
+
+            val surfaceY = plane.centerPose.ty()
+            val cameraHeight = cameraY - surfaceY
+            if (cameraHeight < 0.70f || cameraHeight > 2.20f) continue
+            val belowCamera = Pose.makeTranslation(
+                cameraX, surfaceY, cameraZ,
+            )
+            if (!plane.isPoseInPolygon(belowCamera)) continue
+
+            // Prefer the most plausible standing eye-level camera height.
+            val score = kotlin.math.abs(cameraHeight - 1.45f)
+            if (score < bestScore) {
+                bestScore = score
+                bestHeight = surfaceY + 0.025f
+            }
+        }
+        return bestHeight
     }
 
     private fun routeWorldPoints(): List<FloatArray> {
