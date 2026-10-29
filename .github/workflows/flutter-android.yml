@@ -2,7 +2,7 @@ name: Flutter and Android checks
 
 on:
   push:
-    branches: [feature/offline-visual-start, feature/offline-visual-v2]
+    branches: [feature/offline-visual-start, feature/offline-visual-v2, feature/offline-visual-v2-precision]
   pull_request:
   workflow_dispatch:
 
