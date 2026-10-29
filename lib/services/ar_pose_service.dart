@@ -88,6 +88,7 @@ class VisualQrPlacement {
     this.offlineStartForwardX,
     this.offlineStartForwardY,
     this.offlineStartForwardZ,
+    this.offlineExtraReferenceJson,
   });
 
   final double rightMeters;
@@ -102,6 +103,7 @@ class VisualQrPlacement {
   final double? offlineStartForwardX;
   final double? offlineStartForwardY;
   final double? offlineStartForwardZ;
+  final String? offlineExtraReferenceJson;
 
   bool get hasOfflineReference =>
       offlineReferencePng?.isNotEmpty == true &&
@@ -144,6 +146,7 @@ class VisualQrPlacement {
           (map['offline_start_forward_y'] as num?)?.toDouble(),
       offlineStartForwardZ:
           (map['offline_start_forward_z'] as num?)?.toDouble(),
+      offlineExtraReferenceJson: map['offline_extra_reference_json'] as String?,
     );
   }
 }
@@ -229,6 +232,7 @@ class ArPoseService {
     double? offlineStartForwardX,
     double? offlineStartForwardY,
     double? offlineStartForwardZ,
+    String? offlineExtraReferenceJson,
   }) async {
     if (!platformSupported) return 'ANDROID_ONLY';
     return await _native.invokeMethod<String>(
@@ -263,6 +267,8 @@ class ArPoseService {
               'offline_start_forward_y': offlineStartForwardY,
             if (offlineStartForwardZ != null)
               'offline_start_forward_z': offlineStartForwardZ,
+            if (offlineExtraReferenceJson != null)
+              'offline_extra_reference_json': offlineExtraReferenceJson,
           },
         ) ??
         'UNKNOWN';
