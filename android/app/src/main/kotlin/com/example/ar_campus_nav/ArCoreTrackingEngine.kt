@@ -84,6 +84,8 @@ class ArCoreTrackingEngine(
     private var qrPlacementStatusText: TextView? = null
     private var qrPlacementDistanceText: TextView? = null
     private var qrPlacementDistanceRow: View? = null
+    private var qrPlacementSnapButton: Button? = null
+    @Volatile private var qrPlacementSnapToSurface = false
     private var qrPlacementButton: Button? = null
     private var qrPlacementExtraButton: Button? = null
     @Volatile private var qrPlacementMode = false
@@ -509,6 +511,7 @@ class ArCoreTrackingEngine(
         qrPlacementBitmap = bitmap
         qrPlacementWidthMeters = widthMeters
         qrPlacementDistanceMeters = 1.0f
+        qrPlacementSnapToSurface = false
         qrPlacementCompletion = onComplete
         qrPlacementRequested = false
         qrPlacementTrackingReady = false
@@ -614,6 +617,44 @@ class ArCoreTrackingEngine(
             ).apply {
                 gravity = Gravity.CENTER_HORIZONTAL or Gravity.BOTTOM
                 bottomMargin = dp(118)
+            },
+        )
+
+        val snap = Button(activity).apply {
+            text = "SNAP TO SURFACE: OFF"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            background = roundedBackground(0xCC263E63.toInt(), dp(20).toFloat())
+            setOnClickListener {
+                if (qrPlacementLocked) return@setOnClickListener
+                qrPlacementSnapToSurface = !qrPlacementSnapToSurface
+                text = if (qrPlacementSnapToSurface) {
+                    "SNAP TO SURFACE: ON"
+                } else {
+                    "SNAP TO SURFACE: OFF"
+                }
+                qrPlacementDistanceRow?.visibility =
+                    if (qrPlacementSnapToSurface) View.GONE else View.VISIBLE
+                qrPlacementStatusText?.text =
+                    if (qrPlacementSnapToSurface) {
+                        "SURFACE SNAP ON — aim the CENTER at a tracked tile, " +
+                            "floor or wall point. ARCore fixes actual depth. " +
+                            "Tap PLACE QR HERE when the preview appears."
+                    } else {
+                        "FREE FLOATING — position the QR in 3D with the " +
+                            "distance buttons; surface recognition is optional."
+                    }
+            }
+        }
+        qrPlacementSnapButton = snap
+        overlay.addView(
+            snap,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                dp(48),
+            ).apply {
+                gravity = Gravity.BOTTOM
+                setMargins(dp(24), 0, dp(24), dp(184))
             },
         )
 
@@ -828,6 +869,53 @@ class ArCoreTrackingEngine(
             cameraPosition[2] + cameraForward[2] * distance,
         )
 
+        if (qrPlacementSnapToSurface) {
+            val view = surfaceView ?: return
+            val hit = findPlaneHit(
+                frame = frame,
+                x = view.width * 0.5f,
+                y = view.height * 0.5f,
+                requiredPlane = null,
+            )
+            val plane = hit?.trackable as? Plane
+            if (hit == null || plane == null ||
+                plane.type == Plane.Type.HORIZONTAL_DOWNWARD_FACING
+            ) {
+                if (qrPlacementRequested) {
+                    qrPlacementRequested = false
+                    mainHandler.post {
+                        qrPlacementStatusText?.text =
+                            "SURFACE NOT FOUND — move slowly around the " +
+                                "tile/wall until ARCore detects its plane, " +
+                                "or turn SNAP OFF for floating placement."
+                    }
+                }
+                return
+            }
+
+            val point = hit.hitPose.translation
+            center[0] = point[0]
+            center[1] = point[1]
+            center[2] = point[2]
+            if (plane.type == Plane.Type.HORIZONTAL_UPWARD_FACING) {
+                // Keep the upright start portal visibly ABOVE the tile,
+                // not half buried in the floor.
+                center[1] += qrPlacementWidthMeters * 0.5f + 0.02f
+            } else if (plane.type == Plane.Type.VERTICAL) {
+                // Avoid depth fighting with the real wall surface.
+                val normal = plane.centerPose.getTransformedAxis(1, 1f)
+                val towardCamera = floatArrayOf(
+                    cameraPosition[0] - center[0],
+                    cameraPosition[1] - center[1],
+                    cameraPosition[2] - center[2],
+                )
+                val sign = if (dotVector(normal, towardCamera) >= 0f) 1f else -1f
+                center[0] += normal[0] * sign * 0.02f
+                center[1] += normal[1] * sign * 0.02f
+                center[2] += normal[2] * sign * 0.02f
+            }
+        }
+
         // Keep the QR upright regardless of phone pitch/roll. Its outward
         // normal faces back toward the user at placement time.
         val horizontal = horizontalForward(currentPose)
@@ -890,6 +978,7 @@ class ArCoreTrackingEngine(
                     "tiles, poster, wall detail), then tap SAVE START AREA."
             qrPlacementButton?.text = "SAVE START AREA"
             qrPlacementDistanceRow?.visibility = android.view.View.GONE
+            qrPlacementSnapButton?.visibility = android.view.View.GONE
         }
     }
 
@@ -1341,6 +1430,8 @@ class ArCoreTrackingEngine(
         qrPlacementStatusText = null
         qrPlacementDistanceText = null
         qrPlacementDistanceRow = null
+        qrPlacementSnapButton = null
+        qrPlacementSnapToSurface = false
         qrPlacementButton = null
         qrPlacementExtraButton = null
         qrPlacementCompletion = null
