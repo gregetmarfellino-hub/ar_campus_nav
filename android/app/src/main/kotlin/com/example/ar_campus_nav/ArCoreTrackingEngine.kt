@@ -622,7 +622,9 @@ class ArCoreTrackingEngine(
             setOnClickListener {
                 when {
                     qrPlacementLocked && offlineReferenceCaptured -> {
-                        finishQrPlacement(qrPlacementLockedPayload)
+                        if (!offlineExtraCaptureRequested) {
+                            finishQrPlacement(qrPlacementLockedPayload)
+                        }
                     }
                     qrPlacementLocked -> {
                         offlineReferenceCaptureRequested = true
@@ -653,6 +655,7 @@ class ArCoreTrackingEngine(
                 ) {
                     offlineExtraCaptureRequested = true
                     isEnabled = false
+                    qrPlacementButton?.isEnabled = false
                     qrPlacementStatusText?.text =
                         "Aim at a DIFFERENT detailed flat surface close to the start. " +
                             "Saving the second offline reference..."
@@ -759,6 +762,7 @@ class ArCoreTrackingEngine(
                     offlineExtraReferenceCaptured = true
                 }
                 mainHandler.post {
+                    qrPlacementButton?.isEnabled = true
                     qrPlacementExtraButton?.apply {
                         isEnabled = true
                         if (offlineExtraReferenceCaptured) {
