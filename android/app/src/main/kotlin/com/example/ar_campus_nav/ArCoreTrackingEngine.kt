@@ -82,6 +82,7 @@ class ArCoreTrackingEngine(
     private var qrPlacementOverlay: FrameLayout? = null
     private var qrPlacementStatusText: TextView? = null
     private var qrPlacementDistanceText: TextView? = null
+    private var qrPlacementDistanceRow: View? = null
     private var qrPlacementButton: Button? = null
     private var qrPlacementExtraButton: Button? = null
     @Volatile private var qrPlacementMode = false
@@ -585,6 +586,7 @@ class ArCoreTrackingEngine(
             setOnClickListener { adjustQrPlacementDistance(0.20f) }
         }
 
+        qrPlacementDistanceRow = distanceRow
         distanceRow.addView(
             nearer,
             LinearLayout.LayoutParams(dp(58), dp(48)),
@@ -881,7 +883,7 @@ class ArCoreTrackingEngine(
                     "camera at ONE nearby textured flat surface (door, sign, " +
                     "tiles, poster, wall detail), then tap SAVE START AREA."
             qrPlacementButton?.text = "SAVE START AREA"
-            qrPlacementDistanceText?.visibility = android.view.View.GONE
+            qrPlacementDistanceRow?.visibility = android.view.View.GONE
         }
     }
 
@@ -1331,6 +1333,7 @@ class ArCoreTrackingEngine(
         mappingVisualStatusText = null
         qrPlacementStatusText = null
         qrPlacementDistanceText = null
+        qrPlacementDistanceRow = null
         qrPlacementButton = null
         qrPlacementExtraButton = null
         qrPlacementCompletion = null
