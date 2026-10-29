@@ -153,6 +153,7 @@ class MappingSession {
     this.offlineVisualStartForwardX,
     this.offlineVisualStartForwardY,
     this.offlineVisualStartForwardZ,
+    this.offlineExtraReferenceJson,
     required this.originHeadingDegrees,
     required this.stepLengthMeters,
     required this.points,
@@ -179,6 +180,7 @@ class MappingSession {
   final double? offlineVisualStartForwardX;
   final double? offlineVisualStartForwardY;
   final double? offlineVisualStartForwardZ;
+  final String? offlineExtraReferenceJson;
 
   /// One rotation metadata value for placing separate sessions into a shared
   /// 2D venue frame. ARCore still owns the actual path geometry.
@@ -275,6 +277,8 @@ class MappingSession {
           'offline_visual_start_forward_y': offlineVisualStartForwardY,
         if (offlineVisualStartForwardZ != null)
           'offline_visual_start_forward_z': offlineVisualStartForwardZ,
+        if (offlineExtraReferenceJson != null)
+          'offline_extra_reference_json': offlineExtraReferenceJson,
         'origin_heading_deg': originHeadingDegrees,
         'step_length_m': stepLengthMeters,
         'source': source,
@@ -310,6 +314,7 @@ class MappingSession {
           (json['offline_visual_start_forward_y'] as num?)?.toDouble(),
       offlineVisualStartForwardZ:
           (json['offline_visual_start_forward_z'] as num?)?.toDouble(),
+      offlineExtraReferenceJson: json['offline_extra_reference_json'] as String?,
       originHeadingDegrees:
           (json['origin_heading_deg'] as num?)?.toDouble() ?? 0,
       stepLengthMeters: (json['step_length_m'] as num?)?.toDouble() ?? 0,
