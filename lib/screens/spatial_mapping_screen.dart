@@ -74,6 +74,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
   double? _offlineVisualStartForwardX;
   double? _offlineVisualStartForwardY;
   double? _offlineVisualStartForwardZ;
+  String? _offlineExtraReferenceJson;
 
   int _stablePoseSamples = 0;
   int _recoveryPoseSamples = 0;
@@ -190,6 +191,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       _offlineVisualStartForwardX = null;
       _offlineVisualStartForwardY = null;
       _offlineVisualStartForwardZ = null;
+      _offlineExtraReferenceJson = null;
       _trackingState = 'STARTING';
       _message = null;
       _savedPath = null;
@@ -334,6 +336,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       _offlineVisualStartForwardX = placement.offlineStartForwardX;
       _offlineVisualStartForwardY = placement.offlineStartForwardY;
       _offlineVisualStartForwardZ = placement.offlineStartForwardZ;
+      _offlineExtraReferenceJson = placement.offlineExtraReferenceJson;
 
       setState(() {
         _placingStartQr = false;
@@ -1140,6 +1143,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       offlineVisualStartForwardX: _offlineVisualStartForwardX,
       offlineVisualStartForwardY: _offlineVisualStartForwardY,
       offlineVisualStartForwardZ: _offlineVisualStartForwardZ,
+      offlineExtraReferenceJson: _offlineExtraReferenceJson,
       originHeadingDegrees: 0,
       stepLengthMeters: 0,
       source: 'arcore_spatial',
@@ -1181,6 +1185,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         _offlineVisualStartForwardX = null;
         _offlineVisualStartForwardY = null;
         _offlineVisualStartForwardZ = null;
+        _offlineExtraReferenceJson = null;
         _message =
             'Spatial mapping saved: $rawPointCount raw samples → '
             '${simplified.points.length} saved geometry points. '
@@ -1224,6 +1229,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       _offlineVisualStartForwardX = null;
       _offlineVisualStartForwardY = null;
       _offlineVisualStartForwardZ = null;
+      _offlineExtraReferenceJson = null;
       _pose = const ArPose(tracking: 'STOPPED');
       _message = 'Spatial recording discarded.';
     });
