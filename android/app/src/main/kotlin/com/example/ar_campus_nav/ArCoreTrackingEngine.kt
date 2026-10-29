@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import org.json.JSONObject
+import android.util.Base64
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -81,6 +83,7 @@ class ArCoreTrackingEngine(
     private var qrPlacementStatusText: TextView? = null
     private var qrPlacementDistanceText: TextView? = null
     private var qrPlacementButton: Button? = null
+    private var qrPlacementExtraButton: Button? = null
     @Volatile private var qrPlacementMode = false
     @Volatile private var qrPlacementRequested = false
     @Volatile private var qrPlacementDistanceMeters = 1.0f
@@ -88,6 +91,8 @@ class ArCoreTrackingEngine(
     private var qrPlacementLockedPayload: Map<String, Any>? = null
     @Volatile private var offlineReferenceCaptureRequested = false
     private var offlineReferenceCaptured = false
+    @Volatile private var offlineExtraCaptureRequested = false
+    private var offlineExtraReferenceCaptured = false
     private var qrPlacementTrackingReady = false
     private var qrPlacementBitmap: Bitmap? = null
     private var qrPlacementWidthMeters = 0.16f
@@ -483,6 +488,8 @@ class ArCoreTrackingEngine(
         qrPlacementLockedPayload = null
         offlineReferenceCaptureRequested = false
         offlineReferenceCaptured = false
+        offlineExtraCaptureRequested = false
+        offlineExtraReferenceCaptured = false
         qrPlacementMode = true
         qrPlacementRenderer.setBitmap(bitmap)
 
@@ -611,6 +618,38 @@ class ArCoreTrackingEngine(
         }
         qrPlacementButton = place
 
+        // Optional extra scene patch for V2: a second doorway/sign/texture
+        // gives the resolver an alternative real-world view to recognize.
+        val extra = Button(activity).apply {
+            text = "OPTIONAL: SAVE 2ND VIEW"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            background = roundedBackground(0xCC263E63.toInt(), dp(20).toFloat())
+            visibility = android.view.View.GONE
+            setOnClickListener {
+                if (qrPlacementLocked && offlineReferenceCaptured &&
+                    !offlineExtraReferenceCaptured
+                ) {
+                    offlineExtraCaptureRequested = true
+                    isEnabled = false
+                    qrPlacementStatusText?.text =
+                        "Aim at a DIFFERENT detailed flat surface close to the start. " +
+                            "Saving the second offline reference..."
+                }
+            }
+        }
+        qrPlacementExtraButton = extra
+        overlay.addView(
+            extra,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                dp(48),
+            ).apply {
+                gravity = Gravity.BOTTOM
+                setMargins(dp(24), 0, dp(24), dp(108))
+            },
+        )
+
         val cancel = Button(activity).apply {
             text = "CANCEL"
             textSize = 14f
@@ -666,6 +705,56 @@ class ArCoreTrackingEngine(
         if (qrPlacementLocked) {
             drawLockedMappingStartQr(camera)
 
+            if (offlineExtraCaptureRequested && offlineReferenceCaptured) {
+                offlineExtraCaptureRequested = false
+                val capture = captureOfflineStartReference(
+                    frame = frame,
+                    currentPose = currentPose,
+                )
+                if (capture.first != null) {
+                    // JSON is easy to serialize in the venue package, and
+                    // remains optional for routes authored by the V1 mapper.
+                    val extraJson = JSONObject()
+                    val values = capture.first!!
+                    val pngBytes = values["offline_reference_png"] as ByteArray
+                    extraJson.put(
+                        "png_b64",
+                        Base64.encodeToString(pngBytes, Base64.NO_WRAP),
+                    )
+                    for (key in listOf(
+                        "offline_reference_width_m",
+                        "offline_start_offset_x",
+                        "offline_start_offset_y",
+                        "offline_start_offset_z",
+                        "offline_start_forward_x",
+                        "offline_start_forward_y",
+                        "offline_start_forward_z",
+                    )) {
+                        extraJson.put(key, values[key])
+                    }
+                    qrPlacementLockedPayload =
+                        (qrPlacementLockedPayload ?: emptyMap()) +
+                            mapOf("offline_extra_reference_json" to extraJson.toString())
+                    offlineExtraReferenceCaptured = true
+                }
+                mainHandler.post {
+                    qrPlacementExtraButton?.apply {
+                        isEnabled = true
+                        if (offlineExtraReferenceCaptured) {
+                            text = "2ND VIEW SAVED"
+                            visibility = android.view.View.GONE
+                            qrPlacementStatusText?.text =
+                                "TWO START VIEWS SAVED — you can start recording. " +
+                                    "Either detailed area can restore this entrance offline."
+                        } else {
+                            qrPlacementStatusText?.text =
+                                capture.second ?: "Second view not recognized; try again."
+                            text = "RETRY 2ND VIEW"
+                        }
+                    }
+                }
+            }
+
             if (offlineReferenceCaptureRequested) {
                 offlineReferenceCaptureRequested = false
                 val capture = captureOfflineStartReference(
@@ -684,6 +773,8 @@ class ArCoreTrackingEngine(
                                 "offline visual fingerprint. Move the phone once " +
                                 "more if you want, then tap START RECORDING."
                         button?.text = "START RECORDING"
+                        qrPlacementExtraButton?.visibility =
+                            android.view.View.VISIBLE
                     } else {
                         qrPlacementStatusText?.text =
                             capture.second ?: "Could not capture start area. Try again."
@@ -1114,6 +1205,8 @@ class ArCoreTrackingEngine(
         qrPlacementLockedPayload = null
         offlineReferenceCaptureRequested = false
         offlineReferenceCaptured = false
+        offlineExtraCaptureRequested = false
+        offlineExtraReferenceCaptured = false
         if (!accepted) {
             releaseMappingStartAnchor()
         }
@@ -1214,6 +1307,7 @@ class ArCoreTrackingEngine(
         qrPlacementStatusText = null
         qrPlacementDistanceText = null
         qrPlacementButton = null
+        qrPlacementExtraButton = null
         qrPlacementCompletion = null
         qrPlacementMode = false
         qrPlacementRequested = false
@@ -1222,6 +1316,8 @@ class ArCoreTrackingEngine(
         qrPlacementLockedPayload = null
         offlineReferenceCaptureRequested = false
         offlineReferenceCaptured = false
+        offlineExtraCaptureRequested = false
+        offlineExtraReferenceCaptured = false
         releaseMappingStartAnchor()
         surfaceView = null
 
