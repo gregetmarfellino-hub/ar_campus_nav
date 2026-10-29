@@ -387,6 +387,7 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
         offlineStartForwardX: offlineAnchor?.offlineVisualStartForwardX,
         offlineStartForwardY: offlineAnchor?.offlineVisualStartForwardY,
         offlineStartForwardZ: offlineAnchor?.offlineVisualStartForwardZ,
+        offlineExtraReferenceJson: offlineAnchor?.offlineExtraReferenceJson,
       );
       if (!mounted) return false;
 
