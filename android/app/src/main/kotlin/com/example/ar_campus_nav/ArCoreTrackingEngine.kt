@@ -206,6 +206,10 @@ class ArCoreTrackingEngine(
     private var navigationOfflineCandidateImageName: String? = null
     private var navigationOfflineFirstSampleNanos = 0L
     private var navigationOfflineLastSampleNanos = 0L
+    private var navigationOfflineFirstCameraX = 0f
+    private var navigationOfflineFirstCameraY = 0f
+    private var navigationOfflineFirstCameraZ = 0f
+    private var navigationOfflineMaxCameraBaseline = 0f
     private val navigationOfflineImageName = "ar_nav_offline_start"
     private val navigationOfflineExtraImageName = "ar_nav_offline_start_extra"
     private data class OfflineExtraReference(
@@ -1963,6 +1967,10 @@ class ArCoreTrackingEngine(
         navigationOfflineCandidateImageName = null
         navigationOfflineFirstSampleNanos = 0L
         navigationOfflineLastSampleNanos = 0L
+        navigationOfflineFirstCameraX = 0f
+        navigationOfflineFirstCameraY = 0f
+        navigationOfflineFirstCameraZ = 0f
+        navigationOfflineMaxCameraBaseline = 0f
     }
 
     private fun tryLockOfflineVisualStart(
@@ -2061,7 +2069,10 @@ class ArCoreTrackingEngine(
             val previousForwardX = navigationOfflineForwardX / nPrevious
             val previousForwardZ = navigationOfflineForwardZ / nPrevious
             val facingAgreement = fx * previousForwardX + fz * previousForwardZ
-            if (positionError > 0.23f || facingAgreement < 0.965f) {
+            // A direction error of 10° can displace the end of a 30 m path
+            // by more than 5 m. This is a NAVIGATION coordinate system, not
+            // merely a decorative image: require much tighter agreement.
+            if (positionError > 0.10f || facingAgreement < 0.996f) {
                 resetOfflineVisualSamples()
                 navigationOfflineCandidateImageName = target.name
                 setNavigationHud(
@@ -2072,9 +2083,25 @@ class ArCoreTrackingEngine(
 
         if (navigationOfflineSampleCount == 0) {
             navigationOfflineFirstSampleNanos = frameTimestampNanos
+            navigationOfflineFirstCameraX = currentCameraPose.tx()
+            navigationOfflineFirstCameraY = currentCameraPose.ty()
+            navigationOfflineFirstCameraZ = currentCameraPose.tz()
         }
         if (frameTimestampNanos <= navigationOfflineLastSampleNanos) return false
         navigationOfflineLastSampleNanos = frameTimestampNanos
+
+        // Samples of the same static camera view are highly correlated.
+        // Move about 10 cm sideways for another independent viewpoint, so
+        // perspective and size errors become observable before accepting QR.
+        val cameraDx = currentCameraPose.tx() - navigationOfflineFirstCameraX
+        val cameraDy = currentCameraPose.ty() - navigationOfflineFirstCameraY
+        val cameraDz = currentCameraPose.tz() - navigationOfflineFirstCameraZ
+        val cameraBaseline = sqrt(
+            cameraDx * cameraDx + cameraDy * cameraDy + cameraDz * cameraDz,
+        )
+        navigationOfflineMaxCameraBaseline = maxOf(
+            navigationOfflineMaxCameraBaseline, cameraBaseline,
+        )
         navigationOfflineSampleCount++
         navigationOfflinePositionX += startX
         navigationOfflinePositionY += startY
@@ -2082,13 +2109,21 @@ class ArCoreTrackingEngine(
         navigationOfflineForwardX += fx
         navigationOfflineForwardZ += fz
 
+        val hasParallax = navigationOfflineMaxCameraBaseline >= 0.10f
+        val observedLongEnough =
+            frameTimestampNanos - navigationOfflineFirstSampleNanos >=
+                900_000_000L
         if (navigationOfflineSampleCount < navigationOfflineSamplesRequired ||
-            frameTimestampNanos - navigationOfflineFirstSampleNanos <
-                400_000_000L
+            !observedLongEnough || !hasParallax
         ) {
             setNavigationHud(
-                "START AREA FOUND — hold steady " +
-                    "$navigationOfflineSampleCount/$navigationOfflineSamplesRequired",
+                if (!hasParallax) {
+                    "START AREA FOUND — move phone SIDEWAYS ~10 cm slowly " +
+                        "to verify that the saved start stays fixed."
+                } else {
+                    "VERIFYING START POSE — keep the entrance detail visible " +
+                        "$navigationOfflineSampleCount/$navigationOfflineSamplesRequired"
+                },
             )
             return false
         }
