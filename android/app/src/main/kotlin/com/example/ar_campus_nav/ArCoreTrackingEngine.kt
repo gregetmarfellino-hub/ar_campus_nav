@@ -17,6 +17,7 @@ import android.opengl.GLSurfaceView
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
@@ -1469,21 +1470,7 @@ class ArCoreTrackingEngine(
                 if (qrPlacementMode) {
                     setQrPlacementTrackingReady(false)
                 }
-                navigationOfflineExtraReference?.let { extra ->
-            try {
-                database.addImage(
-                    navigationOfflineExtraImageName,
-                    extra.bitmap,
-                    extra.widthMeters,
-                )
-                added = true
-            } catch (_: Exception) {
-                // The primary reference still works even if a second patch
-                // is not distinctive enough for ARCore to register.
-            }
-        }
-
-        if (mappingVisualAnchorEnabled) {
+                if (mappingVisualAnchorEnabled) {
                     setMappingVisualHud(
                         "TRACKING PAUSED — move slowly until ARCore recovers.",
                     )
@@ -2232,6 +2219,23 @@ class ArCoreTrackingEngine(
                     navigationVisualSetupWarning =
                         "Offline start reference could not be registered: " +
                             error.javaClass.simpleName
+                }
+            }
+        }
+
+        // Register the optional second natural-image patch in the SAME
+        // ARCore database as the primary start image before configuring the session.
+        if (navigationOfflineEnabled) {
+            navigationOfflineExtraReference?.let { extra ->
+                try {
+                    database.addImage(
+                        navigationOfflineExtraImageName,
+                        extra.bitmap,
+                        extra.widthMeters,
+                    )
+                    added = true
+                } catch (_: Exception) {
+                    // Primary entrance reference remains available.
                 }
             }
         }
