@@ -1702,6 +1702,12 @@ class ArCoreTrackingEngine(
                 return
             }
 
+            // Record walking points in the LIVE start anchor's frame.
+            // ARCore can revise world coordinates during long sessions; the
+            // placement-time translation/yaw is not an immutable world frame.
+            // Keeping the route relative to the anchor prevents a gradual
+            // mismatch between the saved path and the saved QR reference.
+            refreshMappingFrameFromStartAnchor()
             if (trackingOriginPosition == null) {
                 establishTrackingOrigin(currentPose)
             }
@@ -1745,6 +1751,22 @@ class ArCoreTrackingEngine(
             0f,
             forward[2] / length,
         )
+    }
+
+    private fun refreshMappingFrameFromStartAnchor() {
+        val anchor = mappingStartWorldAnchor ?: return
+        if (anchor.trackingState != TrackingState.TRACKING) return
+        val pose = anchor.pose
+        val forward = pose.getTransformedAxis(2, -1f)
+        val horizontalLength = sqrt(
+            forward[0] * forward[0] + forward[2] * forward[2],
+        )
+        if (horizontalLength < 0.1f) return
+        trackingOriginPosition = pose.translation.copyOf()
+        trackingForwardX = forward[0] / horizontalLength
+        trackingForwardZ = forward[2] / horizontalLength
+        trackingRightX = -trackingForwardZ
+        trackingRightZ = trackingForwardX
     }
 
     private fun establishTrackingOrigin(pose: Pose) {
