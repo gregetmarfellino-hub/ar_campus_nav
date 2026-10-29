@@ -76,16 +76,14 @@ class ArCoreTrackingEngine(
     private var navigationReanchorButton: Button? = null
     private var navigationExitButton: Button? = null
 
-    // Free-floating visual QR placement used by the spatial mapper. The QR is
-    // a real 3D AR billboard, not a wall/plane hit. While placement is open it
-    // floats a configurable distance along the live camera ray; pressing PLACE
-    // freezes that exact metric pose into the mapping-local frame.
+    // Prefer a tracked surface so the QR has the same depth as its surroundings.
+    // Free-floating placement remains an explicit option for standalone portals.
     private var qrPlacementOverlay: FrameLayout? = null
     private var qrPlacementStatusText: TextView? = null
     private var qrPlacementDistanceText: TextView? = null
     private var qrPlacementDistanceRow: View? = null
     private var qrPlacementSnapButton: Button? = null
-    @Volatile private var qrPlacementSnapToSurface = false
+    @Volatile private var qrPlacementSnapToSurface = true
     private var qrPlacementButton: Button? = null
     private var qrPlacementExtraButton: Button? = null
     @Volatile private var qrPlacementMode = false
@@ -98,6 +96,7 @@ class ArCoreTrackingEngine(
     @Volatile private var offlineExtraCaptureRequested = false
     private var offlineExtraReferenceCaptured = false
     private var qrPlacementTrackingReady = false
+    @Volatile private var qrPlacementReadinessMessage: String? = null
     private var qrPlacementBitmap: Bitmap? = null
     private var qrPlacementWidthMeters = 0.16f
     private var qrPlacementCompletion: ((Map<String, Any>?) -> Unit)? = null
@@ -511,10 +510,11 @@ class ArCoreTrackingEngine(
         qrPlacementBitmap = bitmap
         qrPlacementWidthMeters = widthMeters
         qrPlacementDistanceMeters = 1.0f
-        qrPlacementSnapToSurface = false
+        qrPlacementSnapToSurface = true
         qrPlacementCompletion = onComplete
         qrPlacementRequested = false
         qrPlacementTrackingReady = false
+        qrPlacementReadinessMessage = null
         qrPlacementLocked = false
         qrPlacementLockedPayload = null
         offlineReferenceCaptureRequested = false
@@ -546,8 +546,8 @@ class ArCoreTrackingEngine(
 
         val status = TextView(activity).apply {
             text =
-                "PLACE QR IN 3D\nMove/aim the phone to position the floating QR. " +
-                    "It does not need a wall or detected plane."
+                "PLACE QR ON A SURFACE\nMove slowly and aim at a detailed wall " +
+                    "or floor. Place the QR when its preview appears."
             setTextColor(Color.WHITE)
             textSize = 16f
             gravity = Gravity.CENTER
@@ -567,6 +567,7 @@ class ArCoreTrackingEngine(
         )
 
         val distanceRow = LinearLayout(activity).apply {
+            visibility = View.GONE
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             background = roundedBackground(0xB8000000.toInt(), dp(22).toFloat())
@@ -621,13 +622,16 @@ class ArCoreTrackingEngine(
         )
 
         val snap = Button(activity).apply {
-            text = "SNAP TO SURFACE: OFF"
+            text = "SNAP TO SURFACE: ON"
             textSize = 13f
             setTextColor(Color.WHITE)
             background = roundedBackground(0xCC263E63.toInt(), dp(20).toFloat())
             setOnClickListener {
                 if (qrPlacementLocked) return@setOnClickListener
                 qrPlacementSnapToSurface = !qrPlacementSnapToSurface
+                qrPlacementReadinessMessage = null
+                qrPlacementRequested = false
+                qrPlacementButton?.isEnabled = false
                 text = if (qrPlacementSnapToSurface) {
                     "SNAP TO SURFACE: ON"
                 } else {
@@ -664,6 +668,7 @@ class ArCoreTrackingEngine(
         }
 
         val place = Button(activity).apply {
+            isEnabled = false
             text = "PLACE QR HERE"
             textSize = 15f
             setTextColor(Color.BLACK)
@@ -761,6 +766,8 @@ class ArCoreTrackingEngine(
             ),
         )
         qrPlacementOverlay = overlay
+        // The GL thread may have reported readiness before these controls existed.
+        qrPlacementReadinessMessage = null
     }
 
     private fun adjustQrPlacementDistance(deltaMeters: Float) {
@@ -776,6 +783,11 @@ class ArCoreTrackingEngine(
         camera: com.google.ar.core.Camera,
     ) {
         if (qrPlacementLocked) {
+            val anchorReady = mappingStartWorldAnchor?.trackingState == TrackingState.TRACKING
+            if (qrPlacementTrackingReady != anchorReady) {
+                setQrPlacementTrackingReady(anchorReady)
+            }
+            if (!anchorReady) return
             drawLockedMappingStartQr(camera)
 
             if (offlineExtraCaptureRequested && offlineReferenceCaptured) {
@@ -870,7 +882,10 @@ class ArCoreTrackingEngine(
         )
 
         var snappedWallNormal: FloatArray? = null
-        if (qrPlacementSnapToSurface) {
+        var placementPlane: Plane? = null
+        // Use one mode for the entire frame, including anchor creation.
+        val snapToSurface = qrPlacementSnapToSurface
+        if (snapToSurface) {
             val view = surfaceView ?: return
             val hit = findPlaneHit(
                 frame = frame,
@@ -882,17 +897,15 @@ class ArCoreTrackingEngine(
             if (hit == null || plane == null ||
                 plane.type == Plane.Type.HORIZONTAL_DOWNWARD_FACING
             ) {
-                if (qrPlacementRequested) {
-                    qrPlacementRequested = false
-                    mainHandler.post {
-                        qrPlacementStatusText?.text =
-                            "SURFACE NOT FOUND — move slowly around the " +
-                                "tile/wall until ARCore detects its plane, " +
-                                "or turn SNAP OFF for floating placement."
-                    }
-                }
+                qrPlacementRequested = false
+                setQrPlacementTrackingReady(
+                    false,
+                    "FINDING SURFACE — move slowly and aim at a detailed wall " +
+                        "or floor. Wait for the QR preview before placing it.",
+                )
                 return
             }
+            placementPlane = plane
 
             val point = hit.hitPose.translation
             center[0] = point[0]
@@ -945,6 +958,15 @@ class ArCoreTrackingEngine(
             sizeMeters = qrPlacementWidthMeters,
         )
 
+        setQrPlacementTrackingReady(
+            true,
+            if (snapToSurface) {
+                "SURFACE FOUND — tap PLACE QR HERE to attach the QR here."
+            } else {
+                "FLOATING QR — adjust distance, then tap PLACE QR HERE."
+            },
+        )
+
         if (!qrPlacementRequested) return
         qrPlacementRequested = false
 
@@ -962,8 +984,17 @@ class ArCoreTrackingEngine(
             forwardZ = outwardZ,
         )
 
+        // A plane-attached anchor follows refinements to that physical surface.
+        // Keep the preview's upright orientation and offset in the anchor pose.
+        val newAnchor = try {
+            placementPlane?.createAnchor(anchorPose)
+                ?: activeSession.createAnchor(anchorPose)
+        } catch (_: com.google.ar.core.exceptions.NotTrackingException) {
+            setQrPlacementTrackingReady(false)
+            return
+        }
         releaseMappingStartAnchor()
-        mappingStartWorldAnchor = activeSession.createAnchor(anchorPose)
+        mappingStartWorldAnchor = newAnchor
         mappingStartQrVisible = true
         mappingStartQrWidthMeters = qrPlacementWidthMeters
 
@@ -1314,19 +1345,22 @@ class ArCoreTrackingEngine(
 
     private fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
 
-    private fun setQrPlacementTrackingReady(ready: Boolean) {
-        if (qrPlacementTrackingReady == ready) return
+    private fun setQrPlacementTrackingReady(
+        ready: Boolean,
+        message: String = if (ready) {
+            "TRACKING RECOVERED — continue saving the start area."
+        } else {
+            "TRACKING PAUSED — move slowly until the placed surface is tracked again."
+        },
+    ) {
+        if (qrPlacementTrackingReady == ready && qrPlacementReadinessMessage == message) return
         qrPlacementTrackingReady = ready
+        qrPlacementReadinessMessage = message
 
         mainHandler.post {
+            if (!qrPlacementMode) return@post
             qrPlacementButton?.isEnabled = ready
-            if (ready) {
-                qrPlacementStatusText?.text =
-                    "QR READY — move/aim the phone, adjust distance, then tap PLACE QR HERE."
-            } else {
-                qrPlacementStatusText?.text =
-                    "TRACKING PAUSED — move slowly until ARCore recovers."
-            }
+            qrPlacementStatusText?.text = message
         }
     }
 
@@ -1444,7 +1478,7 @@ class ArCoreTrackingEngine(
         qrPlacementDistanceText = null
         qrPlacementDistanceRow = null
         qrPlacementSnapButton = null
-        qrPlacementSnapToSurface = false
+        qrPlacementSnapToSurface = true
         qrPlacementButton = null
         qrPlacementExtraButton = null
         qrPlacementCompletion = null
@@ -1578,6 +1612,7 @@ class ArCoreTrackingEngine(
                     reason = reason,
                 )
                 if (qrPlacementMode) {
+                    qrPlacementRequested = false
                     setQrPlacementTrackingReady(false)
                 }
                 if (mappingVisualAnchorEnabled) {
@@ -1629,7 +1664,6 @@ class ArCoreTrackingEngine(
             }
 
             if (qrPlacementMode) {
-                setQrPlacementTrackingReady(true)
                 handleQrPlacementFrame(
                     frame = frame,
                     currentPose = currentPose,
