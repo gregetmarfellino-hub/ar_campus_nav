@@ -220,8 +220,13 @@ class ArCoreTrackingEngine(
     private var navigationOfflineFirstCameraX = 0f
     private var navigationOfflineFirstCameraY = 0f
     private var navigationOfflineFirstCameraZ = 0f
-    private var navigationOfflineFirstCameraForward = floatArrayOf(0f, 0f, -1f)
+    private var navigationOfflineFirstReferenceNormal = floatArrayOf(0f, 0f, 1f)
     private var navigationOfflineMaxCameraBaseline = 0f
+    // A short-lived, single automatic re-lock is safer than leaving a newly
+    // created paused anchor in limbo, but must never move an active route.
+    private var navigationOfflineLastLockNanos = 0L
+    private var navigationOfflineAnchorPausedSinceNanos = 0L
+    private var navigationOfflineAutoRecoveryAttempts = 0
     private val navigationOfflineImageName = "ar_nav_offline_start"
     private val navigationOfflineExtraImageName = "ar_nav_offline_start_extra"
     private data class OfflineExtraReference(
@@ -355,6 +360,9 @@ class ArCoreTrackingEngine(
         navigationFloorTargetY = null
         navigationFloorVerified = false
         navigationOfflineRescanRequested = false
+        navigationOfflineLastLockNanos = 0L
+        navigationOfflineAnchorPausedSinceNanos = 0L
+        navigationOfflineAutoRecoveryAttempts = 0
 
         val offlineReady = configureOfflineVisualStart(
             png = offlineReferencePng,
@@ -1762,6 +1770,29 @@ class ArCoreTrackingEngine(
                     routeAnchor.trackingState != TrackingState.TRACKING
                 ) {
                     setNavigationArrowVisible(false)
+                    if (navigationOfflineEnabled && navigationOfflineLastLockNanos > 0L) {
+                        if (navigationOfflineAnchorPausedSinceNanos == 0L) {
+                            navigationOfflineAnchorPausedSinceNanos = frame.timestamp
+                        }
+                        // Only immediately after the initial lock, and only
+                        // once: never silently relocate a route during a walk.
+                        val justLocked = frame.timestamp - navigationOfflineLastLockNanos <
+                            6_000_000_000L
+                        val pausedLongEnough =
+                            frame.timestamp - navigationOfflineAnchorPausedSinceNanos >
+                                1_200_000_000L
+                        if (justLocked && pausedLongEnough &&
+                            navigationOfflineAutoRecoveryAttempts < 1
+                        ) {
+                            navigationOfflineAutoRecoveryAttempts++
+                            navigationOfflineRescanRequested = true
+                            setNavigationHud(
+                                "START ANCHOR UNSTABLE — automatically " +
+                                    "re-verifying the saved entrance. Stay nearby.",
+                            )
+                            return
+                        }
+                    }
                     setNavigationHud(
                         if (routeAnchor?.trackingState == TrackingState.STOPPED) {
                             "ANCHOR LOST — scan a known location before continuing."
@@ -1778,6 +1809,7 @@ class ArCoreTrackingEngine(
                     return
                 }
 
+                navigationOfflineAnchorPausedSinceNanos = 0L
                 if (!acceptNavigationPose(
                         currentPose = currentPose,
                         timestampNanos = frame.timestamp,
@@ -2144,7 +2176,7 @@ class ArCoreTrackingEngine(
         navigationOfflineFirstCameraX = 0f
         navigationOfflineFirstCameraY = 0f
         navigationOfflineFirstCameraZ = 0f
-        navigationOfflineFirstCameraForward = floatArrayOf(0f, 0f, -1f)
+        navigationOfflineFirstReferenceNormal = floatArrayOf(0f, 0f, 1f)
         navigationOfflineMaxCameraBaseline = 0f
     }
 
@@ -2321,23 +2353,26 @@ class ArCoreTrackingEngine(
             navigationOfflineFirstCameraX = currentCameraPose.tx()
             navigationOfflineFirstCameraY = currentCameraPose.ty()
             navigationOfflineFirstCameraZ = currentCameraPose.tz()
-            navigationOfflineFirstCameraForward =
-                currentCameraPose.getTransformedAxis(2, -1f)
+            navigationOfflineFirstReferenceNormal =
+                target.centerPose.getTransformedAxis(1, 1f)
         }
         if (frameTimestampNanos <= navigationOfflineLastSampleNanos) return false
         navigationOfflineLastSampleNanos = frameTimestampNanos
 
-        // Require real horizontal parallax, but measure it perpendicular to
-        // the initial view direction rather than against one fixed camera-right
-        // axis. Phone tilt and later changes in heading cannot fake a baseline.
+        // Parallax is relative to the REFERENCE SURFACE, not the phone.
+        // A wall requires sideways translation across it; a floor reference
+        // accepts horizontal motion in any direction. Phone rotation alone
+        // cannot increase the metric baseline.
         val cameraDx = currentCameraPose.tx() - navigationOfflineFirstCameraX
         val cameraDz = currentCameraPose.tz() - navigationOfflineFirstCameraZ
-        val viewX = navigationOfflineFirstCameraForward[0]
-        val viewZ = navigationOfflineFirstCameraForward[2]
-        val viewLength = sqrt(viewX * viewX + viewZ * viewZ)
-        val cameraBaseline = if (viewLength < 0.1f) 0f else {
-            abs(cameraDx * (-viewZ / viewLength) +
-                cameraDz * (viewX / viewLength))
+        val normalX = navigationOfflineFirstReferenceNormal[0]
+        val normalZ = navigationOfflineFirstReferenceNormal[2]
+        val normalLength = sqrt(normalX * normalX + normalZ * normalZ)
+        val cameraBaseline = if (normalLength < 0.1f) {
+            sqrt(cameraDx * cameraDx + cameraDz * cameraDz)
+        } else {
+            abs(cameraDx * (-normalZ / normalLength) +
+                cameraDz * (normalX / normalLength))
         }
         navigationOfflineMaxCameraBaseline =
             maxOf(navigationOfflineMaxCameraBaseline, cameraBaseline)
@@ -2435,6 +2470,8 @@ class ArCoreTrackingEngine(
         )
         releaseNavigationAnchor()
         navigationWorldAnchor = activeSession.createAnchor(startPose)
+        navigationOfflineLastLockNanos = frameTimestampNanos
+        navigationOfflineAnchorPausedSinceNanos = 0L
         // Estimate a stable, walkable ribbon height about one meter under
         // the phone at the moment the entrance is recognized. It cannot drift
         // when the phone moves later; future floor-plane support can refine it.
