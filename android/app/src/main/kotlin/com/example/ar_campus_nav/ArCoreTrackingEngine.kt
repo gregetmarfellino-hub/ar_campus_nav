@@ -203,14 +203,24 @@ class ArCoreTrackingEngine(
     private var navigationOfflinePositionZ = 0f
     private var navigationOfflineForwardX = 0f
     private var navigationOfflineForwardZ = 0f
-    private val navigationOfflineSamplesRequired = 14
+    // This is verification progress, NOT a calibrated probability of accuracy.
+    // Keep a short sliding pose window and tolerate brief ARCore image dropouts.
+    private val navigationOfflineSamplesRequired = 12
+    private val navigationOfflineMaxSamples = 30
+    private val navigationOfflineMinObservationNanos = 700_000_000L
+    private val navigationOfflineViewpointMeters = 0.07f
+    private val navigationOfflineReferenceGraceNanos = 800_000_000L
+    private val navigationOfflinePoseSamples =
+        java.util.ArrayDeque<OfflineStartEstimate>()
+    private var navigationOfflineLastObservedNanos = 0L
+    private var navigationOfflinePoseOutliers = 0
     private var navigationOfflineCandidateImageName: String? = null
     private var navigationOfflineFirstSampleNanos = 0L
     private var navigationOfflineLastSampleNanos = 0L
     private var navigationOfflineFirstCameraX = 0f
     private var navigationOfflineFirstCameraY = 0f
     private var navigationOfflineFirstCameraZ = 0f
-    private var navigationOfflineFirstCameraRight = floatArrayOf(1f, 0f, 0f)
+    private var navigationOfflineFirstCameraForward = floatArrayOf(0f, 0f, -1f)
     private var navigationOfflineMaxCameraBaseline = 0f
     private val navigationOfflineImageName = "ar_nav_offline_start"
     private val navigationOfflineExtraImageName = "ar_nav_offline_start_extra"
@@ -2119,6 +2129,7 @@ class ArCoreTrackingEngine(
     }
 
     private fun resetOfflineVisualSamples() {
+        navigationOfflinePoseSamples.clear()
         navigationOfflineSampleCount = 0
         navigationOfflinePositionX = 0f
         navigationOfflinePositionY = 0f
@@ -2128,11 +2139,32 @@ class ArCoreTrackingEngine(
         navigationOfflineCandidateImageName = null
         navigationOfflineFirstSampleNanos = 0L
         navigationOfflineLastSampleNanos = 0L
+        navigationOfflineLastObservedNanos = 0L
+        navigationOfflinePoseOutliers = 0
         navigationOfflineFirstCameraX = 0f
         navigationOfflineFirstCameraY = 0f
         navigationOfflineFirstCameraZ = 0f
-        navigationOfflineFirstCameraRight = floatArrayOf(1f, 0f, 0f)
+        navigationOfflineFirstCameraForward = floatArrayOf(0f, 0f, -1f)
         navigationOfflineMaxCameraBaseline = 0f
+    }
+
+    private fun offlineVerificationProgress(timestampNanos: Long): Int {
+        if (navigationOfflineSampleCount == 0) return 0
+        val sampleRatio =
+            (navigationOfflineSampleCount.toFloat() /
+                navigationOfflineSamplesRequired).coerceIn(0f, 1f)
+        val durationRatio = (
+            (timestampNanos - navigationOfflineFirstSampleNanos)
+                .coerceAtLeast(0L).toFloat() /
+                navigationOfflineMinObservationNanos
+        ).coerceIn(0f, 1f)
+        val viewpointRatio =
+            (navigationOfflineMaxCameraBaseline /
+                navigationOfflineViewpointMeters).coerceIn(0f, 1f)
+        // Each component is observable. 100 is reserved for an accepted lock;
+        // it must never be presented as a metric of centimeter-level accuracy.
+        return ((0.40f * sampleRatio + 0.20f * durationRatio +
+            0.40f * viewpointRatio) * 100f).toInt().coerceIn(0, 99)
     }
 
     private data class OfflineStartEstimate(
@@ -2195,18 +2227,34 @@ class ArCoreTrackingEngine(
         val target = observed.firstOrNull { it.name == navigationOfflineImageName }
             ?: observed.firstOrNull()
             ?: run {
-                resetOfflineVisualSamples()
-                setNavigationHud(
-                    "FINDING START — look at the saved distinctive entrance " +
-                        "detail (sign/doorframe), not repeating tiles.",
-                )
+                // Losing FULL_TRACKING for a few frames is common during
+                // viewpoint changes. Do not throw away good samples immediately.
+                val recentlySeen = navigationOfflineLastObservedNanos > 0L &&
+                    frameTimestampNanos - navigationOfflineLastObservedNanos <=
+                        navigationOfflineReferenceGraceNanos
+                if (recentlySeen) {
+                    setNavigationHud(
+                        "START DETAIL TEMPORARILY LOST — keep it visible. " +
+                            "Verification " +
+                            offlineVerificationProgress(frameTimestampNanos) + "%.",
+                    )
+                } else {
+                    resetOfflineVisualSamples()
+                    setNavigationHud(
+                        "FINDING START — aim at the saved distinctive sign " +
+                            "or doorway, not repeating tiles. Verification 0%.",
+                    )
+                }
                 return false
             }
 
         val estimate = estimateOfflineStart(target) ?: run {
-            resetOfflineVisualSamples()
+            // A single invalid estimate is not evidence that the whole
+            // localization attempt should restart.
+            setNavigationHud("START IMAGE FOUND — refining its pose.")
             return false
         }
+        navigationOfflineLastObservedNanos = frameTimestampNanos
         val startX = estimate.x
         val startY = estimate.y
         val startZ = estimate.z
@@ -2235,14 +2283,13 @@ class ArCoreTrackingEngine(
                 }
             }
         }
-        if (navigationOfflineCandidateImageName != target.name) {
-            resetOfflineVisualSamples()
-            navigationOfflineCandidateImageName = target.name
-        }
+        // Primary/secondary images both reconstruct the SAME start frame.
+        // Switching between them is fine if the reconstructed poses agree.
+        navigationOfflineCandidateImageName = target.name
 
-        // ARCore often refines a natural-image pose substantially during the
-        // first few frames. Do not freeze the map on the first five frames.
-        // Require a tightly grouped pose over multiple CAMERA timestamps.
+        // Compare incoming poses against the RECENT window rather than one
+        // permanent all-time average. Ignore isolated bad frames; restart only
+        // after repeated evidence the old estimate is no longer trustworthy.
         if (navigationOfflineSampleCount > 0) {
             val nPrevious = navigationOfflineSampleCount.toFloat()
             val dx = startX - navigationOfflinePositionX / nPrevious
@@ -2252,46 +2299,50 @@ class ArCoreTrackingEngine(
             val previousForwardX = navigationOfflineForwardX / nPrevious
             val previousForwardZ = navigationOfflineForwardZ / nPrevious
             val facingAgreement = fx * previousForwardX + fz * previousForwardZ
-            // A direction error of 10° can displace the end of a 30 m path
-            // by more than 5 m. This is a NAVIGATION coordinate system, not
-            // merely a decorative image: require much tighter agreement.
             if (positionError > 0.10f || facingAgreement < 0.996f) {
-                resetOfflineVisualSamples()
-                navigationOfflineCandidateImageName = target.name
+                navigationOfflinePoseOutliers++
+                if (navigationOfflinePoseOutliers >= 3) {
+                    resetOfflineVisualSamples()
+                    navigationOfflineCandidateImageName = target.name
+                    navigationOfflineLastObservedNanos = frameTimestampNanos
+                }
                 setNavigationHud(
-                    "REFINING START POSE — move slowly; image pose still shifting.",
+                    "REFINING START POSE — estimate shifted; keeping " +
+                        "the last reliable samples. Verification " +
+                        offlineVerificationProgress(frameTimestampNanos) + "%.",
                 )
+                return false
             }
         }
+        navigationOfflinePoseOutliers = 0
 
         if (navigationOfflineSampleCount == 0) {
             navigationOfflineFirstSampleNanos = frameTimestampNanos
             navigationOfflineFirstCameraX = currentCameraPose.tx()
             navigationOfflineFirstCameraY = currentCameraPose.ty()
             navigationOfflineFirstCameraZ = currentCameraPose.tz()
-            navigationOfflineFirstCameraRight =
-                currentCameraPose.getTransformedAxis(0, 1f)
+            navigationOfflineFirstCameraForward =
+                currentCameraPose.getTransformedAxis(2, -1f)
         }
         if (frameTimestampNanos <= navigationOfflineLastSampleNanos) return false
         navigationOfflineLastSampleNanos = frameTimestampNanos
 
-        // Samples of the same static camera view are highly correlated.
-        // Move about 10 cm sideways for another independent viewpoint, so
-        // perspective and size errors become observable before accepting QR.
+        // Require real horizontal parallax, but measure it perpendicular to
+        // the initial view direction rather than against one fixed camera-right
+        // axis. Phone tilt and later changes in heading cannot fake a baseline.
         val cameraDx = currentCameraPose.tx() - navigationOfflineFirstCameraX
-        val cameraDy = currentCameraPose.ty() - navigationOfflineFirstCameraY
         val cameraDz = currentCameraPose.tz() - navigationOfflineFirstCameraZ
-        // Measure sideways translation in the INITIAL camera-right axis;
-        // raising the phone or leaning toward the image does not count as
-        // independent parallax for this navigation lock.
-        val cameraBaseline = abs(
-            cameraDx * navigationOfflineFirstCameraRight[0] +
-                cameraDy * navigationOfflineFirstCameraRight[1] +
-                cameraDz * navigationOfflineFirstCameraRight[2],
-        )
-        navigationOfflineMaxCameraBaseline = maxOf(
-            navigationOfflineMaxCameraBaseline, cameraBaseline,
-        )
+        val viewX = navigationOfflineFirstCameraForward[0]
+        val viewZ = navigationOfflineFirstCameraForward[2]
+        val viewLength = sqrt(viewX * viewX + viewZ * viewZ)
+        val cameraBaseline = if (viewLength < 0.1f) 0f else {
+            abs(cameraDx * (-viewZ / viewLength) +
+                cameraDz * (viewX / viewLength))
+        }
+        navigationOfflineMaxCameraBaseline =
+            maxOf(navigationOfflineMaxCameraBaseline, cameraBaseline)
+
+        navigationOfflinePoseSamples.addLast(estimate)
         navigationOfflineSampleCount++
         navigationOfflinePositionX += startX
         navigationOfflinePositionY += startY
@@ -2299,21 +2350,38 @@ class ArCoreTrackingEngine(
         navigationOfflineForwardX += fx
         navigationOfflineForwardZ += fz
 
-        val hasParallax = navigationOfflineMaxCameraBaseline >= 0.10f
+        // Bounded samples prevent early noisy estimates from dominating
+        // forever after the user changes viewing angle.
+        if (navigationOfflinePoseSamples.size > navigationOfflineMaxSamples) {
+            val old = navigationOfflinePoseSamples.removeFirst()
+            navigationOfflineSampleCount--
+            navigationOfflinePositionX -= old.x
+            navigationOfflinePositionY -= old.y
+            navigationOfflinePositionZ -= old.z
+            navigationOfflineForwardX -= old.forwardX
+            navigationOfflineForwardZ -= old.forwardZ
+        }
+
+        val hasParallax =
+            navigationOfflineMaxCameraBaseline >= navigationOfflineViewpointMeters
         val observedLongEnough =
             frameTimestampNanos - navigationOfflineFirstSampleNanos >=
-                900_000_000L
+                navigationOfflineMinObservationNanos
         if (navigationOfflineSampleCount < navigationOfflineSamplesRequired ||
             !observedLongEnough || !hasParallax
         ) {
+            val progress = offlineVerificationProgress(frameTimestampNanos)
+            val hint = when {
+                !hasParallax ->
+                    "Move phone SIDEWAYS ~7 cm while keeping the sign visible."
+                !observedLongEnough ->
+                    "Hold the reference steady for another moment."
+                else ->
+                    "Matching recent views (" + navigationOfflineSampleCount +
+                        "/" + navigationOfflineSamplesRequired + " stable frames)."
+            }
             setNavigationHud(
-                if (!hasParallax) {
-                    "START AREA FOUND — move phone SIDEWAYS ~10 cm slowly " +
-                        "to verify that the saved start stays fixed."
-                } else {
-                    "VERIFYING START POSE — keep the entrance detail visible " +
-                        "$navigationOfflineSampleCount/$navigationOfflineSamplesRequired"
-                },
+                "VERIFYING START " + progress + "% — " + hint,
             )
             return false
         }
@@ -2334,6 +2402,31 @@ class ArCoreTrackingEngine(
         }
         averageForwardX /= averageLength
         averageForwardZ /= averageLength
+
+        // The threshold above rejects isolated jumps, but a cluster may
+        // still be too dispersed to safely restore a multi-meter route.
+        var positionalSquaredError = 0f
+        var lowestFacingAgreement = 1f
+        for (sample in navigationOfflinePoseSamples) {
+            val dx = sample.x - px
+            val dy = sample.y - py
+            val dz = sample.z - pz
+            positionalSquaredError += dx * dx + dy * dy + dz * dz
+            val agreement = sample.forwardX * averageForwardX +
+                sample.forwardZ * averageForwardZ
+            lowestFacingAgreement = minOf(lowestFacingAgreement, agreement)
+        }
+        val positionRms = sqrt(positionalSquaredError / n)
+        if (positionRms > 0.045f || lowestFacingAgreement < 0.9985f) {
+            setNavigationHud(
+                "VERIFYING START " +
+                    offlineVerificationProgress(frameTimestampNanos) +
+                    "% — pose spread still high (" +
+                    String.format(java.util.Locale.US, "%.1f", positionRms * 100f) +
+                    " cm RMS). Hold the reference steady.",
+            )
+            return false
+        }
 
         val startPose = horizontalPoseFromForward(
             position = floatArrayOf(px, py, pz),
@@ -2365,7 +2458,7 @@ class ArCoreTrackingEngine(
         resetOfflineVisualSamples()
         setNavigationAlignedUi()
         setNavigationHud(
-            "OFFLINE START RESTORED — ${navigationPoints.size} saved route " +
+            "START VERIFIED 100% — ${navigationPoints.size} saved route " +
                 "points connected. Follow the BLUE PATH toward " +
                 "$navigationDestination; look down to see the ground ribbon.",
         )
