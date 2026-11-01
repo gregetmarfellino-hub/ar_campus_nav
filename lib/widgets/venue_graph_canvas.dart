@@ -156,7 +156,7 @@ class _VenueGraphCanvasState extends State<VenueGraphCanvas> {
       final relative = point - pa;
       final t = ((relative.dx * delta.dx + relative.dy * delta.dy) /
               lengthSquared)
-          .clamp(0.0, 1.0);
+          .clamp(0.0, 1.0).toDouble();
       final candidate = pa + delta * t;
       final distance = (candidate - point).distance;
       if (distance < minDistance) {
@@ -211,8 +211,8 @@ class _VenueGraphCanvasState extends State<VenueGraphCanvas> {
           widget.onDragNode(
             id,
             Offset(
-              meters.dx.clamp(widget.viewport.minX, widget.viewport.maxX),
-              meters.dy.clamp(widget.viewport.minY, widget.viewport.maxY),
+              meters.dx.clamp(widget.viewport.minX, widget.viewport.maxX).toDouble(),
+              meters.dy.clamp(widget.viewport.minY, widget.viewport.maxY).toDouble(),
             ),
           );
         },
@@ -361,8 +361,8 @@ class _GraphPainter extends CustomPainter {
         label.paint(
           canvas,
           Offset(
-            (p.dx + 7).clamp(1.0, math.max(1, size.width - label.width - 2)),
-            (p.dy - 16).clamp(0.0, size.height - label.height),
+            (p.dx + 7).clamp(1.0, math.max(1.0, size.width - label.width - 2)).toDouble(),
+            (p.dy - 16).clamp(0.0, size.height - label.height).toDouble(),
           ),
         );
       }
