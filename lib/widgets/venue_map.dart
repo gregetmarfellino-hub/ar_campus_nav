@@ -94,6 +94,7 @@ class VenueMap extends StatelessWidget {
           anchorNodeIds.contains(node.id) ||
           node.type == 'destination' ||
           node.type == 'stairs' ||
+          node.type == 'elevator' ||
           node.type == 'anchor' ||
           realWaypoint;
     }
@@ -276,7 +277,8 @@ class _VenueMapPainter extends CustomPainter {
       final isDestination =
           destinationNodeIds.contains(node.id) || node.type == 'destination';
       final isAnchor = anchorNodeIds.contains(node.id) || node.type == 'anchor';
-      final isStairs = node.type == 'stairs';
+      final isStairs =
+          node.type == 'stairs' || node.type == 'elevator';
       final isWaypoint = isRealWaypoint(node);
       final isEntrance = node.type == 'entrance';
       final isCurrent = node.id == currentNodeId;
@@ -336,6 +338,7 @@ class _VenueMapPainter extends CustomPainter {
           node.type == 'destination' ||
           node.type == 'anchor' ||
           node.type == 'stairs' ||
+          node.type == 'elevator' ||
           node.type == 'entrance' ||
           node.id == currentNodeId;
     }).toList()
@@ -428,7 +431,7 @@ class _VenueMapPainter extends CustomPainter {
     if (node.id == currentNodeId) return 8;
     if (destinations.contains(node.id) || node.type == 'destination') return 7;
     if (anchors.contains(node.id) || node.type == 'anchor') return 6;
-    if (node.type == 'stairs') return 5;
+    if (node.type == 'stairs' || node.type == 'elevator') return 5;
     if (node.type == 'waypoint' && node.label != 'Recorded path') return 4;
     if (routeSet.contains(node.id)) return 3;
     if (node.type == 'entrance') return 2;
