@@ -38,6 +38,7 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
   String? _selectedId;
   String? _connectSourceId;
   bool _connectMode = false;
+  bool _alignMode = false;
   bool _insertMode = false;
   bool _saving = false;
   Venue? _dragBefore;
@@ -107,6 +108,7 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
       _floor = floor;
       _selectedId = null;
       _connectMode = false;
+      _alignMode = false;
       _insertMode = false;
       _connectSourceId = null;
     });
@@ -160,6 +162,7 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
       _selectedId = null;
       _connectSourceId = null;
       _connectMode = false;
+      _alignMode = false;
       _insertMode = false;
     });
   }
@@ -172,6 +175,7 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
       _selectedId = null;
       _connectSourceId = null;
       _connectMode = false;
+      _alignMode = false;
       _insertMode = false;
     });
   }
@@ -183,7 +187,79 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
     );
   }
 
+  Future<void> _confirmSectionAlignment(
+    String movingNodeId,
+    String fixedNodeId,
+  ) async {
+    final moving = _working.nodeById(movingNodeId);
+    final fixed = _working.nodeById(fixedNodeId);
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Align disconnected paths?'),
+            content: Text(
+              'You selected "\${moving.label}" as the MOVING section '
+              'and "\${fixed.label}" as the FIXED physical junction.\n\n'
+              'ONLY continue if both points represent exactly the SAME '
+              'real-world spot. The entire disconnected section will shift '
+              'to that spot and receive a short route connection.\n\n'
+              'This matches one position, NOT compass heading or full '
+              'rotation. If the section direction differs, you must verify '
+              'and correct it before trusting navigation. Original walk '
+              'recordings remain untouched.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Align and join'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed || !mounted) return;
+    try {
+      final changed = _editor.alignAndJoinSections(
+        _working,
+        movingPointId: movingNodeId,
+        fixedPointId: fixedNodeId,
+      );
+      _commit(changed, select: fixedNodeId);
+      _fitFloor();
+      setState(() {
+        _connectSourceId = null;
+        _alignMode = false;
+      });
+    } catch (error) {
+      _showError(error);
+    }
+  }
+
   void _tapNode(String? id) {
+    if (_alignMode) {
+      if (id == null) return;
+      final source = _connectSourceId;
+      if (source == null) {
+        setState(() {
+          _connectSourceId = id;
+          _selectedId = id;
+        });
+        return;
+      }
+      if (source == id) {
+        setState(() {
+          _connectSourceId = null;
+          _alignMode = false;
+        });
+        return;
+      }
+      _confirmSectionAlignment(source, id);
+      return;
+    }
     if (_connectMode) {
       if (id == null) return;
       final source = _connectSourceId;
@@ -612,9 +688,10 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
                 ChoiceChip(
                   label: const Text('SELECT / DRAG'),
                   avatar: const Icon(Icons.open_with_rounded, size: 17),
-                  selected: !_connectMode && !_insertMode,
+                  selected: !_connectMode && !_alignMode && !_insertMode,
                   onSelected: (_) => setState(() {
                     _connectMode = false;
+                    _alignMode = false;
                     _insertMode = false;
                     _connectSourceId = null;
                   }),
@@ -625,6 +702,18 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
                   selected: _connectMode,
                   onSelected: (_) => setState(() {
                     _connectMode = !_connectMode;
+                    _alignMode = false;
+                    _insertMode = false;
+                    _connectSourceId = null;
+                  }),
+                ),
+                ChoiceChip(
+                  label: const Text('ALIGN SECTIONS'),
+                  avatar: const Icon(Icons.merge_type_rounded, size: 17),
+                  selected: _alignMode,
+                  onSelected: (_) => setState(() {
+                    _alignMode = !_alignMode;
+                    _connectMode = false;
                     _insertMode = false;
                     _connectSourceId = null;
                   }),
@@ -636,6 +725,7 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
                   onSelected: (_) => setState(() {
                     _insertMode = !_insertMode;
                     _connectMode = false;
+                    _alignMode = false;
                     _connectSourceId = null;
                   }),
                 ),
@@ -643,11 +733,16 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              _connectMode
+              _alignMode
                   ? _connectSourceId == null
-                      ? 'Tap the first mapped point to connect.'
-                      : 'Now tap the SECOND point on this floor.'
-                  : _insertMode
+                      ? 'Choose a point on the disconnected path to MOVE.'
+                      : 'Choose its matching known physical junction '
+                        'on the FIXED path.'
+                  : _connectMode
+                      ? _connectSourceId == null
+                          ? 'Tap the first point to make a SHORT walking link.'
+                          : 'Tap a second nearby point; only links up to 5 m.'
+                      : _insertMode
                       ? 'Tap a blue line to split it with a new waypoint.'
                       : 'Tap a dot to select. Drag blue or yellow dots to move.',
               style: const TextStyle(color: _green, fontSize: 12),
@@ -711,7 +806,7 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
                 floor: _floor,
                 viewport: canvasViewport,
                 selectedNodeId: _selectedId,
-                connectMode: _connectMode,
+                connectMode: _connectMode || _alignMode,
                 insertMode: _insertMode,
                 canMove: _canMove,
                 onTapNode: _tapNode,
