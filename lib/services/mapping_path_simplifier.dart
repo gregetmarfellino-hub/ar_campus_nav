@@ -6,10 +6,12 @@ class MappingSimplificationResult {
   const MappingSimplificationResult({
     required this.points,
     required this.markers,
+    this.segmentStarts = const [0],
   });
 
   final List<MappingPoint> points;
   final List<MappingMarker> markers;
+  final List<int> segmentStarts;
 }
 
 class MappingPathSimplifier {
@@ -18,11 +20,19 @@ class MappingPathSimplifier {
   MappingSimplificationResult simplify({
     required List<MappingPoint> points,
     required List<MappingMarker> markers,
+    List<int> segmentStarts = const [0],
     double toleranceMeters = 0.10,
   }) {
+    final breaks = <int>{
+      if (points.isNotEmpty) 0,
+      for (final index in segmentStarts)
+        if (index >= 0 && index < points.length) index,
+    }.toList()..sort();
+
     if (points.length <= 2) {
       return MappingSimplificationResult(
         points: List<MappingPoint>.unmodifiable(points),
+        segmentStarts: List<int>.unmodifiable(breaks),
         markers: _reindexMarkers(
           markers: markers,
           oldToNew: {
@@ -34,6 +44,11 @@ class MappingPathSimplifier {
     }
 
     final protected = <int>{0, points.length - 1};
+    // Never run RDP over a disconnected gap. Both sides are protected.
+    for (final firstIndex in breaks.skip(1)) {
+      protected.add(firstIndex);
+      protected.add(firstIndex - 1);
+    }
     for (final marker in markers) {
       protected.add(
         marker.pointIndex.clamp(0, points.length - 1).toInt(),
@@ -65,6 +80,9 @@ class MappingPathSimplifier {
 
     return MappingSimplificationResult(
       points: List<MappingPoint>.unmodifiable(simplified),
+      segmentStarts: List<int>.unmodifiable([
+        for (final oldStart in breaks) oldToNew[oldStart]!,
+      ]),
       markers: _reindexMarkers(
         markers: markers,
         oldToNew: oldToNew,
