@@ -313,6 +313,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final category = switch (node.type) {
       'stairs' => 'stairs',
+      'elevator' => 'elevator',
       'anchor' => 'anchor',
       'waypoint' => 'waypoint',
       _ => 'place',
@@ -343,6 +344,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return 'Destination';
     }
     if (node.type == 'stairs') return 'Stairs';
+    if (node.type == 'elevator') return 'Elevator';
     if (_anchorForNode(venue, node) != null || node.type == 'anchor') {
       return 'QR anchor';
     }
@@ -353,6 +355,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return switch (_markerKind(venue, node)) {
       'Destination' => Icons.flag_rounded,
       'Stairs' => Icons.stairs_rounded,
+      'Elevator' => Icons.elevator_rounded,
       'QR anchor' => Icons.qr_code_2_rounded,
       _ => Icons.add_location_alt_rounded,
     };
@@ -362,6 +365,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return switch (_markerKind(venue, node)) {
       'Destination' => const Color(0xFFFF6B8A),
       'Stairs' => const Color(0xFFF9C74F),
+      'Elevator' => const Color(0xFFBC9BFF),
       'QR anchor' => const Color(0xFF3DDC97),
       _ => const Color(0xFFCBA6F7),
     };
@@ -505,11 +509,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                 ],
-                if (kind == 'Stairs') ...[
+                if (kind == 'Stairs' || kind == 'Elevator') ...[
                   const SizedBox(height: 10),
                   const Text(
-                    'Floor transition point. Multi-floor routing will connect '
-                    'this marker to its matching stairs layer later.',
+                    'Floor transition point. Use Venue Editor → LINK FLOORS '
+                    'to join this entrance to its matching floor portal.',
                     style: TextStyle(
                       color: Colors.white38,
                       fontSize: 11,
@@ -892,6 +896,8 @@ class _DestinationCard extends StatelessWidget {
         return Icons.science_rounded;
       case 'stairs':
         return Icons.stairs_rounded;
+      case 'elevator':
+        return Icons.elevator_rounded;
       case 'entrance':
         return Icons.door_front_door_rounded;
       case 'landmark':
