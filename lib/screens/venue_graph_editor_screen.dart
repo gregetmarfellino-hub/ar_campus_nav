@@ -461,11 +461,50 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
     }
   }
 
-  void _deleteWaypoint() {
+  Future<void> _deleteWaypoint() async {
     final selected = _selectedNode;
     if (selected == null) return;
+    final incident = _selectedEdges;
+    final healable = incident.length == 2 &&
+        incident.every((edge) => edge.bidirectional && edge.accessible);
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Remove ${selected.label}?'),
+        content: Text(
+          'Delete this erroneous routing point and its '
+          '${incident.length} attached connection(s)?\\n\\n'
+          'DELETE & DISCONNECT is the safe choice after an AR tracking '
+          'jump: it does not pretend an unrecorded path exists.\\n\\n'
+          'REPAIR CORRIDOR can reconnect two nearby neighbors only '
+          'when it is a short, verified straight hallway (max 5 m). '
+          'You can Undo before saving.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'disconnect'),
+            child: const Text('Delete & disconnect'),
+          ),
+          if (healable)
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, 'heal'),
+              child: const Text('Repair short corridor'),
+            ),
+        ],
+      ),
+    );
+    if (!mounted || choice == null) return;
     try {
-      _commit(_editor.deleteUnusedWaypoint(_working, selected.id));
+      final changed = _editor.removeBadWaypoint(
+        _working,
+        selected.id,
+        reconnectNeighbors: choice == 'heal',
+      );
+      _commit(changed);
       setState(() => _selectedId = null);
     } catch (error) {
       _showError(error);
@@ -880,7 +919,7 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
                             onPressed: locked ? null : _deleteWaypoint,
                             icon: const Icon(Icons.delete_outline_rounded,
                                 size: 17),
-                            label: const Text('Delete unused'),
+                            label: const Text('Remove bad point'),
                           ),
                         ],
                       ),
