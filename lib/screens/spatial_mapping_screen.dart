@@ -1569,15 +1569,18 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
               prefixIcon: Icon(Icons.layers_rounded),
             ),
             items: [
-              for (final floor in widget.venue.floors)
+              for (final floor in (<int>{
+                ...widget.venue.floors,
+                -1, 1, 2, 3,
+                _floor,
+              }.toList()..sort()))
                 DropdownMenuItem(
                   value: floor,
-                  child: Text('Floor $floor'),
-                ),
-              if (!widget.venue.floors.contains(_floor))
-                DropdownMenuItem(
-                  value: _floor,
-                  child: Text('Floor $_floor'),
+                  child: Text(
+                    floor < 0
+                        ? 'Basement ${floor.abs()}'
+                        : 'Floor $floor',
+                  ),
                 ),
             ],
             onChanged: _mappingActive || _starting
