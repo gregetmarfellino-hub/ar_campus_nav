@@ -1322,7 +1322,8 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
 
   Widget _markerButton(String type, IconData icon) {
     return OutlinedButton.icon(
-      onPressed: (!_recording || _trackingInterrupted || _points.isEmpty)
+      onPressed: (!_recording || _userPaused ||
+              _trackingInterrupted || _points.isEmpty)
           ? null
           : () => _addMarker(type),
       icon: Icon(icon, size: 18),
