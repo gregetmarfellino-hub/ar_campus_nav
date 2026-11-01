@@ -220,7 +220,7 @@ class ArCoreTrackingEngine(
     // This is verification progress, NOT a calibrated probability of accuracy.
     // Keep a short sliding pose window and tolerate brief ARCore image dropouts.
     private val navigationOfflineSamplesRequired = 12
-    private val navigationOfflineMaxSamples = 24
+    private val navigationOfflineMaxSamples = 18
     private val navigationOfflineMinObservationNanos = 700_000_000L
     private val navigationOfflineViewpointMeters = 0.07f
     // Image FULL_TRACKING may briefly disappear when the user tilts the phone.
@@ -249,6 +249,9 @@ class ArCoreTrackingEngine(
     private var navigationOfflineTotalHypothesisSwitches = 0
     private var navigationOfflineTotalReferenceLosses = 0
     private var navigationOfflineTotalAcceptedLocks = 0
+    private var navigationOfflineTotalReferenceDisagreements = 0
+    private var navigationOfflineLastAcceptedLockSummary: String? = null
+    private var navigationOfflineLastRelockComparison: String? = null
     private var navigationOfflineCandidateImageName: String? = null
     private var navigationOfflineFirstSampleNanos = 0L
     private var navigationOfflineLastSampleNanos = 0L
@@ -416,6 +419,9 @@ class ArCoreTrackingEngine(
         navigationOfflineTotalHypothesisSwitches = 0
         navigationOfflineTotalReferenceLosses = 0
         navigationOfflineTotalAcceptedLocks = 0
+        navigationOfflineTotalReferenceDisagreements = 0
+        navigationOfflineLastAcceptedLockSummary = null
+        navigationOfflineLastRelockComparison = null
         navigationOfflineLastDiagnosticReason = null
         navigationOfflineLastDiagnosticSampleNanos = 0L
         navigationOfflineLastProgressUpdateNanos = 0L
@@ -2289,10 +2295,16 @@ class ArCoreTrackingEngine(
         val viewpointRatio =
             (navigationOfflineMaxCameraBaseline /
                 navigationOfflineViewpointMeters).coerceIn(0f, 1f)
-        // Each component is observable. 100 is reserved for an accepted lock;
-        // it must never be presented as a metric of centimeter-level accuracy.
-        return ((0.40f * sampleRatio + 0.20f * durationRatio +
-            0.40f * viewpointRatio) * 100f).toInt().coerceIn(0, 99)
+        val spread = calculateOfflinePoseSpread()
+        // Mandatory quality gate: progress can approach 100 only when the
+        // recent observations agree in BOTH position and heading. This is
+        // verification completeness, not probability of absolute map accuracy.
+        val stable = spread != null &&
+            spread.positionRmsCm <= 4.5f &&
+            spread.headingMaxDegrees <= 3.10f
+        return ((0.25f * sampleRatio + 0.15f * durationRatio +
+            0.35f * viewpointRatio +
+            (if (stable) 0.25f else 0f)) * 100f).toInt().coerceIn(0, 99)
     }
 
     private data class OfflinePoseSpread(
@@ -2342,6 +2354,11 @@ class ArCoreTrackingEngine(
         navigationOfflineLastDiagnosticReason = event
         navigationOfflineLastDiagnosticReasonAtMillis = now
         val line = "${now}ms | $event | $details"
+        if (event == "START_LOCK_ACCEPTED") {
+            navigationOfflineLastAcceptedLockSummary = line
+        } else if (event == "SAME_SESSION_RELOCK_DELTA") {
+            navigationOfflineLastRelockComparison = line
+        }
         synchronized(navigationOfflineDiagnosticLines) {
             if (navigationOfflineDiagnosticLines.size >= navigationOfflineDiagnosticCapacity) {
                 navigationOfflineDiagnosticLines.removeFirst()
@@ -2370,13 +2387,17 @@ class ArCoreTrackingEngine(
             append(navigationOfflineSampleCount)
             append("/")
             append(navigationOfflineSamplesRequired)
-            append(" • Parallax ")
-            append(String.format(java.util.Locale.US, "%.0f",
+            append(" • Move ")
+            append(String.format(java.util.Locale.US, "%.1f",
                 navigationOfflineMaxCameraBaseline * 100f))
             append("/")
-            append(String.format(java.util.Locale.US, "%.0f",
+            append(String.format(java.util.Locale.US, "%.1f",
                 navigationOfflineViewpointMeters * 100f))
             append(" cm")
+            if (navigationOfflineChallengerSamples.isNotEmpty()) {
+                append(" • Alt ")
+                append(navigationOfflineChallengerSamples.size)
+            }
             if (spread != null) {
                 append(" • RMS ")
                 append(String.format(java.util.Locale.US, "%.1f",
@@ -2391,7 +2412,8 @@ class ArCoreTrackingEngine(
         mainHandler.post {
             navigationScanProgressCard?.visibility = View.VISIBLE
             navigationScanProgressBar?.progress = progress
-            navigationScanProgressLabel?.text = "$stage • $progress% scan progress"
+            navigationScanProgressLabel?.text =
+                "$stage • $progress% checks completed"
             navigationScanDiagnosticsText?.text = details
         }
         if (frameTimestampNanos - navigationOfflineLastDiagnosticSampleNanos >=
@@ -2415,9 +2437,19 @@ class ArCoreTrackingEngine(
 
     private fun copyOfflineDiagnostics() {
         val payload = buildString {
-            appendLine("AR Campus Navigation — V5 localization diagnostics")
+            appendLine("AR Campus Navigation — V6 localization diagnostics")
             appendLine("ARCore world coordinates are session-local; do not compare")
             appendLine("raw XYZ from different app launches as absolute meters.")
+            appendLine("Accepted locks: $navigationOfflineTotalAcceptedLocks")
+            appendLine("Ignored pose outliers: $navigationOfflineTotalOutliers")
+            appendLine("Consensus switches: $navigationOfflineTotalHypothesisSwitches")
+            appendLine("Prolonged reference losses: $navigationOfflineTotalReferenceLosses")
+            appendLine("Independent-reference disagreements: " +
+                navigationOfflineTotalReferenceDisagreements)
+            appendLine("Last lock: " +
+                (navigationOfflineLastAcceptedLockSummary ?: "NONE IN SESSION"))
+            appendLine("Last same-session relock: " +
+                (navigationOfflineLastRelockComparison ?: "NONE"))
             appendLine()
             synchronized(navigationOfflineDiagnosticLines) {
                 for (line in navigationOfflineDiagnosticLines) appendLine(line)
@@ -2697,11 +2729,12 @@ class ArCoreTrackingEngine(
                 val alignment = fx * check.forwardX + fz * check.forwardZ
                 val angleDifference = acos(alignment.coerceIn(-1f, 1f)) *
                     (180f / Math.PI.toFloat())
-                if (distance > 0.18f || alignment < 0.991f) {
+                if (distance > 0.10f || alignment < 0.999f) {
                     // Do not merge contradictory physical references. But
                     // neither should one bad match erase good prior samples.
                     navigationOfflineIndependentReferenceAgreements = 0
                     navigationOfflineFreshSamplesAfterLoss = 0
+                    navigationOfflineTotalReferenceDisagreements++
                     logOfflineDiagnostic(
                         "REFERENCE_DISAGREEMENT",
                         "positionDeltaCm=" +
@@ -4391,7 +4424,7 @@ class ArCoreTrackingEngine(
         }
         navigationScanProgressCard = scanCard
         val scanLabel = TextView(activity).apply {
-            text = "FINDING START • 0% scan progress"
+            text = "FINDING START • 0% checks completed"
             textSize = 13f
             setTextColor(Color.WHITE)
         }
@@ -4415,7 +4448,7 @@ class ArCoreTrackingEngine(
             ).apply { topMargin = dp(6) },
         )
         val diagText = TextView(activity).apply {
-            text = "Frames 0/12 • Parallax 0/7 cm"
+            text = "Frames 0/12 • Move 0.0/7.0 cm"
             textSize = 10f
             setTextColor(0xFFD0DAE5.toInt())
         }
