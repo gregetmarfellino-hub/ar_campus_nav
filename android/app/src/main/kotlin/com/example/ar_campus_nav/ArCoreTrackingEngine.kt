@@ -2471,6 +2471,144 @@ class ArCoreTrackingEngine(
             forwardX = worldFx / length, forwardZ = worldFz / length,
         )
     }
+    /**
+     * Horizontal phone travel tangent to the saved reference surface.
+     * Do not count phone rotation or a forward/backward camera move into a wall.
+     */
+    private fun offlineCameraBaseline(
+        currentPose: Pose,
+        startX: Float,
+        startZ: Float,
+        normal: FloatArray,
+    ): Float {
+        val cameraDx = currentPose.tx() - startX
+        val cameraDz = currentPose.tz() - startZ
+        val nx = normal[0]
+        val nz = normal[2]
+        val length = sqrt(nx * nx + nz * nz)
+        return if (length < 0.1f) {
+            sqrt(cameraDx * cameraDx + cameraDz * cameraDz)
+        } else {
+            abs(cameraDx * (-nz / length) + cameraDz * (nx / length))
+        }
+    }
+
+    /**
+     * A persistent inconsistent estimate forms a SECOND hypothesis instead
+     * of immediately deleting the first one. Only a temporally coherent
+     * challenger (12 independently spaced frames over >=700ms) may replace
+     * the old candidate. Either hypothesis still needs the normal final
+     * parallax + RMS + yaw checks before a route can be shown.
+     *
+     * This cannot distinguish two visually identical physical wall patterns:
+     * a second independent visual reference or physical calibration is still
+     * required for a high-confidence building-level placement.
+     */
+    private fun considerOfflineChallenger(
+        estimate: OfflineStartEstimate,
+        currentPose: Pose,
+        referenceNormal: FloatArray,
+        frameTimestampNanos: Long,
+    ): Boolean {
+        val challenger = navigationOfflineChallengerSamples
+        if (challenger.isNotEmpty()) {
+            val n = challenger.size.toFloat()
+            var ax = 0f
+            var ay = 0f
+            var az = 0f
+            var afx = 0f
+            var afz = 0f
+            for (sample in challenger) {
+                ax += sample.x
+                ay += sample.y
+                az += sample.z
+                afx += sample.forwardX
+                afz += sample.forwardZ
+            }
+            val dx = estimate.x - ax / n
+            val dy = estimate.y - ay / n
+            val dz = estimate.z - az / n
+            val distance = sqrt(dx * dx + dy * dy + dz * dz)
+            val forwardLength = sqrt(afx * afx + afz * afz)
+            val facing = if (forwardLength > 0.1f) {
+                (estimate.forwardX * afx + estimate.forwardZ * afz) /
+                    forwardLength
+            } else {
+                -1f
+            }
+            // A second competing pattern must also form a stable cluster.
+            if (distance > 0.07f || facing < 0.998f) {
+                resetOfflineChallenger()
+            }
+        }
+
+        if (challenger.isEmpty()) {
+            navigationOfflineChallengerFirstSampleNanos = frameTimestampNanos
+            navigationOfflineChallengerFirstCameraX = currentPose.tx()
+            navigationOfflineChallengerFirstCameraZ = currentPose.tz()
+            navigationOfflineChallengerReferenceNormal = referenceNormal.copyOf()
+        }
+        challenger.addLast(estimate)
+        if (challenger.size > navigationOfflineMaxSamples) {
+            challenger.removeFirst()
+        }
+        navigationOfflineChallengerBaseline = maxOf(
+            navigationOfflineChallengerBaseline,
+            offlineCameraBaseline(
+                currentPose,
+                navigationOfflineChallengerFirstCameraX,
+                navigationOfflineChallengerFirstCameraZ,
+                navigationOfflineChallengerReferenceNormal,
+            ),
+        )
+        val challengerDuration = frameTimestampNanos -
+            navigationOfflineChallengerFirstSampleNanos
+        if (challenger.size < navigationOfflineSamplesRequired ||
+            challengerDuration < navigationOfflineMinObservationNanos
+        ) {
+            return false
+        }
+
+        val adopted = challenger.toList()
+        val firstTimestamp = navigationOfflineChallengerFirstSampleNanos
+        val firstX = navigationOfflineChallengerFirstCameraX
+        val firstZ = navigationOfflineChallengerFirstCameraZ
+        val firstNormal = navigationOfflineChallengerReferenceNormal.copyOf()
+        val observedBaseline = navigationOfflineChallengerBaseline
+        val discarded = navigationOfflineSampleCount
+        resetOfflineVisualSamples()
+        for (sample in adopted) {
+            navigationOfflinePoseSamples.addLast(sample)
+            navigationOfflineSampleCount++
+            navigationOfflinePositionX += sample.x
+            navigationOfflinePositionY += sample.y
+            navigationOfflinePositionZ += sample.z
+            navigationOfflineForwardX += sample.forwardX
+            navigationOfflineForwardZ += sample.forwardZ
+        }
+        navigationOfflineFirstSampleNanos = firstTimestamp
+        navigationOfflineLastSampleNanos = frameTimestampNanos
+        navigationOfflineLastProcessedNanos = frameTimestampNanos
+        navigationOfflineLastObservedNanos = frameTimestampNanos
+        navigationOfflineFirstCameraX = firstX
+        navigationOfflineFirstCameraY = currentPose.ty()
+        navigationOfflineFirstCameraZ = firstZ
+        navigationOfflineFirstReferenceNormal = firstNormal
+        navigationOfflineMaxCameraBaseline = observedBaseline
+        // A newly promoted hypothesis must demonstrate several fresh
+        // observations before lock; adoption itself is never an acceptance.
+        navigationOfflineFreshSamplesAfterLoss = 0
+        navigationOfflineTotalHypothesisSwitches++
+        logOfflineDiagnostic(
+            "CONSENSUS_SWITCH",
+            "oldFrames=$discarded newFrames=${adopted.size} " +
+                "newBaselineCm=" +
+                String.format(java.util.Locale.US, "%.1f",
+                    observedBaseline * 100f),
+        )
+        return true
+    }
+
     private fun tryLockOfflineVisualStart(
         activeSession: Session,
         currentCameraPose: Pose,
