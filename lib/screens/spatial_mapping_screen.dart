@@ -750,7 +750,11 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         return;
       }
 
-      if (_points.isNotEmpty) {
+      // During a USER pause, walking somewhere else is intentional.
+      // Do not force the normal same-segment 1.5m recovery gate, otherwise
+      // START SEPARATE SECTION would be impossible after a tracking outage.
+      // SAME-path resume still enforces the stricter 0.60m check.
+      if (_points.isNotEmpty && !_userPaused) {
         final probe = _mappingPointFromPose(pose);
         final gap = _distance3d(_points.last, probe);
         if (gap > 1.5) {
@@ -768,8 +772,11 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       _trackingInterrupted = false;
       _recoveryPoseSamples = 0;
       _consecutiveRejectedPoseJumps = 0;
-      _trackingState = 'TRACKING';
-      _message = 'Tracking recovered. Continue walking.';
+      _trackingState = _userPaused ? 'USER PAUSED' : 'TRACKING';
+      _message = _userPaused
+          ? 'Tracking recovered while mapping remains paused. '
+            'Resume at your previous point or start a separate section here.'
+          : 'Tracking recovered. Continue walking.';
       _refreshUi(force: true);
     }
 
