@@ -266,4 +266,43 @@ void main() {
       throwsStateError,
     );
   });
+  test('delete corrupt waypoint disconnects edges and preserves anchors', () {
+    final before = mappedVenue();
+    final after = editor.removeBadWaypoint(before, 'hall');
+    expect(after.nodes.any((node) => node.id == 'hall'), isFalse);
+    expect(after.edges, isEmpty);
+    expect(before.edges.length, 2);
+    expect(after.anchors.single.nodeId, 'entrance');
+    expect(editor.unreachableDestinations(after), ['Room 101']);
+    editor.validate(after);
+  });
+
+  test('repair simple bad bend reconnects nearby neighbors safely', () {
+    final before = editor.moveNode(mappedVenue(), nodeId: 'room', x: 0, y: 4.5);
+    final after = editor.removeBadWaypoint(
+      before, 'hall', reconnectNeighbors: true,
+    );
+    expect(after.nodes.any((node) => node.id == 'hall'), isFalse);
+    expect(after.edges, hasLength(1));
+    expect(after.edges.single.from, 'entrance');
+    expect(after.edges.single.to, 'room');
+    expect(after.edges.single.distanceMeters, closeTo(4.5, 0.001));
+  });
+
+  test('repair refuses a large fabricated shortcut', () {
+    final before = mappedVenue();
+    expect(
+      () => editor.removeBadWaypoint(
+        before, 'hall', reconnectNeighbors: true,
+      ),
+      throwsStateError,
+    );
+  });
+
+  test('corrupt point removal cannot delete destination or QR anchor', () {
+    final before = mappedVenue();
+    expect(() => editor.removeBadWaypoint(before, 'room'), throwsStateError);
+    expect(() => editor.removeBadWaypoint(before, 'entrance'), throwsStateError);
+  });
+
 }
