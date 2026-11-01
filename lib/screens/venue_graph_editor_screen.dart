@@ -433,7 +433,16 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
       );
       await _storage.save(updated);
       if (!mounted) return;
-      Navigator.of(context).pop(true);
+      // PopScope protects unsaved edits. The successful write is now clean;
+      // update the route-scoped canPop state before closing the editor.
+      setState(() {
+        _currentDocument = updated;
+        _lastSaved = _working;
+        _saving = false;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) Navigator.of(context).pop(true);
+      });
     } catch (error) {
       _showError(error);
       if (mounted) setState(() => _saving = false);
