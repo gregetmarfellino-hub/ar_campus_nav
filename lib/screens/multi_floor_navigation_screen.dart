@@ -93,12 +93,12 @@ class _MultiFloorNavigationScreenState
                 'Stand at the REAL ${section.route.nodes.first.label} '
                 'landing you just confirmed. This saved floor is in a '
                 'different ARCore world frame from the previous floor.\n\n'
-                'The next AR camera starts a fresh local session: '
-                'tap SET START at the exact landing, walk 2–3 m down '
-                'the first REAL mapped hallway, then LOCK DIRECTION.\n\n'
-                'No QR is required. Manual heading alignment can still '
-                'drift, so use the actual signs and corridors to verify '
-                'the blue guidance.',
+                'The next AR camera starts a fresh local session. '
+                'Face the first REAL mapped corridor and tap '
+                'FACE PATH & START once — no 2-metre walk or QR required.\n\n'
+                'This trusts where you stand and point the camera. '
+                'Compare the first arrow with the REAL corridor; stop '
+                'and RE-ALIGN if it does not match.',
               ),
               actions: [
                 TextButton(
@@ -380,8 +380,9 @@ class _MultiFloorNavigationScreenState
               detail: 'Once you reach the matching landing, confirm that '
                   'specific physical spot. V9 then starts a NEW ARCore '
                   'session for the next floor. If there is no saved visual '
-                  'reference, manual SET START + LOCK DIRECTION is used; '
-                  'no QR placement is required.',
+                  'reference, stand at the correct landing, face the first '
+                  'real corridor and tap FACE PATH & START. '
+                  'No QR or 2-metre walk is required.',
             ),
             CheckboxListTile(
               contentPadding: EdgeInsets.zero,

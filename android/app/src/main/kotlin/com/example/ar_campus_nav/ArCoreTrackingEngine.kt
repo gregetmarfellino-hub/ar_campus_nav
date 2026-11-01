@@ -87,6 +87,7 @@ class ArCoreTrackingEngine(
     private var navigationCopyDiagnosticsButton: Button? = null
     private var navigationArrowText: TextView? = null
     private var navigationAlignButton: Button? = null
+    private var navigationQuickAlignButton: Button? = null
     private var navigationReanchorButton: Button? = null
     private var navigationExitButton: Button? = null
 
@@ -180,6 +181,8 @@ class ArCoreTrackingEngine(
     private var navigationMode = false
     private var navigationAligned = false
     private var alignmentRequested = false
+    @Volatile private var navigationQuickAlignRequested = false
+    @Volatile private var navigationManualResetRequested = false
 
     // Visual QR localization. Flutter supplies the exact QR bitmap shown to
     // users plus its physical printed width. ARCore detects that same planar
@@ -468,6 +471,8 @@ class ArCoreTrackingEngine(
         }
         navigationAligned = false
         alignmentRequested = false
+        navigationQuickAlignRequested = false
+        navigationManualResetRequested = false
         resetNavigationCalibration()
         resetNavigationContinuity()
         activeRouteIndex = 1
@@ -1566,6 +1571,7 @@ class ArCoreTrackingEngine(
         navigationCopyDiagnosticsButton = null
         navigationArrowText = null
         navigationAlignButton = null
+        navigationQuickAlignButton = null
         navigationReanchorButton = null
         navigationExitButton = null
         qrPlacementOverlay = null
@@ -1626,6 +1632,8 @@ class ArCoreTrackingEngine(
         navigationMode = false
         navigationAligned = false
         alignmentRequested = false
+        navigationQuickAlignRequested = false
+        navigationManualResetRequested = false
         resetNavigationCalibration()
         resetNavigationContinuity()
         navigationArrivalShown = false
@@ -1826,7 +1834,39 @@ class ArCoreTrackingEngine(
                     )
                 }
 
-                if (alignmentRequested) {
+                if (navigationManualResetRequested) {
+                    navigationManualResetRequested = false
+                    resetNavigationCalibration()
+                    releaseNavigationAnchor()
+                    navigationAligned = false
+                    alignmentRequested = false
+                    navigationQuickAlignRequested = false
+                    resetNavigationContinuity()
+                    navigationArrivalShown = false
+                    activeRouteIndex = 1
+                    mainHandler.post {
+                        navigationQuickAlignButton?.visibility = View.VISIBLE
+                        navigationAlignButton?.apply {
+                            visibility = View.VISIBLE
+                            isEnabled = true
+                            alpha = 1f
+                            text = "WALK ALIGN"
+                        }
+                        navigationReanchorButton?.visibility = View.GONE
+                    }
+                    setNavigationArrowVisible(false)
+                    setNavigationHud(
+                        "RE-ALIGN START: return to the exact mapped start. " +
+                            "Face the first real hallway and tap FACE PATH & START. " +
+                            "This is manual alignment, not visual relocalization.",
+                    )
+                }
+                if (navigationQuickAlignRequested && !navigationAligned) {
+                    navigationQuickAlignRequested = false
+                    alignmentRequested = false
+                    completeOneTapHeadingAlignment(currentPose)
+                }
+                if (alignmentRequested && !navigationAligned) {
                     if (navigationCalibrationStart == null) {
                         captureNavigationCalibrationStart(currentPose)
                     } else if (navigationCalibrationReady) {
@@ -3400,6 +3440,44 @@ class ArCoreTrackingEngine(
         val sampleCount: Int,
     )
 
+    /**
+     * One-tap manual heading lock at a user-confirmed real-world point.
+     * No movement-based calibration is needed, but this is NOT an independently
+     * verified 6DoF location: pose/heading quality depend on user placement.
+     */
+    private fun completeOneTapHeadingAlignment(cameraPose: Pose) {
+        val activeSession = session ?: run {
+            setNavigationHud("ARCore session is not ready. Keep the camera steady.")
+            return
+        }
+        if (navigationPoints.size < 2) {
+            setNavigationHud("This floor has no walkable AR route.")
+            return
+        }
+        resetNavigationCalibration()
+        releaseNavigationAnchor()
+        // horizontalAnchorPose's local -Z is the phone's facing direction.
+        // The Flutter route's local forward axis also uses local -Z.
+        val alignedPose = horizontalAnchorPose(cameraPose)
+        navigationWorldAnchor = activeSession.createAnchor(alignedPose)
+        navigationForwardX = 0f
+        navigationForwardZ = -1f
+        navigationRightX = 1f
+        navigationRightZ = 0f
+        navigationAligned = true
+        activeRouteIndex = 1
+        resetNavigationContinuity()
+        navigationLastAcceptedPosition = cameraPose.translation.copyOf()
+        setNavigationAlignedUi()
+        setNavigationHud(
+            "MANUAL HEADING — start assumed at $navigationStartLabel. " +
+                "Route faces where the phone pointed. Verify the first " +
+                "corridor against the actual building. If arrows disagree, " +
+                "stop and tap RE-ALIGN. No 2 m walk required.",
+        )
+        emitStatus("MANUAL_HEADING_LOCKED")
+    }
+
     private fun captureNavigationCalibrationStart(pose: Pose) {
         resetNavigationCalibration()
         releaseNavigationAnchor()
@@ -3634,6 +3712,7 @@ class ArCoreTrackingEngine(
         navigationAligned = false
 
         mainHandler.post {
+            navigationQuickAlignButton?.visibility = View.VISIBLE
             navigationAlignButton?.apply {
                 visibility = android.view.View.VISIBLE
                 isEnabled = true
@@ -4529,7 +4608,9 @@ class ArCoreTrackingEngine(
                     "Legacy location anchor: $navigationStartLabel\n" +
                         "Visual orientation is unavailable; use manual alignment."
                 else ->
-                    "Manual preview: stand exactly at the selected mapped start."
+                    "MANUAL START: stand at the mapped start and FACE " +
+                        "the first real corridor. Tap FACE PATH & START. " +
+                        "No 2 m walk required; heading is your estimate."
             }
             setTextColor(Color.WHITE)
             textSize = 15f
@@ -4626,13 +4707,50 @@ class ArCoreTrackingEngine(
             gravity = Gravity.CENTER
         }
 
+        val quickAlign = Button(activity).apply {
+            text = "FACE PATH\n& START"
+            textSize = 12f
+            setTextColor(Color.BLACK)
+            background = roundedBackground(
+                0xFF3DDC97.toInt(),
+                dp(22).toFloat(),
+            )
+            setOnClickListener {
+                // The explicit manual option replaces automatic image locking
+                // for this session; visual checkpoints remain available when
+                // the user does not choose manual heading.
+                if (navigationOfflineEnabled) {
+                    logOfflineDiagnostic(
+                        "MANUAL_QUICK_ALIGNMENT",
+                        "offline visual reference disabled by user",
+                    )
+                    navigationOfflineEnabled = false
+                    resetOfflineVisualSamples()
+                    navigationScanProgressCard?.visibility = View.GONE
+                }
+                if (navigationVisualAnchorEnabled) {
+                    navigationVisualAnchorEnabled = false
+                    resetVisualAnchorSamples()
+                }
+                // A manually chosen camera pose does NOT verify a legacy QR
+                // location even if this route originally had a named anchor.
+                navigationAnchorLocalized = false
+                setNavigationHud(
+                    "Hold still at the mapped START, facing the first " +
+                        "REAL corridor. Locking approximate heading...",
+                )
+                navigationQuickAlignRequested = true
+            }
+        }
+        navigationQuickAlignButton = quickAlign
+
         val align = Button(activity).apply {
             text = when {
-                navigationOfflineEnabled -> "MANUAL FALLBACK"
-                navigationVisualAnchorEnabled -> "MANUAL FALLBACK"
-                navigationVisualSetupWarning != null -> "MANUAL FALLBACK"
-                navigationAnchorLocalized -> "SET QR POSITION"
-                else -> "SET START"
+                navigationOfflineEnabled -> "WALK ALIGN"
+                navigationVisualAnchorEnabled -> "WALK ALIGN"
+                navigationVisualSetupWarning != null -> "WALK ALIGN"
+                navigationAnchorLocalized -> "WALK ALIGN"
+                else -> "WALK ALIGN"
             }
             textSize = 14f
             setTextColor(Color.BLACK)
@@ -4680,7 +4798,15 @@ class ArCoreTrackingEngine(
                 dp(22).toFloat(),
             )
             setOnClickListener {
-                if (navigationOfflineEnabled) {
+                if (!navigationOfflineEnabled &&
+                    !navigationVisualAnchorEnabled &&
+                    !navigationAnchorLocalized) {
+                    navigationManualResetRequested = true
+                    setNavigationHud(
+                        "Stop walking. Return to the known start " +
+                            "and face the real hallway before realigning.",
+                    )
+                } else if (navigationOfflineEnabled) {
                     navigationOfflineRescanRequested = true
                     visibility = android.view.View.GONE
                     setNavigationHud(
@@ -4713,9 +4839,15 @@ class ArCoreTrackingEngine(
         navigationExitButton = exit
 
         controls.addView(
+            quickAlign,
+            LinearLayout.LayoutParams(0, dp(60), 3f).apply {
+                marginEnd = dp(6)
+            },
+        )
+        controls.addView(
             align,
-            LinearLayout.LayoutParams(0, dp(56), 2f).apply {
-                marginEnd = dp(8)
+            LinearLayout.LayoutParams(0, dp(60), 2f).apply {
+                marginEnd = dp(6)
             },
         )
         controls.addView(
@@ -4726,14 +4858,14 @@ class ArCoreTrackingEngine(
         )
         controls.addView(
             exit,
-            LinearLayout.LayoutParams(0, dp(56), 1f),
+            LinearLayout.LayoutParams(0, dp(60), 1f),
         )
 
         overlay.addView(
             controls,
             FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
-                dp(56),
+                dp(60),
             ).apply {
                 gravity = Gravity.BOTTOM
                 setMargins(dp(24), 0, dp(24), dp(42))
@@ -4752,16 +4884,18 @@ class ArCoreTrackingEngine(
 
     private fun setNavigationAlignedUi() {
         mainHandler.post {
+            navigationQuickAlignButton?.visibility = View.GONE
             navigationAlignButton?.apply {
                 visibility = android.view.View.GONE
                 isEnabled = true
                 alpha = 1f
             }
             navigationReanchorButton?.apply {
-                text = if (navigationOfflineEnabled) {
-                    "RE-LOCK START"
-                } else {
-                    "SCAN LOCATION"
+                text = when {
+                    navigationOfflineEnabled -> "RE-LOCK START"
+                    !navigationVisualAnchorEnabled && !navigationAnchorLocalized ->
+                        "RE-ALIGN"
+                    else -> "SCAN LOCATION"
                 }
                 // Offline routes can re-localize without the physical scanner.
                 visibility = android.view.View.VISIBLE
@@ -4781,6 +4915,7 @@ class ArCoreTrackingEngine(
             navigationStatusText?.text =
                 "DESTINATION REACHED\n$navigationDestination"
             navigationAlignButton?.visibility = android.view.View.GONE
+            navigationQuickAlignButton?.visibility = android.view.View.GONE
             navigationReanchorButton?.visibility = android.view.View.GONE
             navigationExitButton?.text = "DONE"
         }
@@ -4909,6 +5044,7 @@ class ArCoreTrackingEngine(
         navigationCopyDiagnosticsButton = null
         navigationArrowText = null
         navigationAlignButton = null
+        navigationQuickAlignButton = null
         navigationReanchorButton = null
         navigationExitButton = null
         surfaceView = null
@@ -4941,6 +5077,8 @@ class ArCoreTrackingEngine(
         navigationMode = false
         navigationAligned = false
         alignmentRequested = false
+        navigationQuickAlignRequested = false
+        navigationManualResetRequested = false
         resetNavigationCalibration()
         resetNavigationContinuity()
         navigationArrivalShown = false

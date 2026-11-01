@@ -412,9 +412,9 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
                       '16 cm ${visualAnchor.label} QR and hold it steady until '
                       'the app locks position + direction.'
                   : _anchor == null
-                      ? 'Manual preview: stand exactly at the selected map start, '
-                          'tap SET START, walk 2–3 m along the first real path, then '
-                          'LOCK DIRECTION.'
+                      ? 'Manual start: stand exactly at the selected mapped point, '
+                          'FACE the first real corridor and tap FACE PATH & START. '
+                          'This is approximate: verify the arrow in the real world.'
                       : 'This anchor is position-only. Use manual alignment now, '
                           'or re-map it with an offline visual start.',
           'INSTALL_REQUESTED' =>
@@ -506,9 +506,9 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
               anchor.visualPoseReady
                   ? 'Location confirmed at ${anchor.label}. Point the AR '
                       'camera at its 16 cm QR and hold steady for visual lock.'
-                  : 'Location confirmed at ${anchor.label}. Tap SET START, '
-                      'walk 2–3 m along the next real path, then '
-                      'LOCK DIRECTION.',
+                  : 'Location confirmed at ${anchor.label}. Face the real next '
+                      'corridor, then tap FACE PATH & START. '
+                      'Verify the first arrow before walking.',
             ),
           ),
         );
