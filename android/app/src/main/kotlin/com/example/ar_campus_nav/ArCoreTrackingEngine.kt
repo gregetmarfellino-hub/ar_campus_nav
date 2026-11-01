@@ -220,14 +220,35 @@ class ArCoreTrackingEngine(
     // This is verification progress, NOT a calibrated probability of accuracy.
     // Keep a short sliding pose window and tolerate brief ARCore image dropouts.
     private val navigationOfflineSamplesRequired = 12
-    private val navigationOfflineMaxSamples = 30
+    private val navigationOfflineMaxSamples = 24
     private val navigationOfflineMinObservationNanos = 700_000_000L
     private val navigationOfflineViewpointMeters = 0.07f
-    private val navigationOfflineReferenceGraceNanos = 800_000_000L
+    // Image FULL_TRACKING may briefly disappear when the user tilts the phone.
+    private val navigationOfflineReferenceGraceNanos = 2_000_000_000L
+    // Consecutive video frames are highly correlated. Sampling every 70ms
+    // makes a 12-sample consensus span ~0.8 seconds instead of ~0.2 seconds.
+    private val navigationOfflineMinSampleIntervalNanos = 70_000_000L
     private val navigationOfflinePoseSamples =
         java.util.ArrayDeque<OfflineStartEstimate>()
+    // Keep an independent challenger hypothesis for persistent heading jumps.
+    // Never merge mutually inconsistent estimates into a confident lock.
+    private val navigationOfflineChallengerSamples =
+        java.util.ArrayDeque<OfflineStartEstimate>()
+    private var navigationOfflineChallengerFirstSampleNanos = 0L
+    private var navigationOfflineChallengerFirstCameraX = 0f
+    private var navigationOfflineChallengerFirstCameraZ = 0f
+    private var navigationOfflineChallengerReferenceNormal =
+        floatArrayOf(0f, 0f, 1f)
+    private var navigationOfflineChallengerBaseline = 0f
     private var navigationOfflineLastObservedNanos = 0L
     private var navigationOfflinePoseOutliers = 0
+    private var navigationOfflineLastProcessedNanos = 0L
+    private var navigationOfflineFreshSamplesAfterLoss = 0
+    private var navigationOfflineIndependentReferenceAgreements = 0
+    private var navigationOfflineTotalOutliers = 0
+    private var navigationOfflineTotalHypothesisSwitches = 0
+    private var navigationOfflineTotalReferenceLosses = 0
+    private var navigationOfflineTotalAcceptedLocks = 0
     private var navigationOfflineCandidateImageName: String? = null
     private var navigationOfflineFirstSampleNanos = 0L
     private var navigationOfflineLastSampleNanos = 0L
@@ -249,7 +270,7 @@ class ArCoreTrackingEngine(
     private var navigationOfflineLastDiagnosticReason: String? = null
     private var navigationOfflineLastDiagnosticReasonAtMillis = 0L
     private val navigationOfflineDiagnosticLines = java.util.ArrayDeque<String>()
-    private val navigationOfflineDiagnosticCapacity = 120
+    private val navigationOfflineDiagnosticCapacity = 300
     private val navigationOfflineDiagnosticTag = "ARNavLocalization"
     private val navigationOfflineImageName = "ar_nav_offline_start"
     private val navigationOfflineExtraImageName = "ar_nav_offline_start_extra"
@@ -391,6 +412,10 @@ class ArCoreTrackingEngine(
         synchronized(navigationOfflineDiagnosticLines) {
             navigationOfflineDiagnosticLines.clear()
         }
+        navigationOfflineTotalOutliers = 0
+        navigationOfflineTotalHypothesisSwitches = 0
+        navigationOfflineTotalReferenceLosses = 0
+        navigationOfflineTotalAcceptedLocks = 0
         navigationOfflineLastDiagnosticReason = null
         navigationOfflineLastDiagnosticSampleNanos = 0L
         navigationOfflineLastProgressUpdateNanos = 0L
@@ -2218,8 +2243,21 @@ class ArCoreTrackingEngine(
         resetOfflineVisualSamples()
     }
 
+    private fun resetOfflineChallenger() {
+        navigationOfflineChallengerSamples.clear()
+        navigationOfflineChallengerFirstSampleNanos = 0L
+        navigationOfflineChallengerFirstCameraX = 0f
+        navigationOfflineChallengerFirstCameraZ = 0f
+        navigationOfflineChallengerReferenceNormal = floatArrayOf(0f, 0f, 1f)
+        navigationOfflineChallengerBaseline = 0f
+    }
+
     private fun resetOfflineVisualSamples() {
         navigationOfflinePoseSamples.clear()
+        resetOfflineChallenger()
+        navigationOfflineLastProcessedNanos = 0L
+        navigationOfflineFreshSamplesAfterLoss = 0
+        navigationOfflineIndependentReferenceAgreements = 0
         navigationOfflineSampleCount = 0
         navigationOfflinePositionX = 0f
         navigationOfflinePositionY = 0f
