@@ -24,10 +24,12 @@ class SpatialMappingScreen extends StatefulWidget {
     super.key,
     required this.venue,
     this.initialAnchor,
+    this.initialFloor,
   });
 
   final Venue venue;
   final AnchorPoint? initialAnchor;
+  final int? initialFloor;
 
   @override
   State<SpatialMappingScreen> createState() => _SpatialMappingScreenState();
@@ -108,8 +110,14 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
 
     _startAnchor = widget.initialAnchor ??
         (widget.venue.anchors.isEmpty ? null : widget.venue.anchors.first);
-    _floor = _startAnchor?.floor ??
+    _floor = widget.initialFloor ??
+        _startAnchor?.floor ??
         (widget.venue.floors.isEmpty ? 1 : widget.venue.floors.first);
+    // Choosing a different floor must NOT reuse a QR anchor physically
+    // recorded on another floor.
+    if (_startAnchor != null && _startAnchor!.floor != _floor) {
+      _startAnchor = null;
+    }
 
     _poseSubscription = _ar.poses.listen(
       _onPose,
@@ -1588,7 +1596,15 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
             onChanged: _mappingActive || _starting
                 ? null
                 : (value) {
-                    if (value != null) setState(() => _floor = value);
+                    if (value != null) {
+                      setState(() {
+                        _floor = value;
+                        if (_startAnchor != null &&
+                            _startAnchor!.floor != value) {
+                          _startAnchor = null;
+                        }
+                      });
+                    }
                   },
           ),
           const SizedBox(height: 18),
