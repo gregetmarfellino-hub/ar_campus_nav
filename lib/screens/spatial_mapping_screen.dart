@@ -965,6 +965,11 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
 
   void _pauseMapping() {
     if (!_recording || _userPaused) return;
+    if (_points.isEmpty) {
+      setState(() => _message =
+          'Wait for the first real tracked point before pausing.');
+      return;
+    }
     setState(() {
       _userPaused = true;
       _trackingState = 'USER PAUSED';
@@ -1713,7 +1718,9 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
-                      onPressed: _userPaused ? _resumeMapping : _pauseMapping,
+                      onPressed: !_userPaused && _points.isEmpty
+                          ? null
+                          : _userPaused ? _resumeMapping : _pauseMapping,
                       icon: Icon(_userPaused
                           ? Icons.play_arrow_rounded
                           : Icons.pause_rounded),
