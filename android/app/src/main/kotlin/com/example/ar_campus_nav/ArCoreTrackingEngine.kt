@@ -1,6 +1,12 @@
 package com.example.ar_campus_nav
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.res.ColorStateList
+import android.os.SystemClock
+import android.util.Log
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
@@ -22,7 +28,9 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.Toast
 import com.google.ar.core.Anchor
 import com.google.ar.core.ArCoreApk
 import com.google.ar.core.AugmentedImage
@@ -45,6 +53,7 @@ import io.flutter.plugin.common.EventChannel
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 import kotlin.math.abs
+import kotlin.math.acos
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -71,6 +80,11 @@ class ArCoreTrackingEngine(
     private var surfaceView: GLSurfaceView? = null
     private var navigationOverlay: FrameLayout? = null
     private var navigationStatusText: TextView? = null
+    private var navigationScanProgressBar: ProgressBar? = null
+    private var navigationScanProgressLabel: TextView? = null
+    private var navigationScanDiagnosticsText: TextView? = null
+    private var navigationScanProgressCard: View? = null
+    private var navigationCopyDiagnosticsButton: Button? = null
     private var navigationArrowText: TextView? = null
     private var navigationAlignButton: Button? = null
     private var navigationReanchorButton: Button? = null
@@ -227,6 +241,16 @@ class ArCoreTrackingEngine(
     private var navigationOfflineLastLockNanos = 0L
     private var navigationOfflineAnchorPausedSinceNanos = 0L
     private var navigationOfflineAutoRecoveryAttempts = 0
+    // World XYZ can only be compared while the SAME ARCore session persists.
+    // These logs measure localization behavior, not absolute building accuracy.
+    private var navigationPreviousOfflineLockPose: Pose? = null
+    private var navigationOfflineLastProgressUpdateNanos = 0L
+    private var navigationOfflineLastDiagnosticSampleNanos = 0L
+    private var navigationOfflineLastDiagnosticReason: String? = null
+    private var navigationOfflineLastDiagnosticReasonAtMillis = 0L
+    private val navigationOfflineDiagnosticLines = java.util.ArrayDeque<String>()
+    private val navigationOfflineDiagnosticCapacity = 120
+    private val navigationOfflineDiagnosticTag = "ARNavLocalization"
     private val navigationOfflineImageName = "ar_nav_offline_start"
     private val navigationOfflineExtraImageName = "ar_nav_offline_start_extra"
     private data class OfflineExtraReference(
@@ -363,6 +387,16 @@ class ArCoreTrackingEngine(
         navigationOfflineLastLockNanos = 0L
         navigationOfflineAnchorPausedSinceNanos = 0L
         navigationOfflineAutoRecoveryAttempts = 0
+        navigationPreviousOfflineLockPose = null
+        navigationOfflineDiagnosticLines.clear()
+        navigationOfflineLastDiagnosticReason = null
+        navigationOfflineLastDiagnosticSampleNanos = 0L
+        navigationOfflineLastProgressUpdateNanos = 0L
+        logOfflineDiagnostic(
+            "SESSION_START",
+            "routeNodes=${points.size}; world XYZ are session-local. " +
+                "Comparisons across app restarts need fixed scene references.",
+        )
 
         val offlineReady = configureOfflineVisualStart(
             png = offlineReferencePng,
@@ -1485,6 +1519,11 @@ class ArCoreTrackingEngine(
         val oldView = surfaceView
         navigationOverlay = null
         navigationStatusText = null
+        navigationScanProgressBar = null
+        navigationScanProgressLabel = null
+        navigationScanDiagnosticsText = null
+        navigationScanProgressCard = null
+        navigationCopyDiagnosticsButton = null
         navigationArrowText = null
         navigationAlignButton = null
         navigationReanchorButton = null
@@ -2197,6 +2236,139 @@ class ArCoreTrackingEngine(
         // it must never be presented as a metric of centimeter-level accuracy.
         return ((0.40f * sampleRatio + 0.20f * durationRatio +
             0.40f * viewpointRatio) * 100f).toInt().coerceIn(0, 99)
+    }
+
+    private data class OfflinePoseSpread(
+        val positionRmsCm: Float,
+        val headingMaxDegrees: Float,
+    )
+
+    private fun calculateOfflinePoseSpread(): OfflinePoseSpread? {
+        val count = navigationOfflinePoseSamples.size
+        if (count < 2) return null
+        val n = count.toFloat()
+        val avgX = navigationOfflinePositionX / n
+        val avgY = navigationOfflinePositionY / n
+        val avgZ = navigationOfflinePositionZ / n
+        var meanForwardX = navigationOfflineForwardX / n
+        var meanForwardZ = navigationOfflineForwardZ / n
+        val forwardLength = sqrt(meanForwardX * meanForwardX +
+            meanForwardZ * meanForwardZ)
+        if (forwardLength < 0.001f) return null
+        meanForwardX /= forwardLength
+        meanForwardZ /= forwardLength
+        var squaredError = 0f
+        var worstAngle = 0f
+        for (sample in navigationOfflinePoseSamples) {
+            val dx = sample.x - avgX
+            val dy = sample.y - avgY
+            val dz = sample.z - avgZ
+            squaredError += dx * dx + dy * dy + dz * dz
+            val cosine = (sample.forwardX * meanForwardX +
+                sample.forwardZ * meanForwardZ).coerceIn(-1f, 1f)
+            worstAngle = maxOf(worstAngle,
+                acos(cosine) * (180f / Math.PI.toFloat()))
+        }
+        return OfflinePoseSpread(
+            positionRmsCm = sqrt(squaredError / n) * 100f,
+            headingMaxDegrees = worstAngle,
+        )
+    }
+
+    private fun logOfflineDiagnostic(event: String, details: String) {
+        val now = SystemClock.elapsedRealtime()
+        // Avoid spamming the clipboard ring or Android logcat at frame rate.
+        if (event == navigationOfflineLastDiagnosticReason &&
+            now - navigationOfflineLastDiagnosticReasonAtMillis < 1_500L) {
+            return
+        }
+        navigationOfflineLastDiagnosticReason = event
+        navigationOfflineLastDiagnosticReasonAtMillis = now
+        val line = "${now}ms | $event | $details"
+        if (navigationOfflineDiagnosticLines.size >= navigationOfflineDiagnosticCapacity) {
+            navigationOfflineDiagnosticLines.removeFirst()
+        }
+        navigationOfflineDiagnosticLines.addLast(line)
+        Log.i(navigationOfflineDiagnosticTag, line)
+    }
+
+    private fun updateOfflineScanUi(
+        frameTimestampNanos: Long,
+        stage: String,
+        force: Boolean = false,
+    ) {
+        if (!navigationOfflineEnabled) return
+        if (!force && navigationOfflineLastProgressUpdateNanos != 0L &&
+            frameTimestampNanos -
+                navigationOfflineLastProgressUpdateNanos < 300_000_000L) {
+            return
+        }
+        navigationOfflineLastProgressUpdateNanos = frameTimestampNanos
+        val progress = offlineVerificationProgress(frameTimestampNanos)
+        val spread = calculateOfflinePoseSpread()
+        val details = buildString {
+            append("Frames ")
+            append(navigationOfflineSampleCount)
+            append("/")
+            append(navigationOfflineSamplesRequired)
+            append(" • Parallax ")
+            append(String.format(java.util.Locale.US, "%.0f",
+                navigationOfflineMaxCameraBaseline * 100f))
+            append("/")
+            append(String.format(java.util.Locale.US, "%.0f",
+                navigationOfflineViewpointMeters * 100f))
+            append(" cm")
+            if (spread != null) {
+                append(" • RMS ")
+                append(String.format(java.util.Locale.US, "%.1f",
+                    spread.positionRmsCm))
+                append(" cm")
+                append(" • Yaw ")
+                append(String.format(java.util.Locale.US, "%.1f",
+                    spread.headingMaxDegrees))
+                append("°")
+            }
+        }
+        mainHandler.post {
+            navigationScanProgressCard?.visibility = View.VISIBLE
+            navigationScanProgressBar?.progress = progress
+            navigationScanProgressLabel?.text = "$stage • $progress% verified"
+            navigationScanDiagnosticsText?.text = details
+        }
+        if (frameTimestampNanos - navigationOfflineLastDiagnosticSampleNanos >=
+            1_000_000_000L) {
+            navigationOfflineLastDiagnosticSampleNanos = frameTimestampNanos
+            logOfflineDiagnostic(
+                "SAMPLE",
+                "phase=$stage progress=$progress% $details",
+            )
+        }
+    }
+
+    private fun markOfflineScanLocked() {
+        mainHandler.post {
+            // The bar is for scanning, not a permanent overlay on the route.
+            navigationScanProgressBar?.progress = 100
+            navigationScanProgressLabel?.text = "START VERIFIED • 100%"
+            navigationScanProgressCard?.visibility = View.GONE
+        }
+    }
+
+    private fun copyOfflineDiagnostics() {
+        val payload = buildString {
+            appendLine("AR Campus Navigation — V5 localization diagnostics")
+            appendLine("ARCore world coordinates are session-local; do not compare")
+            appendLine("raw XYZ from different app launches as absolute meters.")
+            appendLine()
+            for (line in navigationOfflineDiagnosticLines) appendLine(line)
+        }
+        val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE)
+            as ClipboardManager
+        clipboard.setPrimaryClip(
+            ClipData.newPlainText("AR localization diagnostics", payload),
+        )
+        Toast.makeText(activity,
+            "Localization diagnostics copied", Toast.LENGTH_SHORT).show()
     }
 
     private data class OfflineStartEstimate(
@@ -3877,6 +4049,78 @@ class ArCoreTrackingEngine(
             },
         )
 
+        val scanCard = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(9), dp(14), dp(9))
+            background = roundedBackground(0xDC101820.toInt(), dp(14).toFloat())
+            visibility = if (navigationOfflineEnabled) View.VISIBLE else View.GONE
+        }
+        navigationScanProgressCard = scanCard
+        val scanLabel = TextView(activity).apply {
+            text = "FINDING START • 0% verified"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+        }
+        navigationScanProgressLabel = scanLabel
+        scanCard.addView(scanLabel)
+        val progress = ProgressBar(
+            activity, null, android.R.attr.progressBarStyleHorizontal,
+        ).apply {
+            max = 100
+            this.progress = 0
+            isIndeterminate = false
+            progressTintList = ColorStateList.valueOf(0xFF5AB5FF.toInt())
+            progressBackgroundTintList =
+                ColorStateList.valueOf(0xFF394550.toInt())
+        }
+        navigationScanProgressBar = progress
+        scanCard.addView(
+            progress,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, dp(9),
+            ).apply { topMargin = dp(6) },
+        )
+        val diagText = TextView(activity).apply {
+            text = "Frames 0/12 • Parallax 0/7 cm"
+            textSize = 10f
+            setTextColor(0xFFD0DAE5.toInt())
+        }
+        navigationScanDiagnosticsText = diagText
+        scanCard.addView(
+            diagText,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(5) },
+        )
+        overlay.addView(
+            scanCard,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+            ).apply {
+                gravity = Gravity.BOTTOM
+                setMargins(dp(24), 0, dp(24), dp(220))
+            },
+        )
+
+        val copyDiagnostics = Button(activity).apply {
+            text = "COPY DIAG"
+            textSize = 11f
+            setTextColor(Color.WHITE)
+            background = roundedBackground(0xB8000000.toInt(), dp(14).toFloat())
+            visibility = if (navigationOfflineEnabled) View.VISIBLE else View.GONE
+            setOnClickListener { copyOfflineDiagnostics() }
+        }
+        navigationCopyDiagnosticsButton = copyDiagnostics
+        overlay.addView(
+            copyDiagnostics,
+            FrameLayout.LayoutParams(dp(112), dp(42)).apply {
+                gravity = Gravity.TOP or Gravity.END
+                setMargins(0, dp(112), dp(24), 0)
+            },
+        )
+
         val controls = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -4153,6 +4397,11 @@ class ArCoreTrackingEngine(
         mappingVisualOverlay = null
         mappingVisualStatusText = null
         navigationStatusText = null
+        navigationScanProgressBar = null
+        navigationScanProgressLabel = null
+        navigationScanDiagnosticsText = null
+        navigationScanProgressCard = null
+        navigationCopyDiagnosticsButton = null
         navigationArrowText = null
         navigationAlignButton = null
         navigationReanchorButton = null
