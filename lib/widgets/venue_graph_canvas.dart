@@ -94,6 +94,7 @@ class VenueGraphCanvas extends StatefulWidget {
     required this.onDragStartNode,
     required this.onDragNode,
     required this.onDragEndNode,
+    required this.onPanCanvas,
     required this.onInsertWaypoint,
   });
 
@@ -108,6 +109,7 @@ class VenueGraphCanvas extends StatefulWidget {
   final ValueChanged<String> onDragStartNode;
   final void Function(String nodeId, Offset meters) onDragNode;
   final VoidCallback onDragEndNode;
+  final ValueChanged<Offset> onPanCanvas;
   final void Function(String from, String to, Offset meters)
       onInsertWaypoint;
 
@@ -118,13 +120,17 @@ class VenueGraphCanvas extends StatefulWidget {
 class _VenueGraphCanvasState extends State<VenueGraphCanvas> {
   String? _dragNodeId;
   bool _dragged = false;
+  bool _panningCanvas = false;
 
   Iterable<NavNode> get _floorNodes =>
       widget.venue.nodes.where((node) => node.floor == widget.floor);
 
   NavNode? _nearNode(Offset location, Size size) {
     NavNode? closest;
-    var minDistance = 22.0;
+    // Android's recommended tappable target is ~48 logical pixels.
+    // A 34px selection radius leaves room for pointer imprecision and laggy
+    // screen casting while always picking the NEAREST actual point.
+    var minDistance = 34.0;
     for (final node in _floorNodes) {
       final point = widget.viewport.toScreen(Offset(node.x, node.y), size);
       final dist = (location - point).distance;
@@ -140,7 +146,7 @@ class _VenueGraphCanvasState extends State<VenueGraphCanvas> {
     final byId = {for (final n in widget.venue.nodes) n.id: n};
     NavEdge? chosen;
     Offset? projection;
-    var minDistance = 25.0;
+    var minDistance = 32.0;
     for (final edge in widget.venue.edges) {
       final a = byId[edge.from];
       final b = byId[edge.to];
@@ -194,7 +200,10 @@ class _VenueGraphCanvasState extends State<VenueGraphCanvas> {
         onPanStart: (details) {
           if (widget.connectMode || widget.insertMode) return;
           final node = _nearNode(details.localPosition, size);
-          if (node == null) return;
+          if (node == null) {
+            _panningCanvas = true;
+            return;
+          }
           widget.onTapNode(node.id);
           if (!widget.canMove(node.id)) return;
           _dragNodeId = node.id;
@@ -202,6 +211,10 @@ class _VenueGraphCanvasState extends State<VenueGraphCanvas> {
           widget.onDragStartNode(node.id);
         },
         onPanUpdate: (details) {
+          if (_panningCanvas) {
+            widget.onPanCanvas(details.delta / widget.viewport.scale(size));
+            return;
+          }
           final id = _dragNodeId;
           if (id == null) return;
           _dragged = true;
@@ -222,6 +235,7 @@ class _VenueGraphCanvasState extends State<VenueGraphCanvas> {
           }
           _dragNodeId = null;
           _dragged = false;
+          _panningCanvas = false;
         },
         onPanCancel: () {
           if (_dragNodeId != null && _dragged) {
@@ -229,6 +243,7 @@ class _VenueGraphCanvasState extends State<VenueGraphCanvas> {
           }
           _dragNodeId = null;
           _dragged = false;
+          _panningCanvas = false;
         },
         child: CustomPaint(
           painter: _GraphPainter(
