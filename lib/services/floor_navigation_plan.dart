@@ -1,3 +1,4 @@
+import '../models/nav_node.dart';
 import '../models/route_result.dart';
 
 /// Splits a V8 cross-floor graph route into independent floor-local AR legs.
@@ -24,11 +25,11 @@ class FloorNavigationPlan {
     }
 
     final stages = <FloorNavigationStage>[];
-    final nodes = <dynamic>[route.nodes.first];
+    final nodes = <NavNode>[route.nodes.first];
     final legs = <RouteLeg>[];
 
     void addStage(RouteLeg? transitionAfter) {
-      final floor = nodes.first.floor as int;
+      final floor = nodes.first.floor;
       for (final node in nodes) {
         if (node.floor != floor) {
           throw StateError('A floor section contains nodes from other floors.');
@@ -36,7 +37,7 @@ class FloorNavigationPlan {
       }
       stages.add(FloorNavigationStage(
         route: RouteResult(
-          nodes: List.unmodifiable(nodes.cast()),
+          nodes: List<NavNode>.unmodifiable(nodes),
           legs: List<RouteLeg>.unmodifiable(legs),
           totalDistanceMeters: legs.fold(
             0.0, (total, leg) => total + leg.distanceMeters),
