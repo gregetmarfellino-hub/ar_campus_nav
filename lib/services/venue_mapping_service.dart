@@ -114,9 +114,14 @@ class VenueMappingService {
       ...generated.anchors,
     ];
 
-    final defaultStart = nodes.any((node) => node.id == startNodeId)
-        ? startNodeId
-        : nodes.first.id;
+    // Applying an additional floor should not unexpectedly teleport the
+    // venue's default entrance to the newly mapped floor.
+    final defaultStart =
+        nodes.any((node) => node.id == venue.defaultStartNodeId)
+            ? venue.defaultStartNodeId
+            : nodes.any((node) => node.id == startNodeId)
+                ? startNodeId
+                : nodes.first.id;
 
     return Venue(
       id: venue.id,
