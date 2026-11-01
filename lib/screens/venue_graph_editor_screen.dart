@@ -390,6 +390,9 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop || _saving) return;
         if (await _confirmDiscard() && context.mounted) {
+          // PopScope blocks leaving dirty editors, including a programmatic
+          // pop. Mark the discarded in-memory changes clean first.
+          setState(() => _lastSaved = _working);
           Navigator.of(context).pop(false);
         }
       },
