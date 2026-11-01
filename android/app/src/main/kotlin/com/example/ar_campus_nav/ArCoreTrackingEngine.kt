@@ -3486,23 +3486,54 @@ class ArCoreTrackingEngine(
     ) {
         if (navigationPoints.isEmpty() || worldPoints.isEmpty()) return
 
-        while (activeRouteIndex < navigationPoints.size) {
+        // A nearby node is NOT proof that the user has followed the path.
+        // On switchbacks, short steps and corridor turns, the old 1.15 m
+        // radius could skip several future nodes and point the guide sideways.
+        // Progress along the CURRENT segment, preserving the recorded order.
+        var advanced = 0
+        while (activeRouteIndex < navigationPoints.lastIndex && advanced < 6) {
+            val previous = navigationPoints[activeRouteIndex - 1]
             val target = navigationPoints[activeRouteIndex]
-            val dx = target.rightMeters - local.right
-            val df = target.forwardMeters - local.forward
-            val distance = sqrt(dx * dx + df * df)
+            val sx = target.rightMeters - previous.rightMeters
+            val sf = target.forwardMeters - previous.forwardMeters
+            val squaredLength = sx * sx + sf * sf
+            if (squaredLength < 0.0001f) {
+                activeRouteIndex++
+                advanced++
+                continue
+            }
 
-            if (distance > 1.15f) break
+            val ux = local.right - previous.rightMeters
+            val uf = local.forward - previous.forwardMeters
+            val along = (ux * sx + uf * sf) / squaredLength
+            val clamped = along.coerceIn(0f, 1f)
+            val lateralX = ux - clamped * sx
+            val lateralF = uf - clamped * sf
+            val lateral = sqrt(lateralX * lateralX + lateralF * lateralF)
+
+            // Do not skip turns simply because the next point is nearby.
+            if (along < 0.85f || lateral > 0.65f) break
             activeRouteIndex++
+            advanced++
         }
 
-        if (activeRouteIndex >= navigationPoints.size) {
-            if (!navigationArrivalShown) {
-                navigationArrivalShown = true
-                setNavigationArrivalUi()
-                emitStatus("ARRIVED")
+        // Destination requires actually approaching the final endpoint;
+        // do not claim arrival just because an earlier nearby node was passed.
+        if (activeRouteIndex == navigationPoints.lastIndex) {
+            val end = navigationPoints.last()
+            val distanceToEnd = sqrt(
+                (end.rightMeters - local.right) * (end.rightMeters - local.right) +
+                    (end.forwardMeters - local.forward) *
+                    (end.forwardMeters - local.forward),
+            )
+            if (distanceToEnd <= 0.65f) {
+                if (!navigationArrivalShown) {
+                    navigationArrivalShown = true
+                    setNavigationArrivalUi()
+                    emitStatus("ARRIVED")
+                }
+                return
             }
-            return
         }
 
         val targetPoint = worldPoints[activeRouteIndex]
