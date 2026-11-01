@@ -2266,15 +2266,14 @@ class ArCoreTrackingEngine(
                         navigationOfflineReferenceGraceNanos
                 if (recentlySeen) {
                     setNavigationHud(
-                        "START DETAIL TEMPORARILY LOST — keep it visible. " +
-                            "Verification " +
-                            offlineVerificationProgress(frameTimestampNanos) + "%.",
+                        "START DETAIL TEMPORARILY LOST — keep the saved " +
+                            "doorway or sign in view.",
                     )
                 } else {
                     resetOfflineVisualSamples()
                     setNavigationHud(
                         "FINDING START — aim at the saved distinctive sign " +
-                            "or doorway, not repeating tiles. Verification 0%.",
+                            "or doorway, not repeating tiles.",
                     )
                 }
                 return false
@@ -2339,9 +2338,8 @@ class ArCoreTrackingEngine(
                     navigationOfflineLastObservedNanos = frameTimestampNanos
                 }
                 setNavigationHud(
-                    "REFINING START POSE — estimate shifted; keeping " +
-                        "the last reliable samples. Verification " +
-                        offlineVerificationProgress(frameTimestampNanos) + "%.",
+                    "REFINING START POSE — estimate shifted; " +
+                        "checking recent stable views.",
                 )
                 return false
             }
@@ -2405,7 +2403,6 @@ class ArCoreTrackingEngine(
         if (navigationOfflineSampleCount < navigationOfflineSamplesRequired ||
             !observedLongEnough || !hasParallax
         ) {
-            val progress = offlineVerificationProgress(frameTimestampNanos)
             val hint = when {
                 !hasParallax ->
                     "Move phone SIDEWAYS ~7 cm while keeping the sign visible."
@@ -2416,7 +2413,7 @@ class ArCoreTrackingEngine(
                         "/" + navigationOfflineSamplesRequired + " stable frames)."
             }
             setNavigationHud(
-                "VERIFYING START " + progress + "% — " + hint,
+                "VERIFYING START — " + hint,
             )
             return false
         }
@@ -2455,8 +2452,7 @@ class ArCoreTrackingEngine(
         if (positionRms > 0.045f || lowestFacingAgreement < 0.9985f) {
             setNavigationHud(
                 "VERIFYING START " +
-                    offlineVerificationProgress(frameTimestampNanos) +
-                    "% — pose spread still high (" +
+                    "— pose spread still high (" +
                     String.format(java.util.Locale.US, "%.1f", positionRms * 100f) +
                     " cm RMS). Hold the reference steady.",
             )
@@ -2495,7 +2491,7 @@ class ArCoreTrackingEngine(
         resetOfflineVisualSamples()
         setNavigationAlignedUi()
         setNavigationHud(
-            "START VERIFIED 100% — ${navigationPoints.size} saved route " +
+            "START LOCKED — ${navigationPoints.size} saved route " +
                 "points connected. Follow the BLUE PATH toward " +
                 "$navigationDestination; look down to see the ground ribbon.",
         )
