@@ -263,6 +263,76 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
     }
   }
 
+  Future<void> _editCoordinates() async {
+    final selected = _selectedNode;
+    if (selected == null || !_canMove(selected.id)) return;
+    final xField = TextEditingController(
+      text: selected.x.toStringAsFixed(2),
+    );
+    final yField = TextEditingController(
+      text: selected.y.toStringAsFixed(2),
+    );
+    final coordinates = await showDialog<(String, String)>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Position: ${selected.label}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Coordinates are metres in the saved venue frame. '
+              'This moves the selected point, NOT the physical AR anchor.',
+              style: TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: xField,
+              keyboardType: const TextInputType.numberWithOptions(
+                signed: true, decimal: true,
+              ),
+              decoration: const InputDecoration(labelText: 'X (metres)'),
+            ),
+            TextField(
+              controller: yField,
+              keyboardType: const TextInputType.numberWithOptions(
+                signed: true, decimal: true,
+              ),
+              decoration: const InputDecoration(labelText: 'Y (metres)'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(
+              ctx, (xField.text, yField.text),
+            ),
+            child: const Text('Move point'),
+          ),
+        ],
+      ),
+    );
+    xField.dispose();
+    yField.dispose();
+    if (!mounted || coordinates == null) return;
+    final x = double.tryParse(coordinates.$1.trim());
+    final y = double.tryParse(coordinates.$2.trim());
+    if (x == null || y == null || !x.isFinite || !y.isFinite) {
+      _showError('Enter valid numerical X and Y metre coordinates.');
+      return;
+    }
+    try {
+      _commit(_editor.moveNode(
+        _working, nodeId: selected.id, x: x, y: y,
+      ));
+    } catch (error) {
+      _showError(error);
+    }
+  }
+
   void _removeEdge(NavEdge edge) {
     try {
       _commit(_editor.disconnectNodes(
@@ -393,7 +463,12 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
           // PopScope blocks leaving dirty editors, including a programmatic
           // pop. Mark the discarded in-memory changes clean first.
           setState(() => _lastSaved = _working);
-          Navigator.of(context).pop(false);
+          // PopScope's route-scoped PopEntry updates its canPop notifier
+          // during the NEXT widget build. Popping immediately would be
+          // blocked again and repeatedly reopen the discard confirmation.
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) Navigator.of(context).pop(false);
+          });
         }
       },
       child: Scaffold(
@@ -604,6 +679,12 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
                             onPressed: locked ? null : _rename,
                             icon: const Icon(Icons.edit_rounded, size: 17),
                             label: const Text('Rename'),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: locked ? null : _editCoordinates,
+                            icon: const Icon(Icons.straighten_rounded,
+                                size: 17),
+                            label: const Text('Edit X/Y'),
                           ),
                           OutlinedButton.icon(
                             onPressed: locked ? null : _deleteWaypoint,
