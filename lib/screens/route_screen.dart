@@ -12,6 +12,7 @@ import '../services/direction_guidance.dart';
 import '../services/route_engine.dart';
 import '../widgets/venue_map.dart';
 import 'ar_navigation_screen.dart';
+import 'multi_floor_navigation_screen.dart';
 import 'qr_anchor_scanner_screen.dart';
 
 class RouteScreen extends StatefulWidget {
@@ -126,6 +127,20 @@ class _RouteScreenState extends State<RouteScreen> {
   String _floorName(int floor) =>
       floor < 0 ? 'Basement ${floor.abs()}' : 'Floor $floor';
 
+  Future<void> _openMultiFloorGuide() async {
+    if (!_route.crossesFloors) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => MultiFloorNavigationScreen(
+          venue: widget.venue,
+          destination: widget.destination,
+          fullRoute: _route,
+          initialAnchor: _anchor,
+        ),
+      ),
+    );
+  }
+
   String _stepTitle(int legIndex, RouteLeg leg) {
     if (leg.isFloorTransition) {
       final method = leg.transitionType == 'elevator' ? 'elevator' : 'stairs';
@@ -214,11 +229,13 @@ class _RouteScreenState extends State<RouteScreen> {
               child: Padding(
                 padding: const EdgeInsets.all(14),
                 child: Text(
-                  'V8 MULTI-FLOOR ROUTE: ${route.visitedFloors.map(_floorName).join(' → ')}. '
-                  'Follow each mapped floor to its staircase/elevator, '
-                  'change floors physically, then select the next floor '
-                  'in the map preview. V9 will add safe floor-by-floor '
-                  'AR guidance with fresh localization at each landing.',
+                  'V9 MULTI-FLOOR ROUTE: '
+                  '${route.visitedFloors.map(_floorName).join(' → ')}. '
+                  'Tap START FLOOR-BY-FLOOR AR NAVIGATION to walk '
+                  'each floor separately. At every staircase/elevator, '
+                  'AR stops while you change floors. Confirm the real '
+                  'landing to begin a fresh AR session on the next floor. '
+                  'No mandatory QR; manual alignment is available.',
                 ),
               ),
             ),
@@ -226,13 +243,15 @@ class _RouteScreenState extends State<RouteScreen> {
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
-              onPressed: arrived || route.crossesFloors
+              onPressed: arrived
                   ? null
-                  : _openArGuide,
+                  : route.crossesFloors
+                      ? _openMultiFloorGuide
+                      : _openArGuide,
               icon: const Icon(Icons.view_in_ar_rounded),
               label: Text(
                 route.crossesFloors
-                    ? 'MULTI-FLOOR AR GUIDANCE IN V9'
+                    ? 'START FLOOR-BY-FLOOR AR NAVIGATION'
                     : anchor == null
                     ? 'START AR MANUAL PREVIEW'
                     : anchor.offlineVisualReady
