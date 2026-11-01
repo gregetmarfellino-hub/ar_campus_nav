@@ -198,8 +198,8 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
           builder: (ctx) => AlertDialog(
             title: const Text('Align disconnected paths?'),
             content: Text(
-              'You selected "\${moving.label}" as the MOVING section '
-              'and "\${fixed.label}" as the FIXED physical junction.\n\n'
+              'You selected "${moving.label}" as the MOVING section '
+              'and "${fixed.label}" as the FIXED physical junction.\n\n'
               'ONLY continue if both points represent exactly the SAME '
               'real-world spot. The entire disconnected section will shift '
               'to that spot and receive a short route connection.\n\n'
