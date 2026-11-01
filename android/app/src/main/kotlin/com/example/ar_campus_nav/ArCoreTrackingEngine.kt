@@ -3807,7 +3807,12 @@ class ArCoreTrackingEngine(
         mainHandler.post {
             navigationStatusText?.text =
                 "POSITION UNCERTAIN — STOP WALKING\\n$detail\\n" +
-                    "Tap SCAN LOCATION to re-localize."
+                    if (navigationOfflineEnabled) {
+                        "End AR guidance, return to a known saved start " +
+                            "or checkpoint, and relaunch navigation."
+                    } else {
+                        "Tap SCAN LOCATION to re-localize."
+                    }
             navigationReanchorButton?.visibility =
                 if (navigationOfflineEnabled) {
                     android.view.View.GONE
