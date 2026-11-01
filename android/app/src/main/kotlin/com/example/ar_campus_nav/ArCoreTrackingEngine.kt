@@ -316,6 +316,10 @@ class ArCoreTrackingEngine(
     private var navigationLastAcceptedPosition: FloatArray? = null
     private var navigationLastAcceptedTimestampNanos = 0L
     private var navigationRejectedJumpCount = 0
+    // Long-route failsafe: stop incorrect directions after sustained
+    // disagreement with the saved path. NEVER silently jump waypoint indices.
+    private var navigationRouteMismatchSinceNanos = 0L
+    private val navigationRouteMismatchHoldNanos = 4_000_000_000L
     private val navigationRecoveryMaxJumpMeters = 1.75f
     private val navigationJumpBaseMeters = 0.80f
     private val navigationMaxPlausibleSpeedMps = 4.50f
@@ -3667,6 +3671,7 @@ class ArCoreTrackingEngine(
         navigationLastAcceptedPosition = null
         navigationLastAcceptedTimestampNanos = 0L
         navigationRejectedJumpCount = 0
+        navigationRouteMismatchSinceNanos = 0L
     }
 
     private fun handleNavigationTrackingRecovery(
@@ -3802,7 +3807,12 @@ class ArCoreTrackingEngine(
         mainHandler.post {
             navigationStatusText?.text =
                 "POSITION UNCERTAIN — STOP WALKING\\n$detail\\n" +
-                    "Tap SCAN LOCATION to re-localize."
+                    if (navigationOfflineEnabled) {
+                        "End AR guidance, return to a known saved start " +
+                            "or checkpoint, and relaunch navigation."
+                    } else {
+                        "Tap SCAN LOCATION to re-localize."
+                    }
             navigationReanchorButton?.visibility =
                 if (navigationOfflineEnabled) {
                     android.view.View.GONE
@@ -4032,6 +4042,102 @@ class ArCoreTrackingEngine(
         )
     }
 
+    private fun routeSegmentDistance(
+        right: Float,
+        forward: Float,
+        from: RoutePoint,
+        to: RoutePoint,
+    ): Float {
+        val dx = to.rightMeters - from.rightMeters
+        val df = to.forwardMeters - from.forwardMeters
+        val squared = dx * dx + df * df
+        if (squared < 0.000001f) {
+            val ux = right - from.rightMeters
+            val uf = forward - from.forwardMeters
+            return sqrt(ux * ux + uf * uf)
+        }
+        val t = (
+            ((right - from.rightMeters) * dx +
+                (forward - from.forwardMeters) * df) / squared
+        ).coerceIn(0f, 1f)
+        val ex = right - (from.rightMeters + t * dx)
+        val ef = forward - (from.forwardMeters + t * df)
+        return sqrt(ex * ex + ef * ef)
+    }
+
+    /**
+     * Fail CLOSED when the user's estimate is consistently no longer
+     * compatible with the recorded route. Never report a 470m "remaining"
+     * route while pointing 150m behind to a waypoint that cannot advance.
+     * This detects disagreement; it does NOT prove whether mapping,
+     * start localization, or later ARCore tracking caused the mismatch.
+     */
+    private fun navigationRouteMismatch(
+        local: LocalPosition,
+        nextDistance: Float,
+        timestampNanos: Long,
+    ): Boolean {
+        if (navigationPoints.size < 2) return false
+        val currentIndex = activeRouteIndex.coerceIn(
+            1, navigationPoints.lastIndex)
+        val currentSegmentDistance = routeSegmentDistance(
+            local.right,
+            local.forward,
+            navigationPoints[currentIndex - 1],
+            navigationPoints[currentIndex],
+        )
+        var nearestPathDistance = Float.MAX_VALUE
+        for (i in 1 until navigationPoints.size) {
+            val distance = routeSegmentDistance(
+                local.right,
+                local.forward,
+                navigationPoints[i - 1],
+                navigationPoints[i],
+            )
+            if (distance < nearestPathDistance) {
+                nearestPathDistance = distance
+            }
+        }
+        val clearlyOffRoute =
+            nearestPathDistance > 6f && nextDistance > 12f
+        val progressStuck =
+            currentSegmentDistance > 4f && nextDistance > 18f
+        if (!clearlyOffRoute && !progressStuck) {
+            navigationRouteMismatchSinceNanos = 0L
+            return false
+        }
+        if (navigationRouteMismatchSinceNanos == 0L) {
+            navigationRouteMismatchSinceNanos = timestampNanos
+            return false
+        }
+        if (timestampNanos - navigationRouteMismatchSinceNanos <
+            navigationRouteMismatchHoldNanos) {
+            return false
+        }
+        navigationPositionUncertain = true
+        setNavigationArrowVisible(false)
+        logOfflineDiagnostic(
+            "ROUTE_PROGRESS_MISMATCH",
+            "nextTargetMeters=" +
+                String.format(java.util.Locale.US, "%.1f", nextDistance) +
+                " currentSegmentErrorMeters=" +
+                String.format(java.util.Locale.US, "%.1f",
+                    currentSegmentDistance) +
+                " nearestRouteErrorMeters=" +
+                String.format(java.util.Locale.US, "%.1f",
+                    nearestPathDistance) +
+                " nextIndex=$activeRouteIndex",
+        )
+        showNavigationPositionUncertain(
+            "Saved path and current AR position disagree for several " +
+                "seconds. Following the old waypoint could lead you " +
+                "the wrong way. Stop and re-localize at a known checkpoint; " +
+                "do not trust the remaining-distance estimate.",
+        )
+        emitStatus("ROUTE_PROGRESS_MISMATCH")
+        return true
+    }
+
     private fun updateNavigationProgress(
         currentPose: Pose,
         local: LocalPosition,
@@ -4104,6 +4210,14 @@ class ArCoreTrackingEngine(
         val dx = target.rightMeters - local.right
         val df = target.forwardMeters - local.forward
         val nextDistance = sqrt(dx * dx + df * df)
+
+        if (navigationRouteMismatch(
+            local = local,
+            nextDistance = nextDistance,
+            timestampNanos = timestampNanos,
+        )) {
+            return
+        }
 
         var remaining = nextDistance
         for (i in activeRouteIndex until navigationPoints.lastIndex) {

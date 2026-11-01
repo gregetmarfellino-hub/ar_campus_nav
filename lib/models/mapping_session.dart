@@ -158,6 +158,7 @@ class MappingSession {
     required this.stepLengthMeters,
     required this.points,
     required this.markers,
+    this.segmentStarts = const [0],
     this.source = 'step_compass',
     this.rawPointCount = 0,
     this.trackingInterruptions = 0,
@@ -195,6 +196,23 @@ class MappingSession {
   final List<MappingPoint> points;
   final List<MappingMarker> markers;
 
+  /// Index of the FIRST point of each recorded, disconnected trajectory.
+  /// [0] means one continuous line. Starting at i>0 explicitly means there
+  /// is NO route edge from point i-1 to point i.
+  /// Legacy v2 recordings default to a single continuous segment.
+  final List<int> segmentStarts;
+
+  List<int> get effectiveSegmentStarts {
+    if (points.isEmpty) return const [];
+    return (<int>{
+      0,
+      for (final index in segmentStarts)
+        if (index >= 0 && index < points.length) index,
+    }.toList()..sort());
+  }
+
+  int get segmentCount => effectiveSegmentStarts.length;
+
   /// Number of raw accepted ARCore geometry samples before save-time
   /// simplification. Legacy sessions and old JSON default to points.length.
   final int rawPointCount;
@@ -222,7 +240,9 @@ class MappingSession {
     if (points.length < 2) return 0;
 
     var total = 0.0;
+    final breaks = effectiveSegmentStarts.toSet();
     for (var i = 1; i < points.length; i++) {
+      if (breaks.contains(i)) continue;
       final a = points[i - 1];
       final b = points[i];
       final dx = b.xMeters - a.xMeters;
@@ -253,7 +273,7 @@ class MappingSession {
   }
 
   Map<String, dynamic> toJson() => {
-        'schema': 'ar_campus_nav.mapping.v2',
+        'schema': 'ar_campus_nav.mapping.v3',
         'id': id,
         'venue_id': venueId,
         'venue_name': venueName,
@@ -285,6 +305,7 @@ class MappingSession {
         'raw_point_count': effectiveRawPointCount,
         'tracking_interruptions': trackingInterruptions,
         'rejected_pose_jumps': rejectedPoseJumps,
+        'segment_starts': effectiveSegmentStarts,
         'points': points.map((point) => point.toJson()).toList(growable: false),
         'markers': markers.map((marker) => marker.toJson()).toList(growable: false),
       };
@@ -324,6 +345,9 @@ class MappingSession {
           (json['tracking_interruptions'] as num?)?.toInt() ?? 0,
       rejectedPoseJumps:
           (json['rejected_pose_jumps'] as num?)?.toInt() ?? 0,
+      segmentStarts: (json['segment_starts'] as List<dynamic>? ?? const [0])
+          .map((item) => (item as num).toInt())
+          .toList(growable: false),
       points: (json['points'] as List<dynamic>)
           .map((item) => MappingPoint.fromJson(item as Map<String, dynamic>))
           .toList(growable: false),

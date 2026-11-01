@@ -83,9 +83,15 @@ class _MappingSessionPainter extends CustomPainter {
 
     final start = project(points.first.xMeters, points.first.yMeters);
     final path = Path()..moveTo(start.dx, start.dy);
-    for (final point in points.skip(1)) {
+    final boundaries = session.effectiveSegmentStarts.toSet();
+    for (var index = 1; index < points.length; index++) {
+      final point = points[index];
       final p = project(point.xMeters, point.yMeters);
-      path.lineTo(p.dx, p.dy);
+      if (boundaries.contains(index)) {
+        path.moveTo(p.dx, p.dy);
+      } else {
+        path.lineTo(p.dx, p.dy);
+      }
     }
 
     canvas.drawPath(
@@ -102,6 +108,17 @@ class _MappingSessionPainter extends CustomPainter {
 
     final end = project(points.last.xMeters, points.last.yMeters);
     canvas.drawCircle(end, 7, Paint()..color = const Color(0xFF72A7FF));
+
+    // Each section is a distinct component. Highlight its starting point
+    // without drawing a phantom line to the previous section.
+    for (final index in session.effectiveSegmentStarts.skip(1)) {
+      final point = points[index];
+      canvas.drawCircle(
+        project(point.xMeters, point.yMeters),
+        7,
+        Paint()..color = const Color(0xFFFFC978),
+      );
+    }
 
     for (final marker in markers) {
       final p = project(marker.xMeters, marker.yMeters);

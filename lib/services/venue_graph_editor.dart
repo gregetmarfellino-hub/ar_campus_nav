@@ -115,6 +115,16 @@ class VenueGraphEditor {
         'Use Pass 8 for vertical transitions.',
       );
     }
+    final distance = _rawDistance(a, b);
+    // A direct graph edge means the person can ACTUALLY walk that straight
+    // connection. Missing 50m corridors must be recorded, not fabricated.
+    if (distance > 5.0) {
+      throw StateError(
+        'These points are ${distance.toStringAsFixed(1)} m apart. '
+        'Direct links are limited to 5 m. Map the missing corridor or '
+        'use ALIGN SECTIONS only for the same verified physical junction.',
+      );
+    }
     if (venue.edges.any((edge) =>
         (edge.from == from && edge.to == to) ||
         (edge.from == to && edge.to == from))) {
@@ -130,6 +140,86 @@ class VenueGraphEditor {
           distanceMeters: _distance(a, b),
         ),
       ],
+    );
+  }
+
+  /// Align an entirely disconnected and *unanchored* section to one
+  /// verified physical junction. It only translates the component; heading
+  /// and true physical identity of the two junctions are NOT verified.
+  /// The caller must confirm that both points are the same real location.
+  ///
+  /// This is deliberately not allowed to move a QR-anchored component.
+  Venue alignAndJoinSections(
+    Venue venue, {
+    required String movingPointId,
+    required String fixedPointId,
+  }) {
+    if (movingPointId == fixedPointId) {
+      throw StateError('Choose two different points.');
+    }
+    final moving = venue.nodeById(movingPointId);
+    final fixed = venue.nodeById(fixedPointId);
+    if (moving.floor != fixed.floor) {
+      throw StateError('Both junctions must be on the same floor.');
+    }
+    final component = <String>{};
+    final stack = <String>[movingPointId];
+    while (stack.isNotEmpty) {
+      final id = stack.removeLast();
+      if (!component.add(id)) continue;
+      for (final edge in venue.edges) {
+        if (edge.from == id && !component.contains(edge.to)) {
+          stack.add(edge.to);
+        }
+        if (edge.to == id && !component.contains(edge.from)) {
+          stack.add(edge.from);
+        }
+      }
+    }
+    if (component.contains(fixedPointId)) {
+      throw StateError('These points are already in the same path network.');
+    }
+    if (component.contains(venue.defaultStartNodeId) ||
+        venue.anchors.any((anchor) => component.contains(anchor.nodeId))) {
+      throw StateError(
+        'This section contains a saved AR anchor or the venue start. '
+        'Select the OTHER disconnected section to move instead.',
+      );
+    }
+    if (venue.nodes
+        .where((node) => component.contains(node.id))
+        .any((node) => node.floor != moving.floor)) {
+      throw StateError(
+        'Moving a network spanning different floors is unsafe.',
+      );
+    }
+    final dx = fixed.x - moving.x;
+    final dy = fixed.y - moving.y;
+    if (!dx.isFinite || !dy.isFinite) {
+      throw StateError('Invalid junction coordinates.');
+    }
+    final shifted = [
+      for (final node in venue.nodes)
+        if (component.contains(node.id))
+          NavNode(
+            id: node.id,
+            label: node.label,
+            floor: node.floor,
+            x: node.x + dx,
+            y: node.y + dy,
+            type: node.type,
+          )
+        else
+          node,
+    ];
+    final shiftedVenue = _copy(venue, nodes: shifted);
+    // With the junctions now co-located, this creates one short deliberate
+    // traversal link. If physical junction matching is wrong, the resulting
+    // navigation will be wrong: the UI must warn and require confirmation.
+    return connectNodes(
+      shiftedVenue,
+      from: movingPointId,
+      to: fixedPointId,
     );
   }
 
