@@ -103,6 +103,218 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
     });
   }
 
+  Future<void> _addFloor() async {
+    final controller = TextEditingController(text: '2');
+    final floorText = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Add floor layer'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Create an empty floor layer, then record its real '
+              'corridors with Spatial Mapper. Examples: -1 for Basement 1, '
+              '1 for Floor 1, 2 for Floor 2.',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              keyboardType: const TextInputType.numberWithOptions(
+                signed: true,
+              ),
+              decoration: const InputDecoration(
+                labelText: 'Floor number',
+                helperText: 'Basement = negative number',
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text),
+            child: const Text('Add floor'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (!mounted || floorText == null) return;
+    final floor = int.tryParse(floorText.trim());
+    if (floor == null) {
+      _showError('Enter a whole number, e.g. -1, 1, 2 or 3.');
+      return;
+    }
+    try {
+      _commit(_editor.addFloor(_working, floor));
+      _changeFloor(floor);
+    } catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _markSelectedAsPortal() async {
+    final selected = _selectedNode;
+    if (selected == null || !_canMove(selected.id)) return;
+    final kind = await showDialog<String>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: Text('Mark ${selected.label} as…'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, 'stairs'),
+            child: const ListTile(
+              leading: Icon(Icons.stairs_rounded),
+              title: Text('Staircase entrance'),
+              subtitle: Text('A physical staircase landing on this floor'),
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, 'elevator'),
+            child: const ListTile(
+              leading: Icon(Icons.elevator_rounded),
+              title: Text('Elevator entrance'),
+              subtitle: Text('A real elevator entrance on this floor'),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || kind == null) return;
+    try {
+      _commit(_editor.markFloorPortal(
+        _working, nodeId: selected.id, kind: kind,
+      ));
+    } catch (error) {
+      _showError(error);
+    }
+  }
+
+  Future<void> _linkSelectedFloorPortal() async {
+    final selected = _selectedNode;
+    if (selected == null ||
+        (selected.type != 'stairs' && selected.type != 'elevator')) {
+      _showError('First mark a mapped point as stairs or elevator.');
+      return;
+    }
+    final candidates = [
+      for (final node in _working.nodes)
+        if (node.floor != selected.floor && node.type == selected.type)
+          node,
+    ];
+    if (candidates.isEmpty) {
+      _showError(
+        'No matching ${selected.type} entrance on another floor. '
+        'Map the other floor and mark its matching portal first.',
+      );
+      return;
+    }
+    String targetId = candidates.first.id;
+    final distanceField = TextEditingController(
+      text: selected.type == 'stairs' ? '6.0' : '5.0',
+    );
+    final confirmed = await showDialog<(String, String)>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, refreshDialog) => AlertDialog(
+          title: const Text('Connect floors'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'From: ${selected.label} (${_floorName(selected.floor)})\n'
+                'Type: ${selected.type.toUpperCase()}',
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                key: ValueKey(targetId),
+                initialValue: targetId,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Matching entrance on another floor',
+                ),
+                items: [
+                  for (final node in candidates)
+                    DropdownMenuItem(
+                      value: node.id,
+                      child: Text(
+                        '${_floorName(node.floor)} • ${node.label}',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+                onChanged: (value) {
+                  if (value != null) {
+                    refreshDialog(() => targetId = value);
+                  }
+                },
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: distanceField,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  labelText: 'Actual travel distance (metres)',
+                  helperText: 'Approximate walked distance along stairs/lift',
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Link only REAL matching stairs/elevator entrances. '
+                'Floor map XY coordinates do not have to overlap. '
+                'No automatic AR floor tracking is implied.',
+                style: TextStyle(fontSize: 12),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.pop(ctx, (targetId, distanceField.text)),
+              child: const Text('Connect floors'),
+            ),
+          ],
+        ),
+      ),
+    );
+    distanceField.dispose();
+    if (!mounted || confirmed == null) return;
+    final length = double.tryParse(confirmed.$2.trim());
+    if (length == null) {
+      _showError('Enter a valid stair/elevator travel distance.');
+      return;
+    }
+    try {
+      _commit(_editor.linkFloorPortals(
+        _working,
+        from: selected.id,
+        to: confirmed.$1,
+        kind: selected.type,
+        distanceMeters: length,
+      ));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Floor portals linked. Cross-floor route preview is now available.',
+          ),
+        ),
+      );
+    } catch (error) {
+      _showError(error);
+    }
+  }
+
   void _changeFloor(int floor) {
     setState(() {
       _floor = floor;
@@ -706,7 +918,13 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
                           },
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 6),
+                IconButton.filledTonal(
+                  onPressed: _saving ? null : _addFloor,
+                  tooltip: 'Add a floor or basement layer',
+                  icon: const Icon(Icons.add_rounded),
+                ),
+                const SizedBox(width: 8),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
@@ -718,6 +936,13 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
                   ],
                 ),
               ],
+            ),
+            const SizedBox(height: 9),
+            const Text(
+              'V8: Add a floor with +, record corridors on each layer, '
+              'mark the physical stair/elevator entrances, then LINK FLOORS. '
+              'The app will never connect floors by XY proximity alone.',
+              style: TextStyle(color: Colors.white60, fontSize: 11),
             ),
             const SizedBox(height: 12),
             Wrap(
@@ -859,7 +1084,7 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
             const SizedBox(height: 10),
             const Text(
               'Blue = saved path · Green = fixed AR anchor · '
-              'Yellow = destination · Purple = stairs',
+              'Yellow = destination · Purple = stairs/elevator',
               style: TextStyle(color: Colors.white54, fontSize: 11),
             ),
             const SizedBox(height: 16),
@@ -921,6 +1146,18 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
                                 size: 17),
                             label: const Text('Remove bad point'),
                           ),
+                          OutlinedButton.icon(
+                            onPressed: locked ? null : _markSelectedAsPortal,
+                            icon: const Icon(Icons.stairs_rounded, size: 17),
+                            label: const Text('Mark stairs / elevator'),
+                          ),
+                          if (selected.type == 'stairs' ||
+                              selected.type == 'elevator')
+                            FilledButton.icon(
+                              onPressed: _linkSelectedFloorPortal,
+                              icon: const Icon(Icons.layers_rounded, size: 17),
+                              label: const Text('LINK FLOORS'),
+                            ),
                         ],
                       ),
                       const Divider(height: 20),
@@ -966,7 +1203,8 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
               'Changes are local to this venue and remain offline. '
               'SAVE writes the active graph only after backing up its '
               'previous state. Original mapping session files are preserved. '
-              'Stairs across floors are a separate Pass 8 feature.',
+              'Floor portals are explicit. When another floor is unmapped, '
+              'record it first. Full floor-aware AR guidance follows in V9.',
               style: TextStyle(color: Colors.white54, fontSize: 11),
             ),
           ],

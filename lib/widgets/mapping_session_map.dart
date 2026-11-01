@@ -125,6 +125,7 @@ class _MappingSessionPainter extends CustomPainter {
       final color = switch (marker.type) {
         'destination' => const Color(0xFFFF6B8A),
         'stairs' => const Color(0xFFF9C74F),
+        'elevator' => const Color(0xFFBC9BFF),
         'anchor' => const Color(0xFF3DDC97),
         _ => const Color(0xFFCBA6F7),
       };

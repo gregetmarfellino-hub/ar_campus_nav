@@ -58,7 +58,7 @@ class RouteEngine {
 
       unvisited.remove(current);
 
-      for (final neighbor in _neighbors(venue.edges, current)) {
+      for (final neighbor in _neighbors(venue, current)) {
         if (!unvisited.contains(neighbor.nodeId)) continue;
 
         final candidate = currentDistance + neighbor.distanceMeters;
@@ -101,6 +101,7 @@ class RouteEngine {
           from: nodesById[from]!,
           to: nodesById[to]!,
           distanceMeters: edge.distanceMeters,
+          transitionType: edge.transitionType,
         ),
       );
     }
@@ -112,9 +113,24 @@ class RouteEngine {
     );
   }
 
-  Iterable<_Neighbor> _neighbors(List<NavEdge> edges, String nodeId) sync* {
-    for (final edge in edges) {
+  Iterable<_Neighbor> _neighbors(Venue venue, String nodeId) sync* {
+    final byId = {for (final node in venue.nodes) node.id: node};
+    for (final edge in venue.edges) {
       if (!edge.accessible) continue;
+      final a = byId[edge.from];
+      final b = byId[edge.to];
+      if (a == null || b == null) continue;
+      // An old/untyped edge between separate floor maps is not a
+      // staircase. Only explicit, matching portal types may cross floors.
+      if (a.floor != b.floor) {
+        final kind = edge.transitionType;
+        if ((kind != 'stairs' && kind != 'elevator') ||
+            a.type != kind || b.type != kind) {
+          continue;
+        }
+      } else if (edge.transitionType != null) {
+        continue;
+      }
 
       if (edge.from == nodeId) {
         yield _Neighbor(edge.to, edge.distanceMeters);

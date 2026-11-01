@@ -5,6 +5,7 @@ class NavEdge {
     required this.distanceMeters,
     this.bidirectional = true,
     this.accessible = true,
+    this.transitionType,
   });
 
   final String from;
@@ -13,6 +14,12 @@ class NavEdge {
   final bool bidirectional;
   final bool accessible;
 
+  /// Only for explicit links between different floor layers.
+  /// 'stairs' | 'elevator'. Null means an ordinary on-floor corridor.
+  final String? transitionType;
+
+  bool get isFloorTransition => transitionType != null;
+
   factory NavEdge.fromJson(Map<String, dynamic> json) {
     return NavEdge(
       from: json['from'] as String,
@@ -20,6 +27,7 @@ class NavEdge {
       distanceMeters: (json['distance_m'] as num).toDouble(),
       bidirectional: json['bidirectional'] as bool? ?? true,
       accessible: json['accessible'] as bool? ?? true,
+      transitionType: json['transition_type'] as String?,
     );
   }
 }

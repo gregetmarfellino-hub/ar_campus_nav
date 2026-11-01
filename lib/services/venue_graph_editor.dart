@@ -55,6 +55,7 @@ class VenueGraphEditor {
             distanceMeters: _distance(byId[edge.from]!, byId[edge.to]!),
             bidirectional: edge.bidirectional,
             accessible: edge.accessible,
+            transitionType: edge.transitionType,
           )
         else
           edge,
@@ -99,6 +100,112 @@ class VenueGraphEditor {
           item,
     ];
     return _copy(venue, nodes: nodes, destinations: destinations);
+  }
+
+  /// Create a floor layer without inventing mapped nodes or AR anchors.
+  Venue addFloor(Venue venue, int floor) {
+    if (floor < -10 || floor > 50) {
+      throw ArgumentError('Floor must be between B10 and Floor 50.');
+    }
+    if (venue.floors.contains(floor)) return venue;
+    return _copy(venue, floors: ([...venue.floors, floor]..sort()));
+  }
+
+  /// Mark an already mapped point as the entrance to stairs or an elevator.
+  Venue markFloorPortal(
+    Venue venue, {
+    required String nodeId,
+    required String kind,
+  }) {
+    if (kind != 'stairs' && kind != 'elevator') {
+      throw ArgumentError('Portal must be stairs or elevator.');
+    }
+    final node = venue.nodeById(nodeId);
+    _requireEditableNode(venue, node);
+    final activeTransitions = venue.edges.where((edge) =>
+        edge.isFloorTransition &&
+        (edge.from == nodeId || edge.to == nodeId));
+    if (activeTransitions.any((edge) => edge.transitionType != kind)) {
+      throw StateError(
+        'Disconnect the existing floor transition before changing '
+        'this portal from stairs to elevator or vice versa.',
+      );
+    }
+    if (node.type == kind) return venue;
+    return _copy(
+      venue,
+      nodes: [
+        for (final n in venue.nodes)
+          if (n.id == nodeId)
+            NavNode(
+              id: n.id,
+              label: n.label,
+              floor: n.floor,
+              x: n.x,
+              y: n.y,
+              type: kind,
+            )
+          else n,
+      ],
+    );
+  }
+
+  /// Cross-floor distance is the ACTUAL approximate traversed length, not
+  /// a misleading flat XY distance between independently mapped layers.
+  Venue linkFloorPortals(
+    Venue venue, {
+    required String from,
+    required String to,
+    required String kind,
+    required double distanceMeters,
+  }) {
+    if (kind != 'stairs' && kind != 'elevator') {
+      throw ArgumentError('Choose stairs or elevator.');
+    }
+    if (!distanceMeters.isFinite ||
+        distanceMeters < 1.0 ||
+        distanceMeters > 250.0) {
+      throw ArgumentError('Enter a realistic travel length (1–250 m).');
+    }
+    final a = venue.nodeById(from);
+    final b = venue.nodeById(to);
+    if (from == to || a.floor == b.floor) {
+      throw StateError('Choose portals on TWO DIFFERENT floors.');
+    }
+    if (a.type != kind || b.type != kind) {
+      throw StateError('Both mapped points must be marked as $kind.');
+    }
+    final floors = <int>{
+      ...venue.floors,
+      ...venue.nodes.map((node) => node.floor),
+    }.toList()..sort();
+    if (kind == 'stairs' &&
+        (floors.indexOf(a.floor) - floors.indexOf(b.floor)).abs() != 1) {
+      throw StateError(
+        'Stairs connect adjacent listed floor layers only. '
+        'Map an intermediate floor landing, or choose an elevator.',
+      );
+    }
+    if (venue.edges.any((edge) =>
+        (edge.from == from && edge.to == to) ||
+        (edge.from == to && edge.to == from))) {
+      throw StateError('These floor portals are already linked.');
+    }
+    final next = _copy(
+      venue,
+      edges: [
+        ...venue.edges,
+        NavEdge(
+          from: from,
+          to: to,
+          distanceMeters: distanceMeters,
+          transitionType: kind,
+          bidirectional: true,
+        ),
+      ],
+    );
+    validate(next);
+    return next;
   }
 
   Venue connectNodes(
@@ -439,6 +546,23 @@ class VenueGraphEditor {
           !edge.distanceMeters.isFinite || edge.distanceMeters <= 0) {
         throw StateError('Invalid saved segment: ${edge.from} → ${edge.to}.');
       }
+      final a = venue.nodeById(edge.from);
+      final b = venue.nodeById(edge.to);
+      if (a.floor != b.floor) {
+        if (edge.transitionType != 'stairs' &&
+            edge.transitionType != 'elevator') {
+          throw StateError(
+            'Cross-floor edge ${edge.from} → ${edge.to} '
+            'needs explicit stairs/elevator metadata.',
+          );
+        }
+        if (a.type != edge.transitionType ||
+            b.type != edge.transitionType) {
+          throw StateError('Floor portal type does not match its endpoints.');
+        }
+      } else if (edge.transitionType != null) {
+        throw StateError('A floor-transition edge cannot remain on one floor.');
+      }
     }
     for (final dest in venue.destinations) {
       if (!ids.contains(dest.nodeId)) {
@@ -477,13 +601,14 @@ class VenueGraphEditor {
     List<NavNode>? nodes,
     List<NavEdge>? edges,
     List<Destination>? destinations,
+    List<int>? floors,
   }) =>
       Venue(
         id: source.id,
         name: source.name,
         description: source.description,
         defaultStartNodeId: source.defaultStartNodeId,
-        floors: source.floors,
+        floors: List.unmodifiable(floors ?? source.floors),
         nodes: List.unmodifiable(nodes ?? source.nodes),
         edges: List.unmodifiable(edges ?? source.edges),
         destinations: List.unmodifiable(destinations ?? source.destinations),

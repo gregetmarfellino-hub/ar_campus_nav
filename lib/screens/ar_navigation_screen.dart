@@ -317,6 +317,16 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
 
   Future<bool> _startNavigation() async {
     if (!mounted) return false;
+    if (_route.crossesFloors) {
+      setState(() {
+        _status =
+            'This route changes floors. Floor-aware AR tracking is '
+            'not ready until V9. Return to Route Preview and use '
+            'the floor-specific map and stair/elevator instructions.';
+        _starting = false;
+      });
+      return false;
+    }
 
     final offlineAnchor = _anchor != null &&
             _anchor!.offlineVisualReady &&

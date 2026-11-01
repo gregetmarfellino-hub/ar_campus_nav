@@ -37,12 +37,14 @@ class _RouteScreenState extends State<RouteScreen> {
   final AnchorCodec _anchorCodec = const AnchorCodec();
 
   late RouteResult _route;
+  late int _previewFloor;
   AnchorPoint? _anchor;
 
   @override
   void initState() {
     super.initState();
     _route = widget.initialRoute;
+    _previewFloor = widget.initialRoute.nodes.first.floor;
     _anchor = widget.initialAnchor;
   }
 
@@ -70,6 +72,7 @@ class _RouteScreenState extends State<RouteScreen> {
       setState(() {
         _anchor = anchor;
         _route = route;
+        _previewFloor = route.nodes.first.floor;
       });
 
       final arrived = anchor.nodeId == widget.destination.nodeId;
@@ -94,7 +97,10 @@ class _RouteScreenState extends State<RouteScreen> {
   }
 
   Future<void> _openArGuide() async {
-    if (_route.legs.isEmpty) return;
+    // V8 is a complete multi-floor graph/preview. Native AR still assumes a
+    // single horizontal world basis: never feed cross-floor legs into it.
+    // V9 will split the route at portals and re-localize at the next floor.
+    if (_route.legs.isEmpty || _route.crossesFloors) return;
 
     final result = await Navigator.of(context).push<ArNavigationResult>(
       MaterialPageRoute<ArNavigationResult>(
@@ -113,15 +119,24 @@ class _RouteScreenState extends State<RouteScreen> {
     setState(() {
       _route = result.route;
       _anchor = result.anchor;
+      _previewFloor = result.route.nodes.first.floor;
     });
   }
 
+  String _floorName(int floor) =>
+      floor < 0 ? 'Basement ${floor.abs()}' : 'Floor $floor';
+
   String _stepTitle(int legIndex, RouteLeg leg) {
+    if (leg.isFloorTransition) {
+      final method = leg.transitionType == 'elevator' ? 'elevator' : 'stairs';
+      return 'Take the $method to ${_floorName(leg.to.floor)}';
+    }
     if (legIndex == _route.legs.length - 1) {
       return 'Arrive at ${leg.to.label}';
     }
 
-    if (legIndex == 0) {
+    if (legIndex == 0 ||
+        _route.legs[legIndex - 1].isFloorTransition) {
       return 'Continue to ${leg.to.label}';
     }
 
@@ -151,8 +166,9 @@ class _RouteScreenState extends State<RouteScreen> {
     final arrived = start.id == widget.destination.nodeId;
     final visibleLegIndices = <int>[
       for (var i = 0; i < route.legs.length; i++)
-        if (route.legs[i].to.label != 'Recorded path' &&
-            route.legs[i].to.type != 'path')
+        if (route.legs[i].isFloorTransition ||
+            (route.legs[i].to.label != 'Recorded path' &&
+                route.legs[i].to.type != 'path'))
           i,
     ];
 
@@ -191,15 +207,33 @@ class _RouteScreenState extends State<RouteScreen> {
             onScan: _scanCheckpoint,
           ),
           const SizedBox(height: 14),
-          _SpatialAlignmentCard(anchor: anchor),
+          if (!route.crossesFloors)
+            _SpatialAlignmentCard(anchor: anchor)
+          else
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Text(
+                  'V8 MULTI-FLOOR ROUTE: ${route.visitedFloors.map(_floorName).join(' → ')}. '
+                  'Follow each mapped floor to its staircase/elevator, '
+                  'change floors physically, then select the next floor '
+                  'in the map preview. V9 will add safe floor-by-floor '
+                  'AR guidance with fresh localization at each landing.',
+                ),
+              ),
+            ),
           const SizedBox(height: 12),
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
-              onPressed: arrived ? null : _openArGuide,
+              onPressed: arrived || route.crossesFloors
+                  ? null
+                  : _openArGuide,
               icon: const Icon(Icons.view_in_ar_rounded),
               label: Text(
-                anchor == null
+                route.crossesFloors
+                    ? 'MULTI-FLOOR AR GUIDANCE IN V9'
+                    : anchor == null
                     ? 'START AR MANUAL PREVIEW'
                     : anchor.offlineVisualReady
                         ? 'START AR & FIND START'
@@ -219,12 +253,35 @@ class _RouteScreenState extends State<RouteScreen> {
             ),
           ),
           const SizedBox(height: 16),
+          if (route.crossesFloors) ...[
+            const Text(
+              'ROUTE BY FLOOR — TAP A FLOOR TO PREVIEW',
+              style: TextStyle(
+                fontWeight: FontWeight.w800, fontSize: 11,
+                color: Colors.white70,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: [
+                for (final floor in route.visitedFloors)
+                  ChoiceChip(
+                    selected: _previewFloor == floor,
+                    label: Text(_floorName(floor)),
+                    onSelected: (_) =>
+                        setState(() => _previewFloor = floor),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+          ],
           VenueMap(
             venue: widget.venue,
             route: route,
-            floor: end.floor,
+            floor: route.crossesFloors ? _previewFloor : end.floor,
             height: 390,
-            currentNodeId: start.id,
+            currentNodeId: start.floor == _previewFloor ? start.id : null,
           ),
           const SizedBox(height: 14),
           Row(
@@ -248,8 +305,10 @@ class _RouteScreenState extends State<RouteScreen> {
               Expanded(
                 child: _MetricCard(
                   icon: Icons.layers_rounded,
-                  label: 'Floor',
-                  value: '${end.floor}',
+                  label: route.crossesFloors ? 'Floors' : 'Floor',
+                  value: route.crossesFloors
+                      ? '${route.visitedFloors.length}'
+                      : '${end.floor}',
                 ),
               ),
             ],
@@ -288,10 +347,12 @@ class _RouteScreenState extends State<RouteScreen> {
                 visibleLegIndices[stepIndex],
                 route.legs[visibleLegIndices[stepIndex]],
               ),
-              subtitle: visibleLegIndices[stepIndex] ==
-                      route.legs.length - 1
-                  ? 'Final mapped point'
-                  : 'Semantic checkpoint',
+              subtitle: route.legs[visibleLegIndices[stepIndex]].isFloorTransition
+                  ? '${route.legs[visibleLegIndices[stepIndex]].distanceMeters.toStringAsFixed(1)} m estimated vertical travel · '
+                    'Confirm the correct landing on ${_floorName(route.legs[visibleLegIndices[stepIndex]].to.floor)}'
+                  : visibleLegIndices[stepIndex] == route.legs.length - 1
+                      ? 'Final mapped point'
+                      : 'Semantic checkpoint',
               isLast: stepIndex == visibleLegIndices.length - 1,
             ),
           const SizedBox(height: 20),

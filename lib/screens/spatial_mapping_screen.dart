@@ -24,10 +24,12 @@ class SpatialMappingScreen extends StatefulWidget {
     super.key,
     required this.venue,
     this.initialAnchor,
+    this.initialFloor,
   });
 
   final Venue venue;
   final AnchorPoint? initialAnchor;
+  final int? initialFloor;
 
   @override
   State<SpatialMappingScreen> createState() => _SpatialMappingScreenState();
@@ -108,8 +110,14 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
 
     _startAnchor = widget.initialAnchor ??
         (widget.venue.anchors.isEmpty ? null : widget.venue.anchors.first);
-    _floor = _startAnchor?.floor ??
+    _floor = widget.initialFloor ??
+        _startAnchor?.floor ??
         (widget.venue.floors.isEmpty ? 1 : widget.venue.floors.first);
+    // Choosing a different floor must NOT reuse a QR anchor physically
+    // recorded on another floor.
+    if (_startAnchor != null && _startAnchor!.floor != _floor) {
+      _startAnchor = null;
+    }
 
     _poseSubscription = _ar.poses.listen(
       _onPose,
@@ -1116,6 +1124,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     final defaultLabel = switch (type) {
       'destination' => 'Room / destination',
       'stairs' => 'Stairs to another floor',
+      'elevator' => 'Elevator to another floor',
       'anchor' => 'QR anchor checkpoint',
       _ => 'Junction / waypoint',
     };
@@ -1429,6 +1438,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         switch (type) {
           'destination' => 'Destination',
           'stairs' => 'Stairs',
+          'elevator' => 'Elevator',
           'anchor' => 'Anchor options',
           _ => 'Waypoint',
         },
@@ -1569,21 +1579,32 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
               prefixIcon: Icon(Icons.layers_rounded),
             ),
             items: [
-              for (final floor in widget.venue.floors)
+              for (final floor in (<int>{
+                ...widget.venue.floors,
+                -1, 1, 2, 3,
+                _floor,
+              }.toList()..sort()))
                 DropdownMenuItem(
                   value: floor,
-                  child: Text('Floor $floor'),
-                ),
-              if (!widget.venue.floors.contains(_floor))
-                DropdownMenuItem(
-                  value: _floor,
-                  child: Text('Floor $_floor'),
+                  child: Text(
+                    floor < 0
+                        ? 'Basement ${floor.abs()}'
+                        : 'Floor $floor',
+                  ),
                 ),
             ],
             onChanged: _mappingActive || _starting
                 ? null
                 : (value) {
-                    if (value != null) setState(() => _floor = value);
+                    if (value != null) {
+                      setState(() {
+                        _floor = value;
+                        if (_startAnchor != null &&
+                            _startAnchor!.floor != value) {
+                          _startAnchor = null;
+                        }
+                      });
+                    }
                   },
           ),
           const SizedBox(height: 18),
@@ -1831,7 +1852,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                       _markerButton('waypoint', Icons.add_road_rounded),
                       _markerButton('destination', Icons.flag_rounded),
                       _markerButton('stairs', Icons.stairs_rounded),
-
+                      _markerButton('elevator', Icons.elevator_rounded),
                       _markerButton('anchor', Icons.link_rounded),
                     ],
                   ),
@@ -2105,6 +2126,7 @@ class _SpatialPathPainter extends CustomPainter {
       final color = switch (marker.type) {
         'destination' => const Color(0xFFFF6B8A),
         'stairs' => const Color(0xFFF9C74F),
+        'elevator' => const Color(0xFFBC9BFF),
         'anchor' => const Color(0xFF3DDC97),
         _ => const Color(0xFFCBA6F7),
       };
