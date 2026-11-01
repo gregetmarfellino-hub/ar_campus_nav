@@ -236,6 +236,9 @@ class _MultiFloorNavigationScreenState
         ? 'elevator' : 'stairs';
     final nextFloor = transition?.to.floor;
     final isTravel = _phase == _FloorHandoffPhase.travelPortal;
+    if (isTravel && transition == null) {
+      throw StateError('Missing mapped floor portal during handoff.');
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -363,10 +366,10 @@ class _MultiFloorNavigationScreenState
               detail:
                   'Take the $portalType from '
                   '${transition!.from.label} (${_floorName(transition.from.floor)}) '
-                  'to ${transition.to.label} '
-                  '(${_floorName(transition.to.floor)}).\n\n'
+                  'to ${transition!.to.label} '
+                  '(${_floorName(transition!.to.floor)}).\n\n'
                   'Estimated travel: '
-                  '${transition.distanceMeters.toStringAsFixed(1)} m.\n'
+                  '${transition!.distanceMeters.toStringAsFixed(1)} m.\n'
                   'Use actual stair/elevator signs. Do NOT follow '
                   'a horizontal AR ribbon between floors.',
             ),
@@ -388,8 +391,8 @@ class _MultiFloorNavigationScreenState
                 () => _confirmedAtNextLanding = value ?? false,
               ),
               title: Text(
-                'I have reached ${transition.to.label} '
-                'on ${_floorName(nextFloor)}',
+                'I have reached ${transition!.to.label} '
+                'on ${_floorName(nextFloor!)}',
               ),
               subtitle: const Text(
                 'I can identify this exact real-world landing.',
@@ -399,7 +402,7 @@ class _MultiFloorNavigationScreenState
               onPressed: _confirmedAtNextLanding
                   ? _confirmFloorLanding : null,
               icon: const Icon(Icons.layers_rounded),
-              label: Text('CONTINUE ON ${_floorName(nextFloor).toUpperCase()}'),
+              label: Text('CONTINUE ON ${_floorName(nextFloor!).toUpperCase()}'),
             ),
           ],
           const SizedBox(height: 16),
