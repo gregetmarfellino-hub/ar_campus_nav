@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:ar_campus_nav/models/anchor_point.dart';
+import 'package:ar_campus_nav/models/mapping_session.dart';
 import 'package:ar_campus_nav/models/destination.dart';
 import 'package:ar_campus_nav/models/nav_edge.dart';
 import 'package:ar_campus_nav/models/nav_node.dart';
@@ -8,6 +9,7 @@ import 'package:ar_campus_nav/models/venue.dart';
 import 'package:ar_campus_nav/services/route_engine.dart';
 import 'package:ar_campus_nav/services/venue_codec.dart';
 import 'package:ar_campus_nav/services/venue_graph_editor.dart';
+import 'package:ar_campus_nav/services/venue_mapping_service.dart';
 
 Venue building() => const Venue(
       id: 'campus',
@@ -244,4 +246,41 @@ void main() {
     expect(route.visitedFloors, [1]);
     expect(route.legs.single.transitionType, isNull);
   });
+  test('applying a new floor recording retains the original entrance', () {
+    final initial = building();
+    final upstairs = MappingSession(
+      id: 'floor2_new_map',
+      venueId: initial.id,
+      venueName: initial.name,
+      floor: 2,
+      createdAt: DateTime.utc(2026, 11, 1),
+      startAnchorId: null,
+      startAnchorLabel: 'Upper floor start',
+      originHeadingDegrees: 0,
+      stepLengthMeters: 0,
+      source: 'arcore_spatial',
+      points: const [
+        MappingPoint(
+          xMeters: 0, yMeters: 0, upMeters: 0,
+          headingDegrees: 0, stepIndex: 0, timestampMs: 0,
+        ),
+        MappingPoint(
+          xMeters: 0, yMeters: 3, upMeters: 0,
+          headingDegrees: 0, stepIndex: 1, timestampMs: 1000,
+        ),
+      ],
+      markers: const [],
+    );
+    final next = const VenueMappingService().applySession(
+      venue: initial,
+      session: upstairs,
+    );
+    expect(next.defaultStartNodeId, 'entrance');
+    expect(next.nodeById('entrance').floor, 1);
+    expect(next.anchors.single.nodeId, 'entrance');
+    expect(next.floors, containsAll([-1, 1, 2, 3]));
+    expect(next.nodes.where((node) => node.floor == 2), isNotEmpty);
+    expect(next.nodes.any((node) => node.id == 'f1stair'), isTrue);
+  });
+
 }
