@@ -62,6 +62,9 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
   bool _awaitingStartQr = false;
   bool _placingStartQr = false;
   bool _recording = false;
+  // User-controlled mapping pause. ARCore itself remains running in the SAME
+  // session/world frame; no new virtual QR or unaligned segment is created.
+  bool _userPaused = false;
   bool _trackingInterrupted = false;
 
   String? _placedStartQrId;
@@ -343,6 +346,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         _arming = false;
         _awaitingStartQr = false;
         _recording = true;
+        _userPaused = false;
         _trackingInterrupted = false;
         _recordedDistanceMeters = 0;
         _trackingState = 'READY';
@@ -603,6 +607,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         setState(() {
           _awaitingStartQr = false;
           _recording = true;
+          _userPaused = false;
           _trackingInterrupted = false;
           _recoveryPoseSamples = 0;
           _consecutiveRejectedPoseJumps = 0;
@@ -751,6 +756,14 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       _trackingState = 'TRACKING';
       _message = 'Tracking recovered. Continue walking.';
       _refreshUi(force: true);
+    }
+
+    if (_userPaused) {
+      // Keep processing live poses and tracking recovery for the resume
+      // safety check, but never append a segment while explicitly paused.
+      _trackingState = 'USER PAUSED';
+      _refreshUi(force: stateChanged);
+      return;
     }
 
     if (_recording) {
@@ -950,8 +963,55 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     );
   }
 
+  void _pauseMapping() {
+    if (!_recording || _userPaused) return;
+    setState(() {
+      _userPaused = true;
+      _trackingState = 'USER PAUSED';
+      _message =
+          'MAPPING PAUSED — ARCore continues tracking, but no new path '
+          'points are recorded. Keep the phone in this AR session and '
+          'return near the last saved point before resuming.';
+    });
+  }
+
+  void _resumeMapping() {
+    if (!_recording || !_userPaused) return;
+    if (_points.isEmpty || !_pose.isTracking || _trackingInterrupted) {
+      setState(() {
+        _message =
+            'CANNOT RESUME — wait for stable ARCore tracking near the '
+            'last mapped waypoint.';
+      });
+      return;
+    }
+    // Never join a path after the user walks elsewhere during pause.
+    // A discontinuity would create a false direct corridor in the saved map.
+    final candidate = _mappingPointFromPose(_pose);
+    final gapMeters = _distance3d(_points.last, candidate);
+    if (!gapMeters.isFinite || gapMeters > 0.60) {
+      setState(() {
+        _message =
+            'CANNOT RESUME: current position is ' +
+            '${gapMeters.toStringAsFixed(2)} m from the last recorded '
+            'point. Return within 0.60 m of that point; otherwise finish '
+            'this recording and make a separately aligned map.';
+      });
+      return;
+    }
+    setState(() {
+      _userPaused = false;
+      _consecutiveRejectedPoseJumps = 0;
+      _trackingState = 'TRACKING';
+      _message =
+          'RECORDING RESUMED in the same ARCore session. '
+          'Continue walking from the last mapped position.';
+    });
+  }
+
   Future<void> _addMarker(String type) async {
-    if (!_recording || _trackingInterrupted || _points.isEmpty) return;
+    if (!_recording || _userPaused ||
+        _trackingInterrupted || _points.isEmpty) return;
 
     if (type == 'anchor') {
       await _addAnchorMarker();
@@ -1029,7 +1089,8 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
   }
 
   Future<void> _addAnchorMarker() async {
-    if (!_recording || _trackingInterrupted || _points.isEmpty) return;
+    if (!_recording || _userPaused ||
+        _trackingInterrupted || _points.isEmpty) return;
 
     final markerPoint = _points.last;
     final markerPointIndex = _points.length - 1;
@@ -1169,6 +1230,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         _arming = false;
         _awaitingStartQr = false;
         _recording = false;
+        _userPaused = false;
         _trackingInterrupted = false;
         _arStarted = false;
         _trackingState = 'STOPPED';
@@ -1210,6 +1272,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       _arming = false;
       _awaitingStartQr = false;
       _recording = false;
+      _userPaused = false;
       _trackingInterrupted = false;
       _arStarted = false;
       _trackingState = 'STOPPED';
@@ -1628,18 +1691,34 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                   Text(
                     _trackingInterrupted
                         ? 'STOP WALKING until tracking recovers.'
-                        : 'Recording is live. Walk naturally; add rooms, '
+                        : _userPaused
+                            ? 'PAUSED BY YOU. Return near the last path point '
+                              'and press RESUME. Do not close this mapper.'
+                            : 'Recording is live. Walk naturally; add rooms, '
                             'junctions, stairs, and link existing physical '
                             'anchors only at real locations.',
                     style: TextStyle(
-                      color: _trackingInterrupted
+                      color: _trackingInterrupted || _userPaused
                           ? const Color(0xFFF9D976)
                           : Colors.white54,
                       fontSize: 11,
-                      fontWeight: _trackingInterrupted
+                      fontWeight: _trackingInterrupted || _userPaused
                           ? FontWeight.w800
                           : FontWeight.normal,
                       height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _userPaused ? _resumeMapping : _pauseMapping,
+                      icon: Icon(_userPaused
+                          ? Icons.play_arrow_rounded
+                          : Icons.pause_rounded),
+                      label: Text(_userPaused
+                          ? 'RESUME NEAR LAST POINT'
+                          : 'PAUSE MAPPING'),
                     ),
                   ),
                   const SizedBox(height: 10),
