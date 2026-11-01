@@ -13,6 +13,7 @@ import '../models/venue.dart';
 import '../services/anchor_codec.dart';
 import '../services/ar_pose_service.dart';
 import '../services/mapping_path_simplifier.dart';
+import '../services/mapping_resume_policy.dart';
 import '../services/mapping_storage.dart';
 import '../services/visual_anchor_spec.dart';
 import 'mapping_screen.dart';
@@ -994,12 +995,15 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     // A discontinuity would create a false direct corridor in the saved map.
     final candidate = _mappingPointFromPose(_pose);
     final gapMeters = _distance3d(_points.last, candidate);
-    if (!gapMeters.isFinite || gapMeters > 0.60) {
+    if (!MappingResumePolicy.canResumeAt(
+      gapMeters: gapMeters,
+      trackingReady: _pose.isTracking && !_trackingInterrupted,
+    )) {
       setState(() {
         _message =
             'CANNOT RESUME: current position is ' +
             '${gapMeters.toStringAsFixed(2)} m from the last recorded '
-            'point. Return within 0.60 m of that point; otherwise finish '
+            'point. Return within ${MappingResumePolicy.maximumGapMeters.toStringAsFixed(2)} m of that point; otherwise finish '
             'this recording and make a separately aligned map.';
       });
       return;
