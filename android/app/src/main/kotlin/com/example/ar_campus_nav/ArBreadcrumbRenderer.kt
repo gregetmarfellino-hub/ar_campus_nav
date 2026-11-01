@@ -15,6 +15,52 @@ class ArBreadcrumbRenderer {
     private var pointSizeUniform = 0
     private var pointModeUniform = 0
 
+    private data class RouteProjection(
+        val point: FloatArray,
+        val distanceMeters: Float,
+    )
+
+    /**
+     * Connect to the closest point of the CURRENT saved route segments, not
+     * blindly to the next waypoint. This is a visual helper only: it never
+     * alters the recorded route or the ARCore anchor pose.
+     */
+    private fun nearestActiveRouteProjection(
+        worldPoints: List<FloatArray>,
+        activeIndex: Int,
+        user: FloatArray,
+    ): RouteProjection? {
+        if (worldPoints.size < 2) return null
+        val first = (activeIndex - 1).coerceIn(0, worldPoints.size - 2)
+        // Restrict to nearby future segments so self-crossing routes cannot
+        // snap the connector to a distant portion of the path.
+        val last = minOf(worldPoints.size - 2, first + 4)
+        var best: RouteProjection? = null
+        for (i in first..last) {
+            val a = worldPoints[i]
+            val b = worldPoints[i + 1]
+            val dx = b[0] - a[0]
+            val dz = b[2] - a[2]
+            val lengthSquared = dx * dx + dz * dz
+            if (lengthSquared < 0.0001f) continue
+
+            val along = (((user[0] - a[0]) * dx +
+                (user[2] - a[2]) * dz) / lengthSquared).coerceIn(0f, 1f)
+            val px = a[0] + along * dx
+            val pz = a[2] + along * dz
+            val offX = user[0] - px
+            val offZ = user[2] - pz
+            val distance = kotlin.math.sqrt(offX * offX + offZ * offZ)
+            if (best == null || distance < best.distanceMeters) {
+                best = RouteProjection(
+                    point = floatArrayOf(px, user[1], pz),
+                    distanceMeters = distance,
+                )
+            }
+        }
+        return best
+    }
+
     fun createOnGlThread() {
         val vertex = """
             uniform mat4 u_Mvp;
@@ -133,12 +179,18 @@ class ArBreadcrumbRenderer {
             }
         }
 
-        // Live connector: makes the route visibly begin at the user's
-        // current horizontal ARCore position instead of appearing to spawn
-        // at the next routing node a few meters ahead.
+        // Live connector is NOT part of the saved route. Only connect to
+        // the nearest active route SEGMENT when the user is reasonably close;
+        // otherwise a long straight line could falsely cut through obstacles.
+        val connectorProjection = if (userWorldPoint == null) null else {
+            nearestActiveRouteProjection(worldPoints, start, userWorldPoint)
+        }
+        val connectorEnd = connectorProjection?.takeIf {
+            it.distanceMeters <= 2.50f
+        }?.point
         if (userWorldPoint != null && remaining.isNotEmpty()) {
-            val connectorRibbon = routeRibbon(
-                listOf(userWorldPoint, remaining.first()), 0.055f,
+            val connectorRibbon = if (connectorEnd == null) null else routeRibbon(
+                listOf(userWorldPoint, connectorEnd), 0.035f,
             )
             if (connectorRibbon != null) {
                 GLES20.glVertexAttribPointer(
@@ -151,30 +203,15 @@ class ArBreadcrumbRenderer {
                 )
             }
 
-            val connectorValues = floatArrayOf(
+            val markerValues = floatArrayOf(
                 userWorldPoint[0],
                 userWorldPoint[1],
                 userWorldPoint[2],
-                remaining.first()[0],
-                remaining.first()[1],
-                remaining.first()[2],
             )
-            val connectorBuffer = floatBuffer(connectorValues)
-
+            val markerBuffer = floatBuffer(markerValues)
             GLES20.glVertexAttribPointer(
-                positionAttrib,
-                3,
-                GLES20.GL_FLOAT,
-                false,
-                0,
-                connectorBuffer,
+                positionAttrib, 3, GLES20.GL_FLOAT, false, 0, markerBuffer,
             )
-            GLES20.glUniform4f(colorUniform, 0.78f, 0.88f, 1.0f, 0.88f)
-            GLES20.glUniform1f(pointSizeUniform, 1f)
-            GLES20.glUniform1i(pointModeUniform, 0)
-            GLES20.glLineWidth(5f)
-            GLES20.glDrawArrays(GLES20.GL_LINES, 0, 2)
-
             GLES20.glUniform4f(colorUniform, 0.78f, 0.88f, 1.0f, 1.0f)
             GLES20.glUniform1f(pointSizeUniform, 26f)
             GLES20.glUniform1i(pointModeUniform, 1)
