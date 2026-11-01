@@ -335,7 +335,7 @@ class _GraphPainter extends CustomPainter {
       final anchored = anchors.contains(node.id);
       final destination = destinations.contains(node.id) ||
           node.type == 'destination';
-      final stairs = node.type == 'stairs';
+      final stairs = node.type == 'stairs' || node.type == 'elevator';
       final color = anchored
           ? green
           : destination
