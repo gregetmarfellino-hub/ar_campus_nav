@@ -1116,6 +1116,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     final defaultLabel = switch (type) {
       'destination' => 'Room / destination',
       'stairs' => 'Stairs to another floor',
+      'elevator' => 'Elevator to another floor',
       'anchor' => 'QR anchor checkpoint',
       _ => 'Junction / waypoint',
     };
@@ -1429,6 +1430,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         switch (type) {
           'destination' => 'Destination',
           'stairs' => 'Stairs',
+          'elevator' => 'Elevator',
           'anchor' => 'Anchor options',
           _ => 'Waypoint',
         },
@@ -1834,7 +1836,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                       _markerButton('waypoint', Icons.add_road_rounded),
                       _markerButton('destination', Icons.flag_rounded),
                       _markerButton('stairs', Icons.stairs_rounded),
-
+                      _markerButton('elevator', Icons.elevator_rounded),
                       _markerButton('anchor', Icons.link_rounded),
                     ],
                   ),
@@ -2108,6 +2110,7 @@ class _SpatialPathPainter extends CustomPainter {
       final color = switch (marker.type) {
         'destination' => const Color(0xFFFF6B8A),
         'stairs' => const Color(0xFFF9C74F),
+        'elevator' => const Color(0xFFBC9BFF),
         'anchor' => const Color(0xFF3DDC97),
         _ => const Color(0xFFCBA6F7),
       };
