@@ -332,7 +332,8 @@ class VenueMappingService {
     // A visual QR marker can carry an exact free-space AR pose that differs
     // from the phone's walking sample; the start node above already uses it.
     for (final marker in startGroup) {
-      if (marker.type == 'destination' || marker.type == 'stairs') {
+      if (marker.type == 'destination' ||
+          marker.type == 'stairs' || marker.type == 'elevator') {
         final id = _uniqueId(
           'dest_${_safe(marker.id)}',
           usedDestinationIds,
@@ -343,7 +344,8 @@ class VenueMappingService {
             id: id,
             name: marker.label,
             nodeId: startNodeId,
-            category: marker.type == 'stairs' ? 'stairs' : 'place',
+            category: marker.type == 'stairs' || marker.type == 'elevator'
+                ? marker.type : 'place',
             description: 'Recorded on Floor ${session.floor}',
           ),
         );
@@ -459,7 +461,8 @@ class VenueMappingService {
       nodeIdByIndex[index] = nodeId;
 
       for (final marker in group) {
-        if (marker.type == 'destination' || marker.type == 'stairs') {
+        if (marker.type == 'destination' ||
+          marker.type == 'stairs' || marker.type == 'elevator') {
           final id = _uniqueId(
             'dest_${_safe(marker.id)}',
             usedDestinationIds,
@@ -470,7 +473,8 @@ class VenueMappingService {
               id: id,
               name: marker.label,
               nodeId: nodeId,
-              category: marker.type == 'stairs' ? 'stairs' : 'place',
+              category: marker.type == 'stairs' || marker.type == 'elevator'
+                ? marker.type : 'place',
               description: 'Recorded on Floor ${session.floor}',
             ),
           );
@@ -730,6 +734,7 @@ class VenueMappingService {
     const priority = <String, int>{
       'destination': 4,
       'stairs': 3,
+      'elevator': 3,
       'anchor': 2,
       'waypoint': 1,
     };
@@ -745,6 +750,7 @@ class VenueMappingService {
     return switch (markerType) {
       'destination' => 'destination',
       'stairs' => 'stairs',
+      'elevator' => 'elevator',
       'anchor' => 'anchor',
       'waypoint' => 'waypoint',
       _ => 'path',
