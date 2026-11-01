@@ -300,7 +300,7 @@ class VenueGraphEditor {
       venue.anchors.any((item) => item.nodeId == nodeId);
 
   void _requireEditableNode(Venue venue, NavNode node) {
-    if (isAnchored(venue, node.id)) {
+    if (isAnchored(venue, node.id) || node.id == venue.defaultStartNodeId) {
       throw StateError(
         'This point is tied to a real AR start anchor. '
         'Moving it would invalidate saved localization. '
