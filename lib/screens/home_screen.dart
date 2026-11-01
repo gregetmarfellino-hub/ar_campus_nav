@@ -33,6 +33,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _startNodeId;
   AnchorPoint? _activeAnchor;
   String _query = '';
+  int _mapFloor = 1;
   String? _error;
 
   @override
@@ -49,6 +50,9 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _venue = venue;
         _startNodeId = venue.defaultStartNodeId;
+        if (!venue.floors.contains(_mapFloor)) {
+          _mapFloor = venue.nodeById(venue.defaultStartNodeId).floor;
+        }
         _activeAnchor = null;
         _error = null;
       });
@@ -78,6 +82,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
       setState(() {
         _startNodeId = anchor.nodeId;
+        _mapFloor = anchor.floor;
         _activeAnchor = anchor;
       });
 
@@ -119,6 +124,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     setState(() {
       _startNodeId = selected.nodeId;
+      _mapFloor = selected.floor;
       _activeAnchor = selected;
     });
 
@@ -143,7 +149,9 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute<void>(
         builder: (_) => SpatialMappingScreen(
           venue: venue,
-          initialAnchor: _activeAnchor,
+          initialAnchor: _activeAnchor?.floor == _mapFloor
+              ? _activeAnchor : null,
+          initialFloor: _mapFloor,
         ),
       ),
     );
@@ -621,11 +629,30 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         const SizedBox(height: 18),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            for (final floor in (<int>{
+              ...venue.floors,
+              for (final node in venue.nodes) node.floor,
+            }.toList()..sort()))
+              ChoiceChip(
+                selected: _mapFloor == floor,
+                label: Text(
+                  floor < 0 ? 'Basement ${floor.abs()}' : 'Floor $floor',
+                ),
+                onSelected: (_) => setState(() => _mapFloor = floor),
+              ),
+          ],
+        ),
+        const SizedBox(height: 10),
         VenueMap(
           venue: venue,
-          floor: 1,
+          floor: _mapFloor,
           height: 310,
-          currentNodeId: _startNodeId,
+          currentNodeId: venue.nodeById(_startNodeId!).floor == _mapFloor
+              ? _startNodeId : null,
           onSemanticNodeTap: _showSemanticNodeActions,
         ),
         const SizedBox(height: 12),
