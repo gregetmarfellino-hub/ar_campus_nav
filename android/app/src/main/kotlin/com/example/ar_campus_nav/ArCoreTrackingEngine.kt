@@ -388,7 +388,9 @@ class ArCoreTrackingEngine(
         navigationOfflineAnchorPausedSinceNanos = 0L
         navigationOfflineAutoRecoveryAttempts = 0
         navigationPreviousOfflineLockPose = null
-        navigationOfflineDiagnosticLines.clear()
+        synchronized(navigationOfflineDiagnosticLines) {
+            navigationOfflineDiagnosticLines.clear()
+        }
         navigationOfflineLastDiagnosticReason = null
         navigationOfflineLastDiagnosticSampleNanos = 0L
         navigationOfflineLastProgressUpdateNanos = 0L
@@ -2302,10 +2304,12 @@ class ArCoreTrackingEngine(
         navigationOfflineLastDiagnosticReason = event
         navigationOfflineLastDiagnosticReasonAtMillis = now
         val line = "${now}ms | $event | $details"
-        if (navigationOfflineDiagnosticLines.size >= navigationOfflineDiagnosticCapacity) {
-            navigationOfflineDiagnosticLines.removeFirst()
+        synchronized(navigationOfflineDiagnosticLines) {
+            if (navigationOfflineDiagnosticLines.size >= navigationOfflineDiagnosticCapacity) {
+                navigationOfflineDiagnosticLines.removeFirst()
+            }
+            navigationOfflineDiagnosticLines.addLast(line)
         }
-        navigationOfflineDiagnosticLines.addLast(line)
         Log.i(navigationOfflineDiagnosticTag, line)
     }
 
@@ -2349,7 +2353,7 @@ class ArCoreTrackingEngine(
         mainHandler.post {
             navigationScanProgressCard?.visibility = View.VISIBLE
             navigationScanProgressBar?.progress = progress
-            navigationScanProgressLabel?.text = "$stage • $progress% verified"
+            navigationScanProgressLabel?.text = "$stage • $progress% scan progress"
             navigationScanDiagnosticsText?.text = details
         }
         if (frameTimestampNanos - navigationOfflineLastDiagnosticSampleNanos >=
@@ -2377,7 +2381,9 @@ class ArCoreTrackingEngine(
             appendLine("ARCore world coordinates are session-local; do not compare")
             appendLine("raw XYZ from different app launches as absolute meters.")
             appendLine()
-            for (line in navigationOfflineDiagnosticLines) appendLine(line)
+            synchronized(navigationOfflineDiagnosticLines) {
+                for (line in navigationOfflineDiagnosticLines) appendLine(line)
+            }
         }
         val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE)
             as ClipboardManager
@@ -4179,7 +4185,7 @@ class ArCoreTrackingEngine(
         }
         navigationScanProgressCard = scanCard
         val scanLabel = TextView(activity).apply {
-            text = "FINDING START • 0% verified"
+            text = "FINDING START • 0% scan progress"
             textSize = 13f
             setTextColor(Color.WHITE)
         }
