@@ -73,6 +73,41 @@ class VenueOverrideStorage {
     }
   }
 
+  // The newest graph edit is reversible without touching the original
+  // walk recording JSONs. Reserved IDs keep backups off the recordings list.
+  String _graphBackupId(String venueId) =>
+      '${MappingStorage.reservedVenuePrefix}graph_backup__$venueId';
+
+  Future<VenueOverrideDocument?> loadGraphBackup(String venueId) async {
+    try {
+      final raw = await _native.invokeMethod<String>(
+        'loadMapping',
+        <String, dynamic>{'id': _graphBackupId(venueId)},
+      );
+      if (raw == null || raw.isEmpty) return null;
+      return VenueOverrideDocument.fromJson(
+        jsonDecode(raw) as Map<String, dynamic>,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String> saveGraphBackup(VenueOverrideDocument document) async {
+    final raw = const JsonEncoder.withIndent('  ').convert(document.toJson());
+    final path = await _native.invokeMethod<String>(
+      'saveMapping',
+      <String, dynamic>{
+        'id': _graphBackupId(document.venue.id),
+        'json': raw,
+      },
+    );
+    if (path == null || path.isEmpty) {
+      throw StateError('Android did not save the previous venue graph.');
+    }
+    return path;
+  }
+
   Future<String> save(VenueOverrideDocument document) async {
     final raw = const JsonEncoder.withIndent('  ').convert(document.toJson());
     final path = await _native.invokeMethod<String>(
