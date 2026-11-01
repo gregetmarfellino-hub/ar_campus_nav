@@ -283,4 +283,47 @@ void main() {
     expect(next.nodes.any((node) => node.id == 'f1stair'), isTrue);
   });
 
+  test('QR-free upstairs mapping adds no fake physical localization anchor', () {
+    final base = building();
+    final upstairs = MappingSession(
+      id: 'qr_free_f2',
+      venueId: base.id,
+      venueName: base.name,
+      floor: 2,
+      createdAt: DateTime.utc(2026, 11, 1),
+      startAnchorId: null,
+      startAnchorLabel: 'Floor 2 recording origin',
+      originHeadingDegrees: 0,
+      stepLengthMeters: 0,
+      source: 'arcore_spatial',
+      points: const [
+        MappingPoint(
+          xMeters: 0, yMeters: 0,
+          headingDegrees: 0, stepIndex: 0, timestampMs: 1,
+        ),
+        MappingPoint(
+          xMeters: 0, yMeters: 2,
+          headingDegrees: 0, stepIndex: 1, timestampMs: 1000,
+        ),
+      ],
+      markers: const [],
+    );
+
+    final applied = const VenueMappingService().applySession(
+      venue: base,
+      session: upstairs,
+    );
+    expect(applied.defaultStartNodeId, 'entrance');
+    expect(applied.anchors, hasLength(1));
+    expect(applied.anchors.single.id, 'start');
+    final temporaryStart = applied.nodes.firstWhere(
+      (node) => node.label == 'Floor 2 recording origin',
+    );
+    expect(temporaryStart.floor, 2);
+    expect(applied.anchors.any(
+      (anchor) => anchor.nodeId == temporaryStart.id,
+    ), isFalse);
+    editor.validate(applied);
+  });
+
 }
