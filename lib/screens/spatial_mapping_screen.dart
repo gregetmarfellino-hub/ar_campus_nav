@@ -1835,27 +1835,35 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                       _markerButton('anchor', Icons.link_rounded),
                     ],
                   ),
-                  if (_userPaused) ...[
-                    const SizedBox(height: 8),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton.icon(
-                        onPressed: _trackingInterrupted
-                            ? null
-                            : _startDisconnectedSegment,
-                        icon: const Icon(Icons.alt_route_rounded),
-                        label: Text(
-                          'START SEPARATE SECTION ${_segmentStarts.length + 1}',
-                        ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _trackingInterrupted || _points.isEmpty
+                          ? null
+                          : _userPaused
+                              ? _startDisconnectedSegment
+                              : _pauseMapping,
+                      icon: const Icon(Icons.alt_route_rounded),
+                      label: Text(
+                        _userPaused
+                            ? 'START SEPARATE SECTION ${_segmentStarts.length + 1}'
+                            : 'NEW SECTION ${_segmentStarts.length + 1} — PAUSE FIRST',
                       ),
                     ),
-                    const Text(
-                      'Resume near the last point to extend the SAME path. '
-                      'Start a separate section after moving elsewhere; '
-                      'the gap is NOT a walkable route.',
-                      style: TextStyle(color: Colors.white60, fontSize: 11),
+                  ),
+                  Text(
+                    _userPaused
+                        ? 'You can move elsewhere, then tap START SEPARATE '
+                          'SECTION. Or tap RESUME to extend the previous line.'
+                        : 'Need another section? Tap NEW SECTION to pause, '
+                          'walk to its start, then tap again. '
+                          'No limit of two sections; every gap stays open.',
+                    style: const TextStyle(
+                      color: Colors.white60,
+                      fontSize: 11,
                     ),
-                  ],
+                  ),
                   const SizedBox(height: 12),
                   Row(
                     children: [

@@ -329,6 +329,73 @@ class VenueGraphEditor {
     );
   }
 
+  /// Remove an erroneous mapped point and all its incident edges.
+  /// NEVER removes a destination, default start or AR localization anchor.
+  ///
+  /// Optional healing is safe only for a simple 2-edge same-floor corridor
+  /// with bidirectional, accessible edges and a <=5 m direct link. No
+  /// automatic jump across a tracking-loss gap or branch junction.
+  Venue removeBadWaypoint(
+    Venue venue,
+    String nodeId, {
+    bool reconnectNeighbors = false,
+  }) {
+    final node = venue.nodeById(nodeId);
+    _requireEditableNode(venue, node);
+    if (venue.destinations.any((d) => d.nodeId == nodeId)) {
+      throw StateError(
+        'This point represents a named destination. Move or rename it '
+        'instead; destination deletion needs an explicit separate action.',
+      );
+    }
+    final incident = venue.edges
+        .where((e) => e.from == nodeId || e.to == nodeId)
+        .toList();
+    final retainedEdges = venue.edges
+        .where((e) => e.from != nodeId && e.to != nodeId)
+        .toList();
+    if (reconnectNeighbors) {
+      if (incident.length != 2 ||
+          incident.any((e) => !e.bidirectional || !e.accessible)) {
+        throw StateError(
+          'Automatic reconnect needs exactly two walkable, '
+          'bidirectional segments. Use Delete & Disconnect instead.',
+        );
+      }
+      final a = venue.nodeById(
+          incident[0].from == nodeId ? incident[0].to : incident[0].from);
+      final b = venue.nodeById(
+          incident[1].from == nodeId ? incident[1].to : incident[1].from);
+      if (a.id == b.id || a.floor != b.floor || a.floor != node.floor) {
+        throw StateError('These neighboring points cannot be reconnected.');
+      }
+      final distance = _rawDistance(a, b);
+      if (distance > 5.0) {
+        throw StateError(
+          'The neighboring points are ${distance.toStringAsFixed(1)} m '
+          'apart. Reconnecting would invent a route. '
+          'Use Delete & Disconnect, then remap the missing section.',
+        );
+      }
+      if (!retainedEdges.any((edge) =>
+          (edge.from == a.id && edge.to == b.id) ||
+          (edge.from == b.id && edge.to == a.id))) {
+        retainedEdges.add(NavEdge(
+          from: a.id,
+          to: b.id,
+          distanceMeters: _distance(a, b),
+          bidirectional: true,
+          accessible: true,
+        ));
+      }
+    }
+    return _copy(
+      venue,
+      nodes: venue.nodes.where((n) => n.id != nodeId).toList(),
+      edges: retainedEdges,
+    );
+  }
+
   /// Warn, but don't silently destroy existing disconnected map components.
   List<String> unreachableDestinations(Venue venue) {
     final visited = <String>{};
