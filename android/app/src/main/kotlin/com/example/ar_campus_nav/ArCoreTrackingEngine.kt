@@ -220,14 +220,38 @@ class ArCoreTrackingEngine(
     // This is verification progress, NOT a calibrated probability of accuracy.
     // Keep a short sliding pose window and tolerate brief ARCore image dropouts.
     private val navigationOfflineSamplesRequired = 12
-    private val navigationOfflineMaxSamples = 30
+    private val navigationOfflineMaxSamples = 18
     private val navigationOfflineMinObservationNanos = 700_000_000L
     private val navigationOfflineViewpointMeters = 0.07f
-    private val navigationOfflineReferenceGraceNanos = 800_000_000L
+    // Image FULL_TRACKING may briefly disappear when the user tilts the phone.
+    private val navigationOfflineReferenceGraceNanos = 2_000_000_000L
+    // Consecutive video frames are highly correlated. Sampling every 70ms
+    // makes a 12-sample consensus span ~0.8 seconds instead of ~0.2 seconds.
+    private val navigationOfflineMinSampleIntervalNanos = 70_000_000L
     private val navigationOfflinePoseSamples =
         java.util.ArrayDeque<OfflineStartEstimate>()
+    // Keep an independent challenger hypothesis for persistent heading jumps.
+    // Never merge mutually inconsistent estimates into a confident lock.
+    private val navigationOfflineChallengerSamples =
+        java.util.ArrayDeque<OfflineStartEstimate>()
+    private var navigationOfflineChallengerFirstSampleNanos = 0L
+    private var navigationOfflineChallengerFirstCameraX = 0f
+    private var navigationOfflineChallengerFirstCameraZ = 0f
+    private var navigationOfflineChallengerReferenceNormal =
+        floatArrayOf(0f, 0f, 1f)
+    private var navigationOfflineChallengerBaseline = 0f
     private var navigationOfflineLastObservedNanos = 0L
     private var navigationOfflinePoseOutliers = 0
+    private var navigationOfflineLastProcessedNanos = 0L
+    private var navigationOfflineFreshSamplesAfterLoss = 0
+    private var navigationOfflineIndependentReferenceAgreements = 0
+    private var navigationOfflineTotalOutliers = 0
+    private var navigationOfflineTotalHypothesisSwitches = 0
+    private var navigationOfflineTotalReferenceLosses = 0
+    private var navigationOfflineTotalAcceptedLocks = 0
+    private var navigationOfflineTotalReferenceDisagreements = 0
+    private var navigationOfflineLastAcceptedLockSummary: String? = null
+    private var navigationOfflineLastRelockComparison: String? = null
     private var navigationOfflineCandidateImageName: String? = null
     private var navigationOfflineFirstSampleNanos = 0L
     private var navigationOfflineLastSampleNanos = 0L
@@ -245,11 +269,14 @@ class ArCoreTrackingEngine(
     // These logs measure localization behavior, not absolute building accuracy.
     private var navigationPreviousOfflineLockPose: Pose? = null
     private var navigationOfflineLastProgressUpdateNanos = 0L
+    // Display the highest evidence completeness within the SAME hypothesis;
+    // individual noisy frames must not make the bar bounce backwards.
+    private var navigationOfflineBestDisplayProgress = 0
     private var navigationOfflineLastDiagnosticSampleNanos = 0L
     private var navigationOfflineLastDiagnosticReason: String? = null
     private var navigationOfflineLastDiagnosticReasonAtMillis = 0L
     private val navigationOfflineDiagnosticLines = java.util.ArrayDeque<String>()
-    private val navigationOfflineDiagnosticCapacity = 120
+    private val navigationOfflineDiagnosticCapacity = 300
     private val navigationOfflineDiagnosticTag = "ARNavLocalization"
     private val navigationOfflineImageName = "ar_nav_offline_start"
     private val navigationOfflineExtraImageName = "ar_nav_offline_start_extra"
@@ -391,6 +418,13 @@ class ArCoreTrackingEngine(
         synchronized(navigationOfflineDiagnosticLines) {
             navigationOfflineDiagnosticLines.clear()
         }
+        navigationOfflineTotalOutliers = 0
+        navigationOfflineTotalHypothesisSwitches = 0
+        navigationOfflineTotalReferenceLosses = 0
+        navigationOfflineTotalAcceptedLocks = 0
+        navigationOfflineTotalReferenceDisagreements = 0
+        navigationOfflineLastAcceptedLockSummary = null
+        navigationOfflineLastRelockComparison = null
         navigationOfflineLastDiagnosticReason = null
         navigationOfflineLastDiagnosticSampleNanos = 0L
         navigationOfflineLastProgressUpdateNanos = 0L
@@ -2218,8 +2252,21 @@ class ArCoreTrackingEngine(
         resetOfflineVisualSamples()
     }
 
+    private fun resetOfflineChallenger() {
+        navigationOfflineChallengerSamples.clear()
+        navigationOfflineChallengerFirstSampleNanos = 0L
+        navigationOfflineChallengerFirstCameraX = 0f
+        navigationOfflineChallengerFirstCameraZ = 0f
+        navigationOfflineChallengerReferenceNormal = floatArrayOf(0f, 0f, 1f)
+        navigationOfflineChallengerBaseline = 0f
+    }
+
     private fun resetOfflineVisualSamples() {
         navigationOfflinePoseSamples.clear()
+        resetOfflineChallenger()
+        navigationOfflineLastProcessedNanos = 0L
+        navigationOfflineFreshSamplesAfterLoss = 0
+        navigationOfflineIndependentReferenceAgreements = 0
         navigationOfflineSampleCount = 0
         navigationOfflinePositionX = 0f
         navigationOfflinePositionY = 0f
@@ -2236,6 +2283,7 @@ class ArCoreTrackingEngine(
         navigationOfflineFirstCameraZ = 0f
         navigationOfflineFirstReferenceNormal = floatArrayOf(0f, 0f, 1f)
         navigationOfflineMaxCameraBaseline = 0f
+        navigationOfflineBestDisplayProgress = 0
     }
 
     private fun offlineVerificationProgress(timestampNanos: Long): Int {
@@ -2251,10 +2299,16 @@ class ArCoreTrackingEngine(
         val viewpointRatio =
             (navigationOfflineMaxCameraBaseline /
                 navigationOfflineViewpointMeters).coerceIn(0f, 1f)
-        // Each component is observable. 100 is reserved for an accepted lock;
-        // it must never be presented as a metric of centimeter-level accuracy.
-        return ((0.40f * sampleRatio + 0.20f * durationRatio +
-            0.40f * viewpointRatio) * 100f).toInt().coerceIn(0, 99)
+        val spread = calculateOfflinePoseSpread()
+        // Mandatory quality gate: progress can approach 100 only when the
+        // recent observations agree in BOTH position and heading. This is
+        // verification completeness, not probability of absolute map accuracy.
+        val stable = spread != null &&
+            spread.positionRmsCm <= 4.5f &&
+            spread.headingMaxDegrees <= 3.10f
+        return ((0.25f * sampleRatio + 0.15f * durationRatio +
+            0.35f * viewpointRatio +
+            (if (stable) 0.25f else 0f)) * 100f).toInt().coerceIn(0, 99)
     }
 
     private data class OfflinePoseSpread(
@@ -2304,6 +2358,11 @@ class ArCoreTrackingEngine(
         navigationOfflineLastDiagnosticReason = event
         navigationOfflineLastDiagnosticReasonAtMillis = now
         val line = "${now}ms | $event | $details"
+        if (event == "START_LOCK_ACCEPTED") {
+            navigationOfflineLastAcceptedLockSummary = line
+        } else if (event == "SAME_SESSION_RELOCK_DELTA") {
+            navigationOfflineLastRelockComparison = line
+        }
         synchronized(navigationOfflineDiagnosticLines) {
             if (navigationOfflineDiagnosticLines.size >= navigationOfflineDiagnosticCapacity) {
                 navigationOfflineDiagnosticLines.removeFirst()
@@ -2325,20 +2384,27 @@ class ArCoreTrackingEngine(
             return
         }
         navigationOfflineLastProgressUpdateNanos = frameTimestampNanos
-        val progress = offlineVerificationProgress(frameTimestampNanos)
+        val currentProgress = offlineVerificationProgress(frameTimestampNanos)
+        navigationOfflineBestDisplayProgress =
+            maxOf(navigationOfflineBestDisplayProgress, currentProgress)
+        val progress = navigationOfflineBestDisplayProgress
         val spread = calculateOfflinePoseSpread()
         val details = buildString {
             append("Frames ")
             append(navigationOfflineSampleCount)
             append("/")
             append(navigationOfflineSamplesRequired)
-            append(" • Parallax ")
-            append(String.format(java.util.Locale.US, "%.0f",
+            append(" • Move ")
+            append(String.format(java.util.Locale.US, "%.1f",
                 navigationOfflineMaxCameraBaseline * 100f))
             append("/")
-            append(String.format(java.util.Locale.US, "%.0f",
+            append(String.format(java.util.Locale.US, "%.1f",
                 navigationOfflineViewpointMeters * 100f))
             append(" cm")
+            if (navigationOfflineChallengerSamples.isNotEmpty()) {
+                append(" • Alt ")
+                append(navigationOfflineChallengerSamples.size)
+            }
             if (spread != null) {
                 append(" • RMS ")
                 append(String.format(java.util.Locale.US, "%.1f",
@@ -2353,7 +2419,8 @@ class ArCoreTrackingEngine(
         mainHandler.post {
             navigationScanProgressCard?.visibility = View.VISIBLE
             navigationScanProgressBar?.progress = progress
-            navigationScanProgressLabel?.text = "$stage • $progress% scan progress"
+            navigationScanProgressLabel?.text =
+                "$stage • $progress% best scan evidence"
             navigationScanDiagnosticsText?.text = details
         }
         if (frameTimestampNanos - navigationOfflineLastDiagnosticSampleNanos >=
@@ -2377,9 +2444,19 @@ class ArCoreTrackingEngine(
 
     private fun copyOfflineDiagnostics() {
         val payload = buildString {
-            appendLine("AR Campus Navigation — V5 localization diagnostics")
+            appendLine("AR Campus Navigation — V6 localization diagnostics")
             appendLine("ARCore world coordinates are session-local; do not compare")
             appendLine("raw XYZ from different app launches as absolute meters.")
+            appendLine("Accepted locks: $navigationOfflineTotalAcceptedLocks")
+            appendLine("Ignored pose outliers: $navigationOfflineTotalOutliers")
+            appendLine("Consensus switches: $navigationOfflineTotalHypothesisSwitches")
+            appendLine("Prolonged reference losses: $navigationOfflineTotalReferenceLosses")
+            appendLine("Independent-reference disagreements: " +
+                navigationOfflineTotalReferenceDisagreements)
+            appendLine("Last lock: " +
+                (navigationOfflineLastAcceptedLockSummary ?: "NONE IN SESSION"))
+            appendLine("Last same-session relock: " +
+                (navigationOfflineLastRelockComparison ?: "NONE"))
             appendLine()
             synchronized(navigationOfflineDiagnosticLines) {
                 for (line in navigationOfflineDiagnosticLines) appendLine(line)
@@ -2433,6 +2510,147 @@ class ArCoreTrackingEngine(
             forwardX = worldFx / length, forwardZ = worldFz / length,
         )
     }
+    /**
+     * Horizontal phone travel tangent to the saved reference surface.
+     * Do not count phone rotation or a forward/backward camera move into a wall.
+     */
+    private fun offlineCameraBaseline(
+        currentPose: Pose,
+        startX: Float,
+        startZ: Float,
+        normal: FloatArray,
+    ): Float {
+        val cameraDx = currentPose.tx() - startX
+        val cameraDz = currentPose.tz() - startZ
+        val nx = normal[0]
+        val nz = normal[2]
+        val length = sqrt(nx * nx + nz * nz)
+        return if (length < 0.1f) {
+            sqrt(cameraDx * cameraDx + cameraDz * cameraDz)
+        } else {
+            abs(cameraDx * (-nz / length) + cameraDz * (nx / length))
+        }
+    }
+
+    /**
+     * A persistent inconsistent estimate forms a SECOND hypothesis instead
+     * of immediately deleting the first one. Only a temporally coherent
+     * challenger (12 independently spaced frames over >=700ms) may replace
+     * the old candidate. Either hypothesis still needs the normal final
+     * parallax + RMS + yaw checks before a route can be shown.
+     *
+     * This cannot distinguish two visually identical physical wall patterns:
+     * a second independent visual reference or physical calibration is still
+     * required for a high-confidence building-level placement.
+     */
+    private fun considerOfflineChallenger(
+        estimate: OfflineStartEstimate,
+        currentPose: Pose,
+        referenceNormal: FloatArray,
+        frameTimestampNanos: Long,
+    ): Boolean {
+        val challenger = navigationOfflineChallengerSamples
+        if (challenger.isNotEmpty()) {
+            val n = challenger.size.toFloat()
+            var ax = 0f
+            var ay = 0f
+            var az = 0f
+            var afx = 0f
+            var afz = 0f
+            for (sample in challenger) {
+                ax += sample.x
+                ay += sample.y
+                az += sample.z
+                afx += sample.forwardX
+                afz += sample.forwardZ
+            }
+            val dx = estimate.x - ax / n
+            val dy = estimate.y - ay / n
+            val dz = estimate.z - az / n
+            val distance = sqrt(dx * dx + dy * dy + dz * dz)
+            val forwardLength = sqrt(afx * afx + afz * afz)
+            val facing = if (forwardLength > 0.1f) {
+                (estimate.forwardX * afx + estimate.forwardZ * afz) /
+                    forwardLength
+            } else {
+                -1f
+            }
+            // A second competing pattern must also form a stable cluster.
+            if (distance > 0.07f || facing < 0.998f) {
+                resetOfflineChallenger()
+            }
+        }
+
+        if (challenger.isEmpty()) {
+            navigationOfflineChallengerFirstSampleNanos = frameTimestampNanos
+            navigationOfflineChallengerFirstCameraX = currentPose.tx()
+            navigationOfflineChallengerFirstCameraZ = currentPose.tz()
+            navigationOfflineChallengerReferenceNormal = referenceNormal.copyOf()
+        }
+        challenger.addLast(estimate)
+        if (challenger.size > navigationOfflineMaxSamples) {
+            challenger.removeFirst()
+        }
+        navigationOfflineChallengerBaseline = maxOf(
+            navigationOfflineChallengerBaseline,
+            offlineCameraBaseline(
+                currentPose,
+                navigationOfflineChallengerFirstCameraX,
+                navigationOfflineChallengerFirstCameraZ,
+                navigationOfflineChallengerReferenceNormal,
+            ),
+        )
+        val challengerDuration = frameTimestampNanos -
+            navigationOfflineChallengerFirstSampleNanos
+        if (challenger.size < navigationOfflineSamplesRequired ||
+            challengerDuration < navigationOfflineMinObservationNanos
+        ) {
+            return false
+        }
+
+        val adopted = challenger.toList()
+        val firstTimestamp = navigationOfflineChallengerFirstSampleNanos
+        val firstX = navigationOfflineChallengerFirstCameraX
+        val firstZ = navigationOfflineChallengerFirstCameraZ
+        val firstNormal = navigationOfflineChallengerReferenceNormal.copyOf()
+        val observedBaseline = navigationOfflineChallengerBaseline
+        val discarded = navigationOfflineSampleCount
+        resetOfflineVisualSamples()
+        for (sample in adopted) {
+            navigationOfflinePoseSamples.addLast(sample)
+            navigationOfflineSampleCount++
+            navigationOfflinePositionX += sample.x
+            navigationOfflinePositionY += sample.y
+            navigationOfflinePositionZ += sample.z
+            navigationOfflineForwardX += sample.forwardX
+            navigationOfflineForwardZ += sample.forwardZ
+        }
+        navigationOfflineFirstSampleNanos = firstTimestamp
+        navigationOfflineLastSampleNanos = frameTimestampNanos
+        navigationOfflineLastProcessedNanos = frameTimestampNanos
+        navigationOfflineLastObservedNanos = frameTimestampNanos
+        navigationOfflineFirstCameraX = firstX
+        navigationOfflineFirstCameraY = currentPose.ty()
+        navigationOfflineFirstCameraZ = firstZ
+        navigationOfflineFirstReferenceNormal = firstNormal
+        navigationOfflineMaxCameraBaseline = observedBaseline
+        // The newly promoted pose starts a different evidence hypothesis.
+        // The progress bar is reset for that change, but retains its validated
+        // sample history and must still reconfirm tracking before lock.
+        // A newly promoted hypothesis must demonstrate several fresh
+        // observations before lock; adoption itself is never an acceptance.
+        navigationOfflineFreshSamplesAfterLoss = 0
+        navigationOfflineTotalHypothesisSwitches++
+        logOfflineDiagnostic(
+            "CONSENSUS_SWITCH",
+            "oldFrames=$discarded newFrames=${adopted.size} " +
+                "newBaselineCm=" +
+                String.format(java.util.Locale.US, "%.1f",
+                    observedBaseline * 100f),
+        )
+        return true
+    }
+
     private fun tryLockOfflineVisualStart(
         activeSession: Session,
         currentCameraPose: Pose,
@@ -2460,29 +2678,40 @@ class ArCoreTrackingEngine(
                     frameTimestampNanos - navigationOfflineLastObservedNanos <=
                         navigationOfflineReferenceGraceNanos
                 if (recentlySeen) {
+                    navigationOfflineFreshSamplesAfterLoss = 0
                     updateOfflineScanUi(frameTimestampNanos, "DETAIL LOST")
                     setNavigationHud(
                         "START DETAIL TEMPORARILY LOST — keep the saved " +
-                            "doorway or sign in view.",
+                            "doorway or sign in view. Evidence is preserved.",
                     )
                 } else {
                     if (navigationOfflineSampleCount > 0) {
+                        navigationOfflineTotalReferenceLosses++
                         logOfflineDiagnostic(
                             "RESET_REFERENCE_LOST",
                             "lastValidFrames=${navigationOfflineSampleCount}; " +
-                                "image was not FULL_TRACKING for 800ms.",
+                                "image not FULL_TRACKING for 2 seconds.",
                         )
+                        resetOfflineVisualSamples()
                     }
-                    resetOfflineVisualSamples()
                     updateOfflineScanUi(frameTimestampNanos, "FINDING START")
                     setNavigationHud(
-                        "FINDING START — aim at the saved distinctive sign " +
+                        "FINDING START — aim at a DISTINCTIVE saved sign " +
                             "or doorway, not repeating tiles.",
                     )
                 }
                 return false
             }
 
+        // Skip correlated video frames; the prior code counted three
+        // consecutive 30-fps heading glitches as three independent failures.
+        if (navigationOfflineLastProcessedNanos > 0L &&
+            frameTimestampNanos - navigationOfflineLastProcessedNanos <
+                navigationOfflineMinSampleIntervalNanos
+        ) {
+            return false
+        }
+        navigationOfflineLastProcessedNanos = frameTimestampNanos
         val estimate = estimateOfflineStart(target) ?: run {
             updateOfflineScanUi(frameTimestampNanos, "REFINING POSE")
             logOfflineDiagnostic("INVALID_REFERENCE_POSE", "Ref=${target.name}")
@@ -2510,9 +2739,14 @@ class ArCoreTrackingEngine(
                 val alignment = fx * check.forwardX + fz * check.forwardZ
                 val angleDifference = acos(alignment.coerceIn(-1f, 1f)) *
                     (180f / Math.PI.toFloat())
-                if (distance > 0.18f || alignment < 0.991f) {
+                if (distance > 0.10f || alignment < 0.999f) {
+                    // Do not merge contradictory physical references. But
+                    // neither should one bad match erase good prior samples.
+                    navigationOfflineIndependentReferenceAgreements = 0
+                    navigationOfflineFreshSamplesAfterLoss = 0
+                    navigationOfflineTotalReferenceDisagreements++
                     logOfflineDiagnostic(
-                        "RESET_REFERENCE_DISAGREEMENT",
+                        "REFERENCE_DISAGREEMENT",
                         "positionDeltaCm=" +
                             String.format(java.util.Locale.US, "%.1f",
                                 distance * 100f) +
@@ -2520,15 +2754,15 @@ class ArCoreTrackingEngine(
                             String.format(java.util.Locale.US, "%.1f",
                                 angleDifference),
                     )
-                    resetOfflineVisualSamples()
                     updateOfflineScanUi(frameTimestampNanos,
                         "REFERENCES DISAGREE", force = true)
                     setNavigationHud(
-                        "START REFERENCES DISAGREE — move slowly toward a " +
-                            "unique sign/door detail; cannot safely lock route.",
+                        "START REFERENCES DISAGREE — cannot lock until the " +
+                            "saved landmarks agree. Aim at unique details.",
                     )
                     return false
                 }
+                navigationOfflineIndependentReferenceAgreements++
                 logOfflineDiagnostic(
                     "REFERENCE_AGREEMENT",
                     "positionDeltaCm=" +
@@ -2538,8 +2772,11 @@ class ArCoreTrackingEngine(
                 )
             }
         }
-        // Primary/secondary images both reconstruct the SAME start frame.
-        // Switching between them is fine if the reconstructed poses agree.
+        // A secondary patch is useful corroboration, not available for every
+        // legacy saved route. We never pretend a single patch is dual-verified.
+        if (other == null) {
+            navigationOfflineIndependentReferenceAgreements = 0
+        }
         navigationOfflineCandidateImageName = target.name
 
         // Compare incoming poses against the RECENT window rather than one
@@ -2556,36 +2793,42 @@ class ArCoreTrackingEngine(
             val facingAgreement = fx * previousForwardX + fz * previousForwardZ
             if (positionError > 0.10f || facingAgreement < 0.996f) {
                 navigationOfflinePoseOutliers++
+                navigationOfflineTotalOutliers++
+                val promoted = considerOfflineChallenger(
+                    estimate,
+                    currentCameraPose,
+                    target.centerPose.getTransformedAxis(1, 1f),
+                    frameTimestampNanos,
+                )
                 logOfflineDiagnostic(
-                    "POSE_OUTLIER",
-                    "count=${navigationOfflinePoseOutliers}/3 " +
+                    if (promoted) "CONSENSUS_PROMOTED" else "POSE_OUTLIER",
+                    "rejectedTotal=${navigationOfflineTotalOutliers} " +
                         "positionDeltaCm=" +
                         String.format(java.util.Locale.US, "%.1f",
                             positionError * 100f) +
                         " yawDeltaDeg=" +
                         String.format(java.util.Locale.US, "%.1f",
                             acos(facingAgreement.coerceIn(-1f, 1f)) *
-                                (180f / Math.PI.toFloat())),
+                                (180f / Math.PI.toFloat())) +
+                        " challengerFrames=${navigationOfflineChallengerSamples.size}",
                 )
-                if (navigationOfflinePoseOutliers >= 3) {
-                    logOfflineDiagnostic(
-                        "RESET_POSE_UNSTABLE",
-                        "three consecutive inconsistent estimates",
-                    )
-                    resetOfflineVisualSamples()
-                    navigationOfflineCandidateImageName = target.name
-                    navigationOfflineLastObservedNanos = frameTimestampNanos
-                }
-                updateOfflineScanUi(frameTimestampNanos, "REFINING POSE",
+                // A rejected observation never contributes to the stored pose
+                // or parallax; the prior stable hypothesis is kept intact.
+                updateOfflineScanUi(frameTimestampNanos,
+                    if (promoted) "NEW STABLE VIEW" else "CHECKING HEADING",
                     force = true)
                 setNavigationHud(
-                    "REFINING START POSE — estimate shifted; " +
-                        "checking recent stable views.",
+                    if (promoted)
+                        "NEW CONSISTENT START VIEW — verifying motion again."
+                    else
+                        "CHECKING HEADING — unstable reference estimate " +
+                            "ignored; previous scan evidence preserved.",
                 )
                 return false
             }
         }
         navigationOfflinePoseOutliers = 0
+        resetOfflineChallenger()
 
         if (navigationOfflineSampleCount == 0) {
             navigationOfflineFirstSampleNanos = frameTimestampNanos
@@ -2597,22 +2840,18 @@ class ArCoreTrackingEngine(
         }
         if (frameTimestampNanos <= navigationOfflineLastSampleNanos) return false
         navigationOfflineLastSampleNanos = frameTimestampNanos
+        navigationOfflineFreshSamplesAfterLoss++
 
         // Parallax is relative to the REFERENCE SURFACE, not the phone.
         // A wall requires sideways translation across it; a floor reference
         // accepts horizontal motion in any direction. Phone rotation alone
         // cannot increase the metric baseline.
-        val cameraDx = currentCameraPose.tx() - navigationOfflineFirstCameraX
-        val cameraDz = currentCameraPose.tz() - navigationOfflineFirstCameraZ
-        val normalX = navigationOfflineFirstReferenceNormal[0]
-        val normalZ = navigationOfflineFirstReferenceNormal[2]
-        val normalLength = sqrt(normalX * normalX + normalZ * normalZ)
-        val cameraBaseline = if (normalLength < 0.1f) {
-            sqrt(cameraDx * cameraDx + cameraDz * cameraDz)
-        } else {
-            abs(cameraDx * (-normalZ / normalLength) +
-                cameraDz * (normalX / normalLength))
-        }
+        val cameraBaseline = offlineCameraBaseline(
+            currentCameraPose,
+            navigationOfflineFirstCameraX,
+            navigationOfflineFirstCameraZ,
+            navigationOfflineFirstReferenceNormal,
+        )
         navigationOfflineMaxCameraBaseline =
             maxOf(navigationOfflineMaxCameraBaseline, cameraBaseline)
 
@@ -2642,11 +2881,14 @@ class ArCoreTrackingEngine(
             frameTimestampNanos - navigationOfflineFirstSampleNanos >=
                 navigationOfflineMinObservationNanos
         if (navigationOfflineSampleCount < navigationOfflineSamplesRequired ||
-            !observedLongEnough || !hasParallax
+            !observedLongEnough || !hasParallax ||
+            navigationOfflineFreshSamplesAfterLoss < 4
         ) {
             val stage = when {
                 !hasParallax -> "MOVE SIDEWAYS"
                 !observedLongEnough -> "OBSERVING"
+                navigationOfflineFreshSamplesAfterLoss < 4 ->
+                    "RECONFIRMING VIEW"
                 else -> "STABILIZING"
             }
             updateOfflineScanUi(frameTimestampNanos, stage)
@@ -2655,6 +2897,8 @@ class ArCoreTrackingEngine(
                     "Move phone SIDEWAYS ~7 cm while keeping the sign visible."
                 !observedLongEnough ->
                     "Hold the reference steady for another moment."
+                navigationOfflineFreshSamplesAfterLoss < 4 ->
+                    "Reconfirming the saved detail after a tracking interruption."
                 else ->
                     "Matching recent views (" + navigationOfflineSampleCount +
                         "/" + navigationOfflineSamplesRequired + " stable frames)."
@@ -2698,6 +2942,7 @@ class ArCoreTrackingEngine(
         val positionRms = sqrt(positionalSquaredError / n)
         if (positionRms > 0.045f || lowestFacingAgreement < 0.9985f) {
             val spread = calculateOfflinePoseSpread()
+            val headingBad = lowestFacingAgreement < 0.9985f
             logOfflineDiagnostic(
                 "POSE_SPREAD_REJECTED",
                 "rmsCm=" +
@@ -2706,11 +2951,19 @@ class ArCoreTrackingEngine(
                     String.format(java.util.Locale.US, "%.1f",
                         spread?.headingMaxDegrees ?: -1f),
             )
-            updateOfflineScanUi(frameTimestampNanos, "STABILIZING")
+            updateOfflineScanUi(frameTimestampNanos,
+                if (headingBad) "HEADING UNSTABLE" else "POSITION UNSTABLE")
             setNavigationHud(
-                "VERIFYING START — pose spread still high (" +
-                    String.format(java.util.Locale.US, "%.1f", positionRms * 100f) +
-                    " cm RMS). Hold the reference steady.",
+                if (headingBad)
+                    "VERIFYING START — heading spread is too high (" +
+                        String.format(java.util.Locale.US, "%.1f",
+                            spread?.headingMaxDegrees ?: -1f) +
+                        "°). Aim at distinct scene details from another angle."
+                else
+                    "VERIFYING START — position varies by " +
+                        String.format(java.util.Locale.US, "%.1f",
+                            positionRms * 100f) +
+                        " cm RMS. Keep the detailed reference steady.",
             )
             return false
         }
@@ -2747,9 +3000,14 @@ class ArCoreTrackingEngine(
         }
         navigationPreviousOfflineLockPose = startPose
         val stableSpread = calculateOfflinePoseSpread()
+        navigationOfflineTotalAcceptedLocks++
         logOfflineDiagnostic(
             "START_LOCK_ACCEPTED",
-            "source=${target.name}; samples=${navigationOfflineSampleCount}; " +
+            "source=${target.name}; refs=" +
+                (if (navigationOfflineIndependentReferenceAgreements >= 2)
+                    "TWO_AGREEING"
+                else
+                    "SINGLE_ONLY") + "; samples=${navigationOfflineSampleCount}; " +
                 "baselineCm=" +
                 String.format(java.util.Locale.US, "%.1f",
                     navigationOfflineMaxCameraBaseline * 100f) +
@@ -4185,7 +4443,7 @@ class ArCoreTrackingEngine(
         }
         navigationScanProgressCard = scanCard
         val scanLabel = TextView(activity).apply {
-            text = "FINDING START • 0% scan progress"
+            text = "FINDING START • 0% best scan evidence"
             textSize = 13f
             setTextColor(Color.WHITE)
         }
@@ -4209,7 +4467,7 @@ class ArCoreTrackingEngine(
             ).apply { topMargin = dp(6) },
         )
         val diagText = TextView(activity).apply {
-            text = "Frames 0/12 • Parallax 0/7 cm"
+            text = "Frames 0/12 • Move 0.0/7.0 cm"
             textSize = 10f
             setTextColor(0xFFD0DAE5.toInt())
         }
