@@ -269,6 +269,9 @@ class ArCoreTrackingEngine(
     // These logs measure localization behavior, not absolute building accuracy.
     private var navigationPreviousOfflineLockPose: Pose? = null
     private var navigationOfflineLastProgressUpdateNanos = 0L
+    // Display the highest evidence completeness within the SAME hypothesis;
+    // individual noisy frames must not make the bar bounce backwards.
+    private var navigationOfflineBestDisplayProgress = 0
     private var navigationOfflineLastDiagnosticSampleNanos = 0L
     private var navigationOfflineLastDiagnosticReason: String? = null
     private var navigationOfflineLastDiagnosticReasonAtMillis = 0L
@@ -2280,6 +2283,7 @@ class ArCoreTrackingEngine(
         navigationOfflineFirstCameraZ = 0f
         navigationOfflineFirstReferenceNormal = floatArrayOf(0f, 0f, 1f)
         navigationOfflineMaxCameraBaseline = 0f
+        navigationOfflineBestDisplayProgress = 0
     }
 
     private fun offlineVerificationProgress(timestampNanos: Long): Int {
@@ -2380,7 +2384,10 @@ class ArCoreTrackingEngine(
             return
         }
         navigationOfflineLastProgressUpdateNanos = frameTimestampNanos
-        val progress = offlineVerificationProgress(frameTimestampNanos)
+        val currentProgress = offlineVerificationProgress(frameTimestampNanos)
+        navigationOfflineBestDisplayProgress =
+            maxOf(navigationOfflineBestDisplayProgress, currentProgress)
+        val progress = navigationOfflineBestDisplayProgress
         val spread = calculateOfflinePoseSpread()
         val details = buildString {
             append("Frames ")
@@ -2413,7 +2420,7 @@ class ArCoreTrackingEngine(
             navigationScanProgressCard?.visibility = View.VISIBLE
             navigationScanProgressBar?.progress = progress
             navigationScanProgressLabel?.text =
-                "$stage • $progress% checks completed"
+                "$stage • $progress% best scan evidence"
             navigationScanDiagnosticsText?.text = details
         }
         if (frameTimestampNanos - navigationOfflineLastDiagnosticSampleNanos >=
@@ -2627,6 +2634,9 @@ class ArCoreTrackingEngine(
         navigationOfflineFirstCameraZ = firstZ
         navigationOfflineFirstReferenceNormal = firstNormal
         navigationOfflineMaxCameraBaseline = observedBaseline
+        // The newly promoted pose starts a different evidence hypothesis.
+        // The progress bar is reset for that change, but retains its validated
+        // sample history and must still reconfirm tracking before lock.
         // A newly promoted hypothesis must demonstrate several fresh
         // observations before lock; adoption itself is never an acceptance.
         navigationOfflineFreshSamplesAfterLoss = 0
@@ -4433,7 +4443,7 @@ class ArCoreTrackingEngine(
         }
         navigationScanProgressCard = scanCard
         val scanLabel = TextView(activity).apply {
-            text = "FINDING START • 0% checks completed"
+            text = "FINDING START • 0% best scan evidence"
             textSize = 13f
             setTextColor(Color.WHITE)
         }
