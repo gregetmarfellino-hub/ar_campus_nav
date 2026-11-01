@@ -6,6 +6,7 @@ import '../services/mapping_storage.dart';
 import '../services/venue_loader.dart';
 import '../services/venue_override_storage.dart';
 import 'mapping_review_screen.dart';
+import 'venue_graph_editor_screen.dart';
 
 class MappingSessionsScreen extends StatefulWidget {
   const MappingSessionsScreen({
@@ -27,6 +28,7 @@ class _MappingSessionsScreenState extends State<MappingSessionsScreen> {
   List<MappingSession> _sessions = const [];
   Venue? _venue;
   VenueOverrideDocument? _document;
+  bool _hasGraphBackup = false;
   bool _loading = true;
   String? _error;
 
@@ -48,12 +50,14 @@ class _MappingSessionsScreenState extends State<MappingSessionsScreen> {
       final venue = await _venueLoader.load(widget.packagePath);
       final sessions = await _mappingStorage.listSessions();
       final document = await _overrideStorage.load(venue.id);
+      final backup = await _overrideStorage.loadGraphBackup(venue.id);
 
       if (!mounted) return;
       setState(() {
         _venue = venue;
         _sessions = sessions.where((item) => item.venueId == venue.id).toList();
         _document = document;
+        _hasGraphBackup = backup != null;
         _loading = false;
       });
     } catch (error) {
@@ -83,6 +87,73 @@ class _MappingSessionsScreenState extends State<MappingSessionsScreen> {
     }
   }
 
+
+  Future<void> _openGraphEditor() async {
+    final venue = _venue;
+    if (venue == null) return;
+    final changed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => VenueGraphEditorScreen(
+          venue: venue,
+          currentDocument: _document,
+        ),
+      ),
+    );
+    if (changed == true) await _reload();
+  }
+
+  Future<void> _restoreGraphBackup() async {
+    final venue = _venue;
+    if (venue == null) return;
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Restore previous venue graph?'),
+            content: const Text(
+              'This restores the graph saved immediately before the latest '
+              'manual venue edit. Walk recordings are unaffected. '
+              'The current graph is also retained as the next backup.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Restore previous'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!confirmed || !mounted) return;
+    try {
+      final backup = await _overrideStorage.loadGraphBackup(venue.id);
+      if (backup == null) {
+        throw StateError('There is no saved graph backup.');
+      }
+      final current = _document ??
+          VenueOverrideDocument(
+            venue: venue,
+            coordinateSpace: 'sample',
+            appliedSessionIds: const [],
+            updatedAt: DateTime.now(),
+          );
+      await _overrideStorage.save(backup);
+      await _overrideStorage.saveGraphBackup(current);
+      await _reload();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Previous venue graph restored.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not restore venue graph: $error')),
+      );
+    }
+  }
 
   Future<void> _deleteSession(MappingSession session) async {
     final wasApplied =
@@ -296,6 +367,20 @@ class _MappingSessionsScreenState extends State<MappingSessionsScreen> {
                         ),
                       ),
                       const SizedBox(height: 12),
+                      FilledButton.icon(
+                        onPressed: _venue == null ? null : _openGraphEditor,
+                        icon: const Icon(Icons.edit_road_rounded),
+                        label: const Text('EDIT SAVED VENUE WAYPOINTS'),
+                      ),
+                      if (_hasGraphBackup) ...[
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          onPressed: _restoreGraphBackup,
+                          icon: const Icon(Icons.restore_rounded),
+                          label: const Text('RESTORE PREVIOUS GRAPH'),
+                        ),
+                      ],
+                      const SizedBox(height: 8),
                       OutlinedButton.icon(
                         onPressed: _restoreBundled,
                         icon: const Icon(Icons.restart_alt_rounded),
