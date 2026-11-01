@@ -500,9 +500,16 @@ class VenueMappingService {
     }
 
     final edges = <NavEdge>[];
+    final segmentBoundaries = session.effectiveSegmentStarts.toSet();
     for (var i = 0; i < selected.length - 1; i++) {
       final fromIndex = selected[i];
       final toIndex = selected[i + 1];
+      // Explicit disconnection: never create an edge across a user pause.
+      // Graph-editor links must be deliberately authored and verified later.
+      if (segmentBoundaries.any((start) =>
+          start > fromIndex && start <= toIndex)) {
+        continue;
+      }
       final from = nodeIdByIndex[fromIndex]!;
       final to = nodeIdByIndex[toIndex]!;
       final distance = _distanceBetweenIndices(
@@ -533,6 +540,11 @@ class VenueMappingService {
   List<int> _selectedPointIndices(MappingSession session) {
     final last = session.points.length - 1;
     final selected = <int>{0, last};
+    final segmentBoundaries = session.effectiveSegmentStarts.toSet();
+    for (final index in segmentBoundaries) {
+      selected.add(index);
+      if (index > 0) selected.add(index - 1);
+    }
 
     // Routing density is now based on real traveled distance, not sample count.
     // This works for both legacy step recordings and high-frequency ARCore poses.
@@ -540,6 +552,10 @@ class VenueMappingService {
     var distanceSinceNode = 0.0;
 
     for (var i = 1; i < last; i++) {
+      if (segmentBoundaries.contains(i)) {
+        distanceSinceNode = 0;
+        continue;
+      }
       distanceSinceNode += _pointDistance(
         session.points[i - 1],
         session.points[i],
@@ -568,6 +584,12 @@ class VenueMappingService {
     final start = math.min(fromIndex, toIndex);
     final end = math.max(fromIndex, toIndex);
     var total = 0.0;
+    if (session.effectiveSegmentStarts.any((boundary) =>
+        boundary > start && boundary <= end)) {
+      throw StateError(
+        'Cannot compute an edge across separate mapping segments.',
+      );
+    }
 
     for (var i = start + 1; i <= end; i++) {
       total += _pointDistance(
