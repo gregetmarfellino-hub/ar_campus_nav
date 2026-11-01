@@ -221,10 +221,31 @@ class _MappingReviewScreenState extends State<MappingReviewScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 12),
+          if (session.segmentCount > 1) ...[
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Text(
+                  '${session.segmentCount} separate path sections recorded. '
+                  'The preview deliberately leaves the gaps OPEN. '
+                  'Apply this mapping first, then open Saved Mappings → '
+                  'EDIT SAVED VENUE WAYPOINTS and use ALIGN SECTIONS '
+                  'only at matching physical junctions. '
+                  'Unconnected destinations will not route until linked.',
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          const SizedBox(height: 6),
           _InfoCard(
             children: [
               _InfoRow(label: 'Floor', value: 'Floor ${session.floor}'),
+              _InfoRow(
+                label: 'Separate sections',
+                value: '${session.segmentCount}',
+              ),
               _InfoRow(
                 label: 'Geometry',
                 value: session.isSpatial ? 'ARCore spatial' : 'Legacy step + compass',
