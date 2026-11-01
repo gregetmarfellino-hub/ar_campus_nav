@@ -112,6 +112,46 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
     });
   }
 
+  void _zoomFloor(double factor) {
+    final viewport = _viewports[_floor] ??
+        VenueGraphViewport.forFloor(_working, _floor);
+    final newWidth = (viewport.maxX - viewport.minX) * factor;
+    final newHeight = (viewport.maxY - viewport.minY) * factor;
+    if (newWidth < 2 || newHeight < 2 ||
+        newWidth > 1000 || newHeight > 1000) {
+      return;
+    }
+    final midX = (viewport.minX + viewport.maxX) / 2;
+    final midY = (viewport.minY + viewport.maxY) / 2;
+    setState(() {
+      _viewports[_floor] = VenueGraphViewport(
+        minX: midX - newWidth / 2,
+        maxX: midX + newWidth / 2,
+        minY: midY - newHeight / 2,
+        maxY: midY + newHeight / 2,
+      );
+    });
+  }
+
+  void _panFloor(Offset motionInMetres) {
+    final viewport = _viewports[_floor] ??
+        VenueGraphViewport.forFloor(_working, _floor);
+    // Moving fingers to the right shifts the drawn map to the right.
+    // World bounds must therefore shift left in metres.
+    setState(() {
+      _viewports[_floor] = VenueGraphViewport(
+        minX: viewport.minX - motionInMetres.dx,
+        maxX: viewport.maxX - motionInMetres.dx,
+        minY: viewport.minY - motionInMetres.dy,
+        maxY: viewport.maxY - motionInMetres.dy,
+      );
+    });
+  }
+
+  void _fitFloor() => setState(() {
+        _viewports[_floor] = VenueGraphViewport.forFloor(_working, _floor);
+      });
+
   void _undoChange() {
     if (_undo.isEmpty) return;
     setState(() {
@@ -612,9 +652,54 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
                       : 'Tap a dot to select. Drag blue or yellow dots to move.',
               style: const TextStyle(color: _green, fontSize: 12),
             ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () => _zoomFloor(0.65),
+                  icon: const Icon(Icons.zoom_in_rounded, size: 19),
+                  label: const Text('ZOOM IN'),
+                ),
+                const SizedBox(width: 7),
+                IconButton.outlined(
+                  tooltip: 'Zoom out',
+                  onPressed: () => _zoomFloor(1.5),
+                  icon: const Icon(Icons.zoom_out_rounded),
+                ),
+                IconButton.outlined(
+                  tooltip: 'Fit all mapped points on this floor',
+                  onPressed: _fitFloor,
+                  icon: const Icon(Icons.fit_screen_rounded),
+                ),
+                const Spacer(),
+                PopupMenuButton<String>(
+                  tooltip: 'Select a mapped point by name',
+                  icon: const Icon(Icons.list_alt_rounded),
+                  onSelected: _tapNode,
+                  itemBuilder: (ctx) => [
+                    for (final node in _working.nodes
+                        .where((node) => node.floor == _floor))
+                      PopupMenuItem(
+                        value: node.id,
+                        child: Text(
+                          node.label == 'Recorded path'
+                              ? 'Waypoint ${node.id}'
+                              : node.label,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+            const Text(
+              'Tap near a dot, pick from the list, or zoom in. '
+              'Drag a dot to move it; drag EMPTY space to pan.',
+              style: TextStyle(color: Colors.white54, fontSize: 11),
+            ),
             const SizedBox(height: 8),
             Container(
-              height: 365,
+              height: 395,
               clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(
                 color: const Color(0xFF0D1527),
@@ -633,6 +718,7 @@ class _VenueGraphEditorScreenState extends State<VenueGraphEditorScreen> {
                 onDragStartNode: _startDrag,
                 onDragNode: _drag,
                 onDragEndNode: _finishDrag,
+                onPanCanvas: _panFloor,
                 onInsertWaypoint: _insert,
               ),
             ),
