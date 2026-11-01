@@ -91,6 +91,8 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
   String _trackingState = 'STOPPED';
 
   final List<MappingPoint> _points = <MappingPoint>[];
+  // First point of every disconnected section in the active ARCore frame.
+  final List<int> _segmentStarts = <int>[0];
   final List<MappingMarker> _markers = <MappingMarker>[];
 
   String? _message;
@@ -264,6 +266,9 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         _trackingState = 'ACQUIRING';
         _pose = const ArPose(tracking: 'INITIALIZING');
         _points.clear();
+        _segmentStarts
+          ..clear()
+          ..add(0);
         _markers.clear();
         _message =
             'WAIT — hold the phone steady until ARCore locks. Then recording '
@@ -352,6 +357,9 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         _recordedDistanceMeters = 0;
         _trackingState = 'READY';
         _points.clear();
+        _segmentStarts
+          ..clear()
+          ..add(0);
         _markers
           ..clear()
           ..add(
@@ -573,6 +581,9 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         _trackingState = 'SCAN START QR';
         _pose = const ArPose(tracking: 'INITIALIZING');
         _points.clear();
+        _segmentStarts
+          ..clear()
+          ..add(0);
         _markers.clear();
         _placedStartQrId = anchorId;
         _placedStartQrLabel = label;
@@ -615,6 +626,9 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
           _recordedDistanceMeters = 0;
           _trackingState = 'READY';
           _points.clear();
+          _segmentStarts
+            ..clear()
+            ..add(0);
           _markers
             ..clear()
             ..add(
@@ -1018,6 +1032,68 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     });
   }
 
+  Future<void> _startDisconnectedSegment() async {
+    if (!_recording || !_userPaused) return;
+    if (_points.isEmpty || !_pose.isTracking || _trackingInterrupted) {
+      setState(() {
+        _message =
+            'Wait for stable ARCore tracking before starting a new section.';
+      });
+      return;
+    }
+
+    final candidate = _mappingPointFromPose(_pose);
+    final gap = _distance3d(_points.last, candidate);
+    if (!gap.isFinite) return;
+    final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Start separate path here?'),
+            content: Text(
+              'Section ${_segmentStarts.length + 1} will start at your '
+              'CURRENT location. The ${gap.toStringAsFixed(1)} m gap '
+              'will NOT become a route. This new path stays disconnected '
+              'until you align/connect it deliberately in Venue Editor.\n\n'
+              'Keep this mapping screen open: both sections share only '
+              'this running ARCore session. At larger distances the map '
+              'can still drift; verify physical landmarks before linking.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('New separate path'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!mounted || !confirmed || !_userPaused || !_recording ||
+        !_pose.isTracking || _trackingInterrupted) {
+      return;
+    }
+    final freshStart = _mappingPointFromPose(_pose);
+    if (!freshStart.xMeters.isFinite || !freshStart.yMeters.isFinite ||
+        !freshStart.upMeters.isFinite) {
+      setState(() => _message = 'Cannot start a path with an invalid pose.');
+      return;
+    }
+    setState(() {
+      _segmentStarts.add(_points.length);
+      _points.add(freshStart);
+      _userPaused = false;
+      _consecutiveRejectedPoseJumps = 0;
+      _trackingState = 'NEW SECTION';
+      _message =
+          'SECTION ${_segmentStarts.length} STARTED — no teleport line '
+          'was recorded. Save normally; join only physically verified '
+          'intersections in Venue Editor.';
+    });
+  }
+
   Future<void> _addMarker(String type) async {
     if (!_recording || _userPaused ||
         _trackingInterrupted || _points.isEmpty) return;
@@ -1194,6 +1270,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     final simplified = const MappingPathSimplifier().simplify(
       points: _points,
       markers: _markers,
+      segmentStarts: _segmentStarts,
     );
 
     final now = DateTime.now();
@@ -1219,6 +1296,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       source: 'arcore_spatial',
       points: simplified.points,
       markers: simplified.markers,
+      segmentStarts: simplified.segmentStarts,
       rawPointCount: rawPointCount,
       trackingInterruptions: _trackingInterruptions,
       rejectedPoseJumps: _rejectedPoseJumps,
@@ -1259,8 +1337,9 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
         _offlineExtraReferenceJson = null;
         _message =
             'Spatial mapping saved: $rawPointCount raw samples → '
-            '${simplified.points.length} saved geometry points. '
-            'Review quality before applying or merging.';
+            '${simplified.points.length} saved geometry points in '
+            '${simplified.segmentStarts.length} disconnected section(s). '
+            'Review and connect verified junctions in Venue Editor.';
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1290,6 +1369,9 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
       _consecutiveRejectedPoseJumps = 0;
       _recordedDistanceMeters = 0;
       _points.clear();
+      _segmentStarts
+        ..clear()
+        ..add(0);
       _markers.clear();
       _placedStartQrId = null;
       _placedStartQrLabel = null;
@@ -1609,6 +1691,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                       painter: _SpatialPathPainter(
                         points: List<MappingPoint>.unmodifiable(_points),
                         markers: List<MappingMarker>.unmodifiable(_markers),
+                        segmentStarts: List<int>.unmodifiable(_segmentStarts),
                         current: Offset(_pose.x, _pose.forward),
                       ),
                       child: const SizedBox.expand(),
@@ -1745,6 +1828,27 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                       _markerButton('anchor', Icons.link_rounded),
                     ],
                   ),
+                  if (_userPaused) ...[
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: _trackingInterrupted
+                            ? null
+                            : _startDisconnectedSegment,
+                        icon: const Icon(Icons.alt_route_rounded),
+                        label: Text(
+                          'START SEPARATE SECTION ${_segmentStarts.length + 1}',
+                        ),
+                      ),
+                    ),
+                    const Text(
+                      'Resume near the last point to extend the SAME path. '
+                      'Start a separate section after moving elsewhere; '
+                      'the gap is NOT a walkable route.',
+                      style: TextStyle(color: Colors.white60, fontSize: 11),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   Row(
                     children: [
@@ -1887,11 +1991,13 @@ class _SpatialPathPainter extends CustomPainter {
   const _SpatialPathPainter({
     required this.points,
     required this.markers,
+    required this.segmentStarts,
     required this.current,
   });
 
   final List<MappingPoint> points;
   final List<MappingMarker> markers;
+  final List<int> segmentStarts;
   final Offset current;
 
   @override
@@ -1946,9 +2052,15 @@ class _SpatialPathPainter extends CustomPainter {
       final path = Path();
       final first = project(Offset(points.first.xMeters, points.first.yMeters));
       path.moveTo(first.dx, first.dy);
-      for (final point in points.skip(1)) {
+      final breaks = segmentStarts.toSet();
+      for (var index = 1; index < points.length; index++) {
+        final point = points[index];
         final p = project(Offset(point.xMeters, point.yMeters));
-        path.lineTo(p.dx, p.dy);
+        if (breaks.contains(index)) {
+          path.moveTo(p.dx, p.dy);
+        } else {
+          path.lineTo(p.dx, p.dy);
+        }
       }
       canvas.drawPath(
         path,
@@ -1963,6 +2075,15 @@ class _SpatialPathPainter extends CustomPainter {
 
     final origin = project(Offset.zero);
     canvas.drawCircle(origin, 7, Paint()..color = const Color(0xFF3DDC97));
+    for (final index in segmentStarts.skip(1)) {
+      if (index < 0 || index >= points.length) continue;
+      final point = points[index];
+      final p = project(Offset(point.xMeters, point.yMeters));
+      canvas.drawCircle(
+        p, 7,
+        Paint()..color = const Color(0xFFFFC978),
+      );
+    }
 
     for (final marker in markers) {
       final p = project(Offset(marker.xMeters, marker.yMeters));
