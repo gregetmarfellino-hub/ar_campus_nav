@@ -2932,6 +2932,7 @@ class ArCoreTrackingEngine(
         val positionRms = sqrt(positionalSquaredError / n)
         if (positionRms > 0.045f || lowestFacingAgreement < 0.9985f) {
             val spread = calculateOfflinePoseSpread()
+            val headingBad = lowestFacingAgreement < 0.9985f
             logOfflineDiagnostic(
                 "POSE_SPREAD_REJECTED",
                 "rmsCm=" +
@@ -2940,11 +2941,19 @@ class ArCoreTrackingEngine(
                     String.format(java.util.Locale.US, "%.1f",
                         spread?.headingMaxDegrees ?: -1f),
             )
-            updateOfflineScanUi(frameTimestampNanos, "STABILIZING")
+            updateOfflineScanUi(frameTimestampNanos,
+                if (headingBad) "HEADING UNSTABLE" else "POSITION UNSTABLE")
             setNavigationHud(
-                "VERIFYING START — pose spread still high (" +
-                    String.format(java.util.Locale.US, "%.1f", positionRms * 100f) +
-                    " cm RMS). Hold the reference steady.",
+                if (headingBad)
+                    "VERIFYING START — heading spread is too high (" +
+                        String.format(java.util.Locale.US, "%.1f",
+                            spread?.headingMaxDegrees ?: -1f) +
+                        "°). Aim at distinct scene details from another angle."
+                else
+                    "VERIFYING START — position varies by " +
+                        String.format(java.util.Locale.US, "%.1f",
+                            positionRms * 100f) +
+                        " cm RMS. Keep the detailed reference steady.",
             )
             return false
         }
