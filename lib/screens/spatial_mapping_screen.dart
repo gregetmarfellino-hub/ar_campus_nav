@@ -61,6 +61,9 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
 
   bool _starting = false;
   bool _arStarted = false;
+  // Map geometry without requiring a QR image or environment capture.
+  // QR placement remains an optional advanced reference workflow.
+  bool _captureVisualStart = false;
   bool _arming = false;
   bool _awaitingStartQr = false;
   bool _placingStartQr = false;
@@ -108,8 +111,7 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
   void initState() {
     super.initState();
 
-    _startAnchor = widget.initialAnchor ??
-        (widget.venue.anchors.isEmpty ? null : widget.venue.anchors.first);
+    _startAnchor = widget.initialAnchor;
     _floor = widget.initialFloor ??
         _startAnchor?.floor ??
         (widget.venue.floors.isEmpty ? 1 : widget.venue.floors.first);
@@ -186,8 +188,17 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
     if (_starting || _mappingActive) return;
 
     final existing = _startAnchor;
-    final label = existing?.label ?? 'Main Entrance';
-    final anchorId = existing?.id ?? _uniqueVisualAnchorId(label);
+    final label = _captureVisualStart
+        ? (existing?.label ?? 'Floor $_floor visual checkpoint')
+        : 'Floor $_floor recording origin';
+    final anchorId = _captureVisualStart
+        ? (existing?.id ?? _uniqueVisualAnchorId(label))
+        : 'provisional_floor_${_floor}_${DateTime.now().microsecondsSinceEpoch}';
+    if (!_captureVisualStart) {
+      // Starting a recording from a provisional origin must never overwrite
+      // a real QR anchor that was previously mapped on the same floor.
+      _startAnchor = null;
+    }
 
     setState(() {
       _starting = true;
@@ -278,9 +289,12 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
           ..clear()
           ..add(0);
         _markers.clear();
-        _message =
-            'WAIT — hold the phone steady until ARCore locks. Then recording '
-            'starts automatically from $label as a provisional entrance.';
+        _message = _captureVisualStart
+            ? 'Wait for ARCore tracking, then place the OPTIONAL persistent '
+              'visual checkpoint for $label.'
+            : 'WAIT — ARCore tracking stability: 0/'
+              '$_stablePoseSamplesRequired. No QR placement needed. '
+              'Recording will begin automatically at this spot.';
       });
     } catch (error) {
       if (!mounted) return;
@@ -714,21 +728,43 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
 
       if (_stablePoseSamples >= _stablePoseSamplesRequired) {
         _arming = false;
-        _placingStartQr = true;
-        _trackingState = 'PLACE START';
+        if (_captureVisualStart) {
+          _placingStartQr = true;
+          _trackingState = 'PLACE START';
+          _message = 'ARCore is stable. Place and capture your OPTIONAL '
+              'permanent visual checkpoint.';
+          _refreshUi(force: true);
+          unawaited(_placeVirtualStartAndBegin());
+          return;
+        }
+        // Plain floor mapping has a temporary, session-local origin.
+        // There is no QR marker, no QR-placement UI, and no claim that
+        // this position can be re-localized later without a checkpoint.
+        _recording = true;
+        _userPaused = false;
+        _trackingInterrupted = false;
+        _recordedDistanceMeters = 0;
+        _trackingState = 'RECORDING';
+        _points
+          ..clear()
+          ..add(_mappingPointFromPose(pose));
+        _segmentStarts
+          ..clear()
+          ..add(0);
+        _markers.clear();
         _message =
-            'ARCore locked. Place the virtual start QR where this route begins, '
-            'then lock it before walking.';
+            'RECORDING — Floor $_floor. No QR was placed or saved. '
+            'Map the corridors and mark the staircase/elevator landing. '
+            'The floor can later be linked in Venue Editor.';
         _refreshUi(force: true);
-        unawaited(_placeVirtualStartAndBegin());
         return;
       }
 
       _trackingState =
           'LOCKING $_stablePoseSamples/$_stablePoseSamplesRequired';
-      _message =
-          'WAIT — keep the phone steady. Recording starts automatically after '
-          'a stable ARCore lock.';
+      _message = 'ARCore tracking: '
+          '$_stablePoseSamples/$_stablePoseSamplesRequired stable samples. '
+          'Hold steady; recording starts automatically.';
       _refreshUi();
       return;
     }
@@ -1268,7 +1304,9 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
   Future<void> _finishAndSave() async {
     if (_placedStartQrId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Start location is missing. Restart mapping.')),
+        const SnackBar(
+          content: Text('Recording origin is missing. Restart mapping.'),
+        ),
       );
       return;
     }
@@ -1514,9 +1552,10 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                 ),
                 SizedBox(height: 8),
                 Text(
-                  'ARCore locks a virtual start marker into the real world. '
-                  'The walked path and destination are recorded relative to '
-                  'that fixed start.',
+                  'Default: record floor geometry immediately after ARCore '
+                  'tracking stabilizes. No QR or photo capture is required. '
+                  'Permanent visual checkpoints are optional for later '
+                  're-localization.',
                   style: TextStyle(color: Colors.white60, height: 1.45),
                 ),
               ],
@@ -1524,15 +1563,38 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
           ),
           const SizedBox(height: 18),
           _section('START / FLOOR'),
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            value: _captureVisualStart,
+            onChanged: _mappingActive || _starting
+                ? null
+                : (value) => setState(() {
+                    _captureVisualStart = value;
+                    if (!value) _startAnchor = null;
+                  }),
+            title: const Text('Capture permanent visual start (optional)'),
+            subtitle: const Text(
+              'OFF by default: record without QR placement. '
+              'Turn ON only to capture a reusable visual location '
+              '(requires a textured scene and extra setup).',
+            ),
+          ),
           Row(
             children: [
               Expanded(
                 child: DropdownButtonFormField<String?>(
                   key: ValueKey(_startAnchor?.id),
                   initialValue: _startAnchor?.id,
-                  decoration: const InputDecoration(
-                    labelText: 'Start location',
-                    prefixIcon: Icon(Icons.qr_code_2_rounded),
+                  decoration: InputDecoration(
+                    labelText: _captureVisualStart
+                        ? 'Permanent start checkpoint'
+                        : 'Recording origin (temporary)',
+                    prefixIcon: Icon(_captureVisualStart
+                        ? Icons.qr_code_2_rounded
+                        : Icons.location_on_outlined),
+                    helperText: _captureVisualStart
+                        ? 'Optional reference for future localization'
+                        : 'No QR required to begin mapping',
                   ),
                   items: [
                     const DropdownMenuItem<String?>(
@@ -1545,7 +1607,8 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
                         child: Text(anchor.label),
                       ),
                   ],
-                  onChanged: _mappingActive || _starting
+                  onChanged: _mappingActive || _starting ||
+                          !_captureVisualStart
                       ? null
                       : (value) {
                           if (value == null) {
@@ -1565,7 +1628,9 @@ class _SpatialMappingScreenState extends State<SpatialMappingScreen> {
               const SizedBox(width: 8),
               IconButton.filledTonal(
                 tooltip: 'Scan start anchor',
-                onPressed: _mappingActive || _starting ? null : _scanStartAnchor,
+                onPressed: _mappingActive || _starting ||
+                        !_captureVisualStart
+                    ? null : _scanStartAnchor,
                 icon: const Icon(Icons.qr_code_scanner_rounded),
               ),
             ],
