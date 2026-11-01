@@ -4732,6 +4732,9 @@ class ArCoreTrackingEngine(
                     navigationVisualAnchorEnabled = false
                     resetVisualAnchorSamples()
                 }
+                // A manually chosen camera pose does NOT verify a legacy QR
+                // location even if this route originally had a named anchor.
+                navigationAnchorLocalized = false
                 setNavigationHud(
                     "Hold still at the mapped START, facing the first " +
                         "REAL corridor. Locking approximate heading...",
