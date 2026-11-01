@@ -1681,6 +1681,11 @@ class ArCoreTrackingEngine(
                     if (!navigationTrackingLost) {
                         navigationTrackingLost = true
                         navigationTrackingLostAtNanos = frame.timestamp
+                        if (navigationOfflineEnabled) {
+                            logOfflineDiagnostic(
+                                "CAMERA_TRACKING_PAUSED", "reason=$reason",
+                            )
+                        }
                     }
                     setNavigationArrowVisible(false)
                     setNavigationHud(
@@ -1699,6 +1704,8 @@ class ArCoreTrackingEngine(
 
             if (navigationMode && navigationOfflineRescanRequested) {
                 navigationOfflineRescanRequested = false
+                logOfflineDiagnostic("RELOCK_STARTED",
+                    "Existing route transform released; recomputing saved start.")
                 releaseNavigationAnchor()
                 navigationAligned = false
                 navigationRouteWorldY = null
@@ -1824,6 +1831,10 @@ class ArCoreTrackingEngine(
                             navigationOfflineAutoRecoveryAttempts < 1
                         ) {
                             navigationOfflineAutoRecoveryAttempts++
+                            logOfflineDiagnostic(
+                                "EARLY_ANCHOR_AUTO_RELOCK",
+                                "anchor pause >1.2s inside first 6s after lock",
+                            )
                             navigationOfflineRescanRequested = true
                             setNavigationHud(
                                 "START ANCHOR UNSTABLE — automatically " +
@@ -1831,6 +1842,12 @@ class ArCoreTrackingEngine(
                             )
                             return
                         }
+                    }
+                    if (navigationOfflineEnabled) {
+                        logOfflineDiagnostic(
+                            "ANCHOR_NOT_TRACKING",
+                            "state=${routeAnchor?.trackingState?.name ?: "NULL"}",
+                        )
                     }
                     setNavigationHud(
                         if (routeAnchor?.trackingState == TrackingState.STOPPED) {
@@ -2431,18 +2448,27 @@ class ArCoreTrackingEngine(
         val target = observed.firstOrNull { it.name == navigationOfflineImageName }
             ?: observed.firstOrNull()
             ?: run {
-                // Losing FULL_TRACKING for a few frames is common during
-                // viewpoint changes. Do not throw away good samples immediately.
+                // Brief AugmentedImage FULL_TRACKING dropouts must not erase
+                // the recent valid pose window.
                 val recentlySeen = navigationOfflineLastObservedNanos > 0L &&
                     frameTimestampNanos - navigationOfflineLastObservedNanos <=
                         navigationOfflineReferenceGraceNanos
                 if (recentlySeen) {
+                    updateOfflineScanUi(frameTimestampNanos, "DETAIL LOST")
                     setNavigationHud(
                         "START DETAIL TEMPORARILY LOST — keep the saved " +
                             "doorway or sign in view.",
                     )
                 } else {
+                    if (navigationOfflineSampleCount > 0) {
+                        logOfflineDiagnostic(
+                            "RESET_REFERENCE_LOST",
+                            "lastValidFrames=${navigationOfflineSampleCount}; " +
+                                "image was not FULL_TRACKING for 800ms.",
+                        )
+                    }
                     resetOfflineVisualSamples()
+                    updateOfflineScanUi(frameTimestampNanos, "FINDING START")
                     setNavigationHud(
                         "FINDING START — aim at the saved distinctive sign " +
                             "or doorway, not repeating tiles.",
@@ -2452,8 +2478,8 @@ class ArCoreTrackingEngine(
             }
 
         val estimate = estimateOfflineStart(target) ?: run {
-            // A single invalid estimate is not evidence that the whole
-            // localization attempt should restart.
+            updateOfflineScanUi(frameTimestampNanos, "REFINING POSE")
+            logOfflineDiagnostic("INVALID_REFERENCE_POSE", "Ref=${target.name}")
             setNavigationHud("START IMAGE FOUND — refining its pose.")
             return false
         }
@@ -2476,14 +2502,34 @@ class ArCoreTrackingEngine(
                 val dz = startZ - check.z
                 val distance = sqrt(dx * dx + dy * dy + dz * dz)
                 val alignment = fx * check.forwardX + fz * check.forwardZ
+                val angleDifference = acos(alignment.coerceIn(-1f, 1f)) *
+                    (180f / Math.PI.toFloat())
                 if (distance > 0.18f || alignment < 0.991f) {
+                    logOfflineDiagnostic(
+                        "RESET_REFERENCE_DISAGREEMENT",
+                        "positionDeltaCm=" +
+                            String.format(java.util.Locale.US, "%.1f",
+                                distance * 100f) +
+                            " yawDeltaDeg=" +
+                            String.format(java.util.Locale.US, "%.1f",
+                                angleDifference),
+                    )
                     resetOfflineVisualSamples()
+                    updateOfflineScanUi(frameTimestampNanos,
+                        "REFERENCES DISAGREE", force = true)
                     setNavigationHud(
                         "START REFERENCES DISAGREE — move slowly toward a " +
                             "unique sign/door detail; cannot safely lock route.",
                     )
                     return false
                 }
+                logOfflineDiagnostic(
+                    "REFERENCE_AGREEMENT",
+                    "positionDeltaCm=" +
+                        String.format(java.util.Locale.US, "%.1f", distance * 100f) +
+                        " yawDeltaDeg=" +
+                        String.format(java.util.Locale.US, "%.1f", angleDifference),
+                )
             }
         }
         // Primary/secondary images both reconstruct the SAME start frame.
@@ -2504,11 +2550,28 @@ class ArCoreTrackingEngine(
             val facingAgreement = fx * previousForwardX + fz * previousForwardZ
             if (positionError > 0.10f || facingAgreement < 0.996f) {
                 navigationOfflinePoseOutliers++
+                logOfflineDiagnostic(
+                    "POSE_OUTLIER",
+                    "count=${navigationOfflinePoseOutliers}/3 " +
+                        "positionDeltaCm=" +
+                        String.format(java.util.Locale.US, "%.1f",
+                            positionError * 100f) +
+                        " yawDeltaDeg=" +
+                        String.format(java.util.Locale.US, "%.1f",
+                            acos(facingAgreement.coerceIn(-1f, 1f)) *
+                                (180f / Math.PI.toFloat())),
+                )
                 if (navigationOfflinePoseOutliers >= 3) {
+                    logOfflineDiagnostic(
+                        "RESET_POSE_UNSTABLE",
+                        "three consecutive inconsistent estimates",
+                    )
                     resetOfflineVisualSamples()
                     navigationOfflineCandidateImageName = target.name
                     navigationOfflineLastObservedNanos = frameTimestampNanos
                 }
+                updateOfflineScanUi(frameTimestampNanos, "REFINING POSE",
+                    force = true)
                 setNavigationHud(
                     "REFINING START POSE — estimate shifted; " +
                         "checking recent stable views.",
@@ -2575,6 +2638,12 @@ class ArCoreTrackingEngine(
         if (navigationOfflineSampleCount < navigationOfflineSamplesRequired ||
             !observedLongEnough || !hasParallax
         ) {
+            val stage = when {
+                !hasParallax -> "MOVE SIDEWAYS"
+                !observedLongEnough -> "OBSERVING"
+                else -> "STABILIZING"
+            }
+            updateOfflineScanUi(frameTimestampNanos, stage)
             val hint = when {
                 !hasParallax ->
                     "Move phone SIDEWAYS ~7 cm while keeping the sign visible."
@@ -2622,9 +2691,18 @@ class ArCoreTrackingEngine(
         }
         val positionRms = sqrt(positionalSquaredError / n)
         if (positionRms > 0.045f || lowestFacingAgreement < 0.9985f) {
+            val spread = calculateOfflinePoseSpread()
+            logOfflineDiagnostic(
+                "POSE_SPREAD_REJECTED",
+                "rmsCm=" +
+                    String.format(java.util.Locale.US, "%.1f", positionRms * 100f) +
+                    " maxYawDeg=" +
+                    String.format(java.util.Locale.US, "%.1f",
+                        spread?.headingMaxDegrees ?: -1f),
+            )
+            updateOfflineScanUi(frameTimestampNanos, "STABILIZING")
             setNavigationHud(
-                "VERIFYING START " +
-                    "— pose spread still high (" +
+                "VERIFYING START — pose spread still high (" +
                     String.format(java.util.Locale.US, "%.1f", positionRms * 100f) +
                     " cm RMS). Hold the reference steady.",
             )
@@ -2635,6 +2713,49 @@ class ArCoreTrackingEngine(
             position = floatArrayOf(px, py, pz),
             forwardX = averageForwardX,
             forwardZ = averageForwardZ,
+        )
+        // Re-lock deltas are only meaningful within one continuous ARCore
+        // session. We do NOT pretend to compare absolute XYZ after restart.
+        val previousLock = navigationPreviousOfflineLockPose
+        if (previousLock != null) {
+            val old = previousLock.translation
+            val now = startPose.translation
+            val dx = old[0] - now[0]
+            val dy = old[1] - now[1]
+            val dz = old[2] - now[2]
+            val displacement = sqrt(dx * dx + dy * dy + dz * dz)
+            val oldForward = previousLock.getTransformedAxis(2, -1f)
+            val newForward = startPose.getTransformedAxis(2, -1f)
+            val dot = (oldForward[0] * newForward[0] +
+                oldForward[2] * newForward[2]).coerceIn(-1f, 1f)
+            val yawDelta = acos(dot) * (180f / Math.PI.toFloat())
+            logOfflineDiagnostic(
+                "SAME_SESSION_RELOCK_DELTA",
+                "positionDeltaCm=" +
+                    String.format(java.util.Locale.US, "%.1f",
+                        displacement * 100f) +
+                    " yawDeltaDeg=" +
+                    String.format(java.util.Locale.US, "%.1f", yawDelta) +
+                    " (ARCore session may still have drifted)",
+            )
+        }
+        navigationPreviousOfflineLockPose = startPose
+        val stableSpread = calculateOfflinePoseSpread()
+        logOfflineDiagnostic(
+            "START_LOCK_ACCEPTED",
+            "source=${target.name}; samples=${navigationOfflineSampleCount}; " +
+                "baselineCm=" +
+                String.format(java.util.Locale.US, "%.1f",
+                    navigationOfflineMaxCameraBaseline * 100f) +
+                " rmsCm=" +
+                String.format(java.util.Locale.US, "%.1f",
+                    stableSpread?.positionRmsCm ?: -1f) +
+                " headingMaxDeg=" +
+                String.format(java.util.Locale.US, "%.1f",
+                    stableSpread?.headingMaxDegrees ?: -1f) +
+                " poseXYZ=" +
+                String.format(java.util.Locale.US, "(%.3f, %.3f, %.3f)",
+                    startPose.tx(), startPose.ty(), startPose.tz()),
         )
         releaseNavigationAnchor()
         navigationWorldAnchor = activeSession.createAnchor(startPose)
@@ -2660,6 +2781,7 @@ class ArCoreTrackingEngine(
         resetNavigationCalibration()
         resetNavigationContinuity()
         activeRouteIndex = 1
+        markOfflineScanLocked()
         resetOfflineVisualSamples()
         setNavigationAlignedUi()
         setNavigationHud(
@@ -4142,8 +4264,13 @@ class ArCoreTrackingEngine(
             )
             setOnClickListener {
                 if (navigationOfflineEnabled) {
+                    logOfflineDiagnostic(
+                        "MANUAL_FALLBACK_SELECTED",
+                        "automatic visual start scan disabled for current session",
+                    )
                     navigationOfflineEnabled = false
                     resetOfflineVisualSamples()
+                    navigationScanProgressCard?.visibility = View.GONE
                 }
                 if (navigationVisualAnchorEnabled) {
                     navigationVisualAnchorEnabled = false
