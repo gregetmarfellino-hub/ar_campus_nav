@@ -93,7 +93,17 @@ void main() {
     );
     expect(result.points.first.upMeters, 0);
     expect(result.points.last.upMeters, 3);
-    expect(result.points.any((p) => p.upMeters == 1.5), isTrue);
+    // A 3D simplifier may remove collinear intermediate samples (such as
+    // the 1.5m point) while preserving the true ascending segment.
+    final preserved = Continuous3DTrace.analyze(
+      points: result.points,
+      markers: result.markers,
+      segmentStarts: result.segmentStarts,
+      startFloor: 1,
+    );
+    expect(preserved.netHeightMeters, closeTo(3, 0.000001));
+    expect(preserved.pathMeters, greaterThan(preserved.horizontalMeters));
+    expect(preserved.hasMeasuredClimb, isTrue);
     expect(result.markers.single.type, 'floor_level');
     final landing = result.points[result.markers.single.pointIndex];
     expect(landing.upMeters, 3);
