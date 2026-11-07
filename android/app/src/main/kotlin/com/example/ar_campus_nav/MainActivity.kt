@@ -185,6 +185,38 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                         }
                     }
                 }
+                "previewContinuous3dTrace" -> {
+                    val rawPoints =
+                        call.argument<List<Map<String, Any?>>>("points")
+                            ?: emptyList()
+                    val points = rawPoints.mapNotNull { item ->
+                        val right = (item["right"] as? Number)?.toFloat()
+                        val forward = (item["forward"] as? Number)?.toFloat()
+                        val up = (item["up"] as? Number)?.toFloat()
+                        if (right == null || forward == null || up == null) {
+                            null
+                        } else {
+                            ArCoreTrackingEngine.Continuous3DTracePoint(
+                                rightMeters = right,
+                                forwardMeters = forward,
+                                upMeters = up,
+                                label = item["label"]?.toString() ?: "3D route",
+                            )
+                        }
+                    }
+                    result.success(
+                        if (points.size != rawPoints.size) {
+                            "INVALID_3D_TRACE"
+                        } else {
+                            arCoreTrackingEngine?.beginContinuous3DPreview(points)
+                                ?: "NO_ACTIVE_MAPPING_SESSION"
+                        },
+                    )
+                }
+                "closeContinuous3dPreview" -> {
+                    arCoreTrackingEngine?.endContinuous3DPreview()
+                    result.success(null)
+                }
                 "resetArOrigin" -> {
                     arEngine().resetOrigin()
                     result.success(null)
