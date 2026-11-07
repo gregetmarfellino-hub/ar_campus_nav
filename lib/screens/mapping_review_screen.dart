@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/mapping_session.dart';
 import '../models/venue.dart';
 import '../services/venue_mapping_service.dart';
+import '../services/continuous_3d_trace.dart';
 import '../services/venue_override_storage.dart';
 import '../widgets/mapping_session_map.dart';
 
@@ -170,6 +171,14 @@ class _MappingReviewScreenState extends State<MappingReviewScreen> {
   @override
   Widget build(BuildContext context) {
     final session = widget.session;
+    final trace = session.isContinuous3D
+        ? Continuous3DTrace.analyze(
+            points: session.points,
+            markers: session.markers,
+            segmentStarts: session.segmentStarts,
+            startFloor: session.floor,
+          )
+        : null;
     final spatialAlignmentReady =
         session.isSpatial &&
         _document != null &&
@@ -215,8 +224,10 @@ class _MappingReviewScreenState extends State<MappingReviewScreen> {
               ),
               Expanded(
                 child: _Metric(
-                  value: '${session.markers.length}',
-                  label: 'Markers',
+                  value: session.isContinuous3D
+                      ? '${trace!.netHeightMeters.toStringAsFixed(1)} m'
+                      : '${session.markers.length}',
+                  label: session.isContinuous3D ? 'Height Δ' : 'Markers',
                 ),
               ),
             ],
@@ -241,14 +252,22 @@ class _MappingReviewScreenState extends State<MappingReviewScreen> {
           const SizedBox(height: 6),
           _InfoCard(
             children: [
-              _InfoRow(label: 'Floor', value: 'Floor ${session.floor}'),
+              _InfoRow(
+                label: session.isContinuous3D ? 'Floor span' : 'Floor',
+                value: session.isContinuous3D
+                    ? trace!.visitedFloors.map((floor) =>
+                        floor < 0 ? 'B${floor.abs()}' : 'F$floor').join(' → ')
+                    : 'Floor ${session.floor}',
+              ),
               _InfoRow(
                 label: 'Separate sections',
                 value: '${session.segmentCount}',
               ),
               _InfoRow(
                 label: 'Geometry',
-                value: session.isSpatial ? 'ARCore spatial' : 'Legacy step + compass',
+                value: session.isContinuous3D
+                    ? 'V10 measured XYZ (one ARCore session)'
+                    : session.isSpatial ? 'ARCore spatial' : 'Legacy step + compass',
               ),
               _InfoRow(
                 label: 'Start anchor',
@@ -339,6 +358,26 @@ class _MappingReviewScreenState extends State<MappingReviewScreen> {
               ),
             ),
           if (alreadyApplied) const SizedBox(height: 12),
+          if (session.isContinuous3D) ...[
+            Card(
+              color: const Color(0x22166485),
+              child: Padding(
+                padding: const EdgeInsets.all(15),
+                child: Text(
+                  'V10 CONTINUOUS 3D TRACE — '
+                  '${trace!.pathMeters.toStringAsFixed(1)} m XYZ path, '
+                  '${trace.netHeightMeters.toStringAsFixed(1)} m net height, '
+                  '${trace.ascentMeters.toStringAsFixed(1)} m total ascent.\n\n'
+                  'This trace retains its real relative vertical geometry. '
+                  'It cannot be APPLY TO FLOOR or MERGE into the older '
+                  '2D venue without destroying the stairs. '
+                  'Your current Floor 1/Floor 2 maps are untouched. '
+                  'Reopening this trace in a different ARCore session '
+                  'requires new localization (V11–V12).',
+                ),
+              ),
+            ),
+          ] else ...[
           FilledButton.icon(
             onPressed: _busy ? null : _apply,
             icon: const Icon(Icons.layers_rounded),
@@ -371,6 +410,7 @@ class _MappingReviewScreenState extends State<MappingReviewScreen> {
               height: 1.4,
             ),
           ),
+          ],
           if (_busy) ...[
             const SizedBox(height: 18),
             const Center(child: CircularProgressIndicator()),
@@ -384,6 +424,7 @@ class _MappingReviewScreenState extends State<MappingReviewScreen> {
     return switch (type) {
       'destination' => Icons.flag_rounded,
       'stairs' => Icons.stairs_rounded,
+      'floor_level' => Icons.layers_rounded,
       'anchor' => Icons.qr_code_2_rounded,
       _ => Icons.add_location_alt_rounded,
     };
