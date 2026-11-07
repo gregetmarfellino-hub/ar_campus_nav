@@ -210,6 +210,25 @@ class ArPoseService {
     return VisualQrPlacement.fromMap(result);
   }
 
+  /// Renders saved XYZ samples over the LIVE camera without closing or
+  /// restarting the ARCore session used to record them.
+  /// No cross-session relocalization is claimed.
+  Future<String> previewContinuous3dTrace(
+    List<Map<String, dynamic>> points,
+  ) async {
+    if (!platformSupported) return 'ANDROID_ONLY';
+    return await _native.invokeMethod<String>(
+          'previewContinuous3dTrace',
+          <String, dynamic>{'points': points},
+        ) ??
+        'UNKNOWN';
+  }
+
+  Future<void> closeContinuous3dPreview() async {
+    if (!platformSupported) return;
+    await _native.invokeMethod<void>('closeContinuous3dPreview');
+  }
+
   Future<void> resetOrigin() async {
     if (!platformSupported) return;
     await _native.invokeMethod<void>('resetArOrigin');
