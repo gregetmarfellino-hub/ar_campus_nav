@@ -216,6 +216,14 @@ class VenueMappingService {
   }
 
   void _validateSession(Venue venue, MappingSession session) {
+    if (session.isContinuous3D) {
+      throw StateError(
+        'This is a continuous 3D ARCore recording across floor heights. '
+        'V10 preserves its XYZ geometry separately; applying it as one '
+        'flat floor would destroy the staircase. Keep the existing venue '
+        'unchanged until 3D graph integration is implemented.',
+      );
+    }
     if (session.venueId != venue.id) {
       throw StateError(
         'This recording belongs to ${session.venueName}, not ${venue.name}.',
