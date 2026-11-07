@@ -224,7 +224,11 @@ class MappingSession {
   /// route geometry.
   final int rejectedPoseJumps;
 
-  bool get isSpatial => source == 'arcore_spatial';
+  // A V10 3D route is recorded in ONE uninterrupted ARCore session.
+  // It is NOT a single-floor venue override and cannot be flattened into one.
+  bool get isContinuous3D => source == 'arcore_spatial_3d';
+
+  bool get isSpatial => source == 'arcore_spatial' || isContinuous3D;
 
   int get effectiveRawPointCount =>
       rawPointCount > 0 ? rawPointCount : points.length;
