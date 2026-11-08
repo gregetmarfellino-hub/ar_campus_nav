@@ -83,7 +83,10 @@ void main() {
       currentFloor: -1,
       onResult: (value) => chosen = value,
     );
-    expect(find.text('1', findRichText: true), findsWidgets);
+    expect(
+      tester.widget<EditableText>(find.byType(EditableText)).controller.text,
+      '1',
+    );
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     expect(chosen, isNull);
