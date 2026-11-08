@@ -218,4 +218,52 @@ void main() {
     expect(result.visitedFloors, [1]);
     expect(result.hasLabeledTransition, isFalse);
   });
+  test('V10 partial autosave round-trips as a protected unfinished draft', () {
+    final saved = staircaseSession().toJson();
+    saved['source'] = 'arcore_spatial_3d_draft';
+    final draft = MappingSession.fromJson(saved);
+
+    expect(draft.isDraft3D, isTrue);
+    expect(draft.isContinuous3D, isTrue);
+    expect(draft.isSpatial, isTrue);
+    expect(draft.qualityLabel, 'DRAFT');
+    expect(draft.points[3].upMeters, 3);
+    expect(draft.markers.single.floor, 2);
+
+    final campus = Venue(
+      id: 'campus',
+      name: 'Campus',
+      description: '',
+      defaultStartNodeId: 'entrance',
+      floors: const [1, 2],
+      nodes: const [
+        NavNode(
+          id: 'entrance', label: 'Entrance',
+          floor: 1, x: 0, y: 0, type: 'entrance',
+        ),
+      ],
+      edges: const [], destinations: const [], anchors: const [],
+    );
+    const service = VenueMappingService();
+    expect(
+      () => service.applySession(venue: campus, session: draft),
+      throwsStateError,
+    );
+    expect(
+      () => service.mergeSession(venue: campus, session: draft),
+      throwsStateError,
+    );
+  });
+
+  test('V10 floor labels are metadata, not a requirement for 3D trace', () {
+    final summary = Continuous3DTrace.analyze(
+      points: staircasePoints(),
+      startFloor: 1,
+    );
+    expect(summary.netHeightMeters, 3);
+    expect(summary.hasMeasuredClimb, isTrue);
+    expect(summary.visitedFloors, [1]);
+    expect(summary.hasLabeledTransition, isFalse);
+  });
+
 }
