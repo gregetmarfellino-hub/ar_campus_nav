@@ -9,7 +9,6 @@ import '../services/ar_pose_service.dart';
 import '../services/continuous_3d_trace.dart';
 import '../services/mapping_path_simplifier.dart';
 import '../services/mapping_storage.dart';
-import '../widgets/floor_arrival_dialog.dart';
 
 /// V10 experiment: record a REAL 3D trajectory in ONE running ARCore world.
 ///
@@ -46,6 +45,7 @@ class _Continuous3DMappingScreenState
   int _floor = 1;
   int _stableSamples = 0;
   int _recoverySamples = 0;
+  bool _automaticRecoveryPending = false;
   int _trackingInterruptions = 0;
   int _rejectedJumps = 0;
   int _lastRefreshMs = 0;
@@ -114,11 +114,12 @@ class _Continuous3DMappingScreenState
         _trackingInterruptions++;
         _trackingInterrupted = true;
         _paused = true;
+        _automaticRecoveryPending = true;
         _recoverySamples = 0;
         _message =
-            'TRACKING LOST. Recording PAUSED to prevent a false straight '
-            'bridge through the staircase. Hold still, recover near the '
-            'last saved point, then press RESUME.';
+            'TRACKING PAUSED — the saved path is protected. '
+            'Hold steady near your last location; recording will resume '
+            'automatically only if ARCore returns to that same 3D point.';
         _refresh(force: true);
       }
       return;
@@ -143,14 +144,37 @@ class _Continuous3DMappingScreenState
     }
     if (!_recording) return;
     if (_trackingInterrupted) {
-      _recoverySamples++;
+      final gap = _points.isEmpty
+          ? double.infinity
+          : _distance(_points.last, _pointFrom(pose));
+      if (gap <= 0.80) {
+        _recoverySamples++;
+      } else {
+        _recoverySamples = 0;
+      }
       if (_recoverySamples >= 6) {
         _trackingInterrupted = false;
+        if (_automaticRecoveryPending) {
+          _paused = false;
+          _message =
+              'TRACKING RESTORED at the same physical point. '
+              '3D recording resumed automatically; no staircase gap added.';
+        } else {
+          _message = 'Tracking restored. Press RESUME when ready.';
+        }
+        _automaticRecoveryPending = false;
+        _recoverySamples = 0;
+        _refresh(force: true);
+      } else if (gap > 1.20) {
         _message =
-            'ARCore recovered, but recording stays PAUSED. '
-            'Return close to the last accepted point before RESUME.';
+            'ARCore recovered but shifted ${gap.toStringAsFixed(1)} m '
+            'from the last trusted sample. Path stays stopped to avoid '
+            'a false staircase. You can FINISH & SAVE the safe portion '
+            'instead of losing your entire recording.';
+        _refresh();
+      } else {
+        _refresh();
       }
-      _refresh(force: _recoverySamples == 6);
       return;
     }
     if (_paused) {
@@ -171,11 +195,12 @@ class _Continuous3DMappingScreenState
       _rejectedJumps++;
       _paused = true;
       _trackingInterrupted = true;
+      _automaticRecoveryPending = true;
       _recoverySamples = 0;
       _message =
           'SUDDEN ARCORE JUMP rejected (${delta.toStringAsFixed(1)} m). '
-          'This route was paused, not bridged. Return to the last '
-          'real position before trying again.';
+          'Hold steady: tracking resumes itself if it returns to the '
+          'last trusted location. Otherwise SAVE the safe part of this route.';
       _refresh(force: true);
       return;
     }
@@ -199,6 +224,7 @@ class _Continuous3DMappingScreenState
       _paused = false;
       _trackingInterrupted = false;
       _recoverySamples = 0;
+      _automaticRecoveryPending = false;
       _floor = widget.startFloor;
       _trackingInterruptions = 0;
       _rejectedJumps = 0;
@@ -243,6 +269,7 @@ class _Continuous3DMappingScreenState
     if (!_paused) {
       setState(() {
         _paused = true;
+        _automaticRecoveryPending = false;
         _message =
             'Paused. The same ARCore session is still tracking. '
             'Do NOT move far away before resuming a continuous path.';
@@ -266,19 +293,13 @@ class _Continuous3DMappingScreenState
     });
   }
 
-  Future<void> _markFloorArrival() async {
+  // One tap at a known landing; NO keyboard, route reset, or interruption.
+  // A floor marker is OPTIONAL metadata — measured XYZ is already recorded.
+  void _markNextFloor() {
     if (!_recording || _paused || _trackingInterrupted || _points.isEmpty) {
       return;
     }
-    final next = await showDialog<int>(
-      context: context,
-      builder: (_) => FloorArrivalDialog(currentFloor: _floor),
-    );
-    if (!mounted || next == null) return;
-    // The floor label changes only metadata. ARCore is never reset here.
-    if (!_recording || _paused || _trackingInterrupted || _points.isEmpty) {
-      return;
-    }
+    final next = _floor == -1 ? 1 : _floor + 1;
     final last = _points.last;
     setState(() {
       _floor = next;
@@ -292,18 +313,38 @@ class _Continuous3DMappingScreenState
         upMeters: last.upMeters,
         pointIndex: _points.length - 1,
       ));
-      _message = 'Marked ${_floorName(next)} at measured relative '
-          'height ${last.upMeters.toStringAsFixed(1)} m. '
-          'ARCore was NOT restarted.';
+      _message = '${_floorName(next)} noted at relative height '
+          '${last.upMeters.toStringAsFixed(1)} m. '
+          'Mapping continues in the SAME ARCore session.';
+    });
+  }
+
+  void _undoLastFloor() {
+    if (!_recording || _markers.isEmpty) return;
+    final last = _markers.last;
+    if (last.type != 'floor_level') return;
+    setState(() {
+      _markers.removeLast();
+      _floor = _markers.where((m) => m.type == 'floor_level').isEmpty
+          ? widget.startFloor
+          : _markers.last.floor;
+      _message = 'Last floor label removed. Recorded XYZ samples unchanged.';
     });
   }
 
   Future<void> _previewInAr() async {
-    if (!_recording || !_paused || _trackingInterrupted ||
+    if (!_recording || _trackingInterrupted ||
         _points.length < 3 || _busy) {
       return;
     }
-    setState(() => _busy = true);
+    // Opening the native live preview automatically pauses the recording:
+    // the user never needs to perform a separate pause step.
+    final wasPaused = _paused;
+    setState(() {
+      _busy = true;
+      _paused = true;
+      _automaticRecoveryPending = false;
+    });
     try {
       final simplified = const MappingPathSimplifier().simplify(
         points: _points,
@@ -318,20 +359,24 @@ class _Continuous3DMappingScreenState
       final status = await _ar.previewContinuous3dTrace(preview);
       if (!mounted) return;
       setState(() {
+        if (status != 'PREVIEW_STARTED') _paused = wasPaused;
         _message = status == 'PREVIEW_STARTED'
             ? '3D TRACE PREVIEW: look around and back toward the stairs. '
-              'The native BACK TO MAPPER button exits without restarting ARCore.'
+              'BACK TO MAPPER preserves the ARCore session; resume or save next.'
             : 'Could not preview in AR: $status';
       });
     } catch (error) {
-      if (mounted) setState(() => _message = '3D preview error: $error');
+      if (mounted) setState(() {
+        _paused = wasPaused;
+        _message = '3D preview error: $error';
+      });
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
   Future<void> _saveAndStop() async {
-    if (!_recording || _busy || _trackingInterrupted) return;
+    if (!_recording || _busy) return;
     setState(() => _busy = true);
     try {
       final simplified = const MappingPathSimplifier().simplify(
@@ -376,6 +421,8 @@ class _Continuous3DMappingScreenState
         _recording = false;
         _starting = false;
         _paused = false;
+        _automaticRecoveryPending = false;
+        _trackingInterrupted = false;
         _savedId = session.id;
         _message = 'SAVED CONTINUOUS 3D ROUTE: '
             '${analysis.pathMeters.toStringAsFixed(1)} m path, '
@@ -404,6 +451,7 @@ class _Continuous3DMappingScreenState
         _recording = false;
         _paused = false;
         _trackingInterrupted = false;
+        _automaticRecoveryPending = false;
         _points.clear();
         _markers.clear();
         _message = '3D recording discarded. Existing venue unchanged.';
@@ -459,10 +507,10 @@ class _Continuous3DMappingScreenState
                   ),
                   const SizedBox(height: 9),
                   Text(
-                    'Start on ${_floorName(widget.startFloor)}. Walk through '
-                    'the real stairs in ONE recording. At the upper landing '
-                    'tap REACHED ANOTHER FLOOR, then continue walking. '
-                    'No QR or 2-metre calibration required.',
+                    'START → WALK → FINISH & SAVE. '
+                    'Keep ARCore running through the actual stairs. '
+                    'Floor labels are optional: one tap at a landing, '
+                    'without keyboard dialogs or re-calibration.',
                   ),
                   const SizedBox(height: 10),
                   const Text(
@@ -558,37 +606,56 @@ class _Continuous3DMappingScreenState
               icon: Icon(_paused
                   ? Icons.play_arrow_rounded : Icons.pause_rounded),
               label: Text(_paused ? 'RESUME NEAR LAST POINT'
-                  : 'PAUSE RECORDING'),
+                  : 'PAUSE RECORDING (OPTIONAL)'),
             ),
             const SizedBox(height: 8),
             OutlinedButton.icon(
               onPressed: _busy || _paused || _trackingInterrupted
-                  ? null : _markFloorArrival,
+                  ? null : _markNextFloor,
               icon: const Icon(Icons.layers_rounded),
-              label: const Text('REACHED ANOTHER FLOOR'),
+              label: const Text('REACHED NEXT FLOOR (OPTIONAL)'),
             ),
+            if (_markers.any((m) => m.type == 'floor_level')) ...[
+              const SizedBox(height: 4),
+              TextButton.icon(
+                onPressed: _busy ? null : _undoLastFloor,
+                icon: const Icon(Icons.undo_rounded),
+                label: const Text('UNDO LAST FLOOR LABEL'),
+              ),
+            ],
             const SizedBox(height: 8),
             OutlinedButton.icon(
-              onPressed: _paused && !_trackingInterrupted && !_busy &&
+              onPressed: !_trackingInterrupted && !_busy &&
                       _points.length >= 3
                   ? _previewInAr : null,
               icon: const Icon(Icons.view_in_ar_rounded),
-              label: const Text('PREVIEW ENTIRE 3D TRACE IN LIVE AR'),
+              label: const Text('PREVIEW 3D LINE IN LIVE AR'),
             ),
             const SizedBox(height: 5),
             const Text(
-              'Pause first to inspect the full XYZ trail in the CURRENT '
-              'ARCore session. The camera view has a BACK TO MAPPER button.',
+              'Preview pauses automatically; no separate PAUSE tap. '
+              'Return to mapper to RESUME or SAVE. '
+              'Do not interact with the phone while on the stairs.',
               style: TextStyle(color: Colors.white54, fontSize: 11),
             ),
             const SizedBox(height: 14),
             FilledButton.icon(
-              onPressed: _busy || _trackingInterrupted ||
-                      _points.length < 2
+              onPressed: _busy || _points.length < 2
                   ? null : _saveAndStop,
               icon: const Icon(Icons.save_rounded),
-              label: const Text('FINISH & SAVE 3D ROUTE'),
+              label: Text(_trackingInterrupted
+                  ? 'SAVE TRUSTED ROUTE SO FAR'
+                  : 'FINISH & SAVE 3D ROUTE'),
             ),
+            if (_trackingInterrupted) ...[
+              const SizedBox(height: 7),
+              const Text(
+                'Tracking does not match the last trusted point. '
+                'Saving preserves only measured data up to that point; '
+                'it never connects an uncertain gap.',
+                style: TextStyle(color: Color(0xFFFFC978), fontSize: 11),
+              ),
+            ],
             const SizedBox(height: 8),
             TextButton.icon(
               onPressed: _busy ? null : _discard,
