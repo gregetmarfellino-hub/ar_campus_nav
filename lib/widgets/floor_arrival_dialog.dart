@@ -82,3 +82,4 @@ class _FloorArrivalDialogState extends State<FloorArrivalDialog> {
           ),
         ],
       );
+}
