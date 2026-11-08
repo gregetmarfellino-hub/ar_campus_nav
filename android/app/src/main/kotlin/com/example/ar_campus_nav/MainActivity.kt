@@ -411,13 +411,28 @@ class MainActivity : FlutterActivity(), SensorEventListener {
             return
         }
 
-        try {
-            val file = File(mappingDirectory(), "${safeId(id)}.json")
-            file.writeText(json, Charsets.UTF_8)
-            result.success(file.absolutePath)
-        } catch (error: Exception) {
-            result.error("save_failed", error.message, null)
-        }
+        // V10 periodically checkpoints XYZ data. Don't block the Android
+        // main thread (and Flutter/AR interactions) on a large JSON write.
+        // Write a temp file in the same directory, then atomically rename it,
+        // preserving the last good draft if the process dies mid-save.
+        Thread {
+            val directory = mappingDirectory()
+            val safeName = safeId(id)
+            val file = File(directory, "$safeName.json")
+            val temp = File(directory, ".$safeName.${System.nanoTime()}.tmp")
+            try {
+                temp.writeText(json, Charsets.UTF_8)
+                if (!temp.renameTo(file)) {
+                    throw java.io.IOException("Could not commit mapping checkpoint.")
+                }
+                runOnUiThread { result.success(file.absolutePath) }
+            } catch (error: Exception) {
+                temp.delete()
+                runOnUiThread {
+                    result.error("save_failed", error.message, null)
+                }
+            }
+        }.start()
     }
 
     private fun listMappings(): List<String> {
