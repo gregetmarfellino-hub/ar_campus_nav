@@ -9,6 +9,7 @@ import '../services/ar_pose_service.dart';
 import '../services/continuous_3d_trace.dart';
 import '../services/mapping_path_simplifier.dart';
 import '../services/mapping_storage.dart';
+import '../widgets/floor_arrival_dialog.dart';
 
 /// V10 experiment: record a REAL 3D trajectory in ONE running ARCore world.
 ///
@@ -269,49 +270,13 @@ class _Continuous3DMappingScreenState
     if (!_recording || _paused || _trackingInterrupted || _points.isEmpty) {
       return;
     }
-    final controller = TextEditingController(text: '${_floor + 1}');
-    final chosen = await showDialog<String>(
+    final next = await showDialog<int>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Reached another floor?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Only mark the floor after physically reaching its landing. '
-              'ARCore keeps recording the SAME 3D trajectory; this action '
-              'does not jump, reset, or connect separate coordinate systems.',
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: controller,
-              autofocus: true,
-              keyboardType: const TextInputType.numberWithOptions(signed: true),
-              decoration: const InputDecoration(
-                labelText: 'Floor reached',
-                helperText: 'Example: -1 = Basement 1, 2 = Floor 2',
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, controller.text),
-            child: const Text('Mark landing'),
-          ),
-        ],
-      ),
+      builder: (_) => FloorArrivalDialog(currentFloor: _floor),
     );
-    controller.dispose();
-    if (!mounted || chosen == null) return;
-    final next = int.tryParse(chosen.trim());
-    if (next == null || next < -10 || next > 50 || next == _floor) {
-      setState(() => _message = 'Enter a DIFFERENT valid floor (-10 to 50).');
+    if (!mounted || next == null) return;
+    // The floor label changes only metadata. ARCore is never reset here.
+    if (!_recording || _paused || _trackingInterrupted || _points.isEmpty) {
       return;
     }
     final last = _points.last;
