@@ -59,6 +59,15 @@ class _Continuous3DMappingScreenState
       'Start once at a known corridor on the lower floor. Keep the same '
       'ARCore session running while you climb and reach the upper floor.';
   String? _savedId;
+  // Every recording has a stable ID. Periodic local drafts are overwritten by
+  // the final saved route, so a crash never creates dozens of orphan files.
+  String? _recordingId;
+  DateTime? _recordingStartedAt;
+  Future<void>? _pendingDraftSave;
+  bool _draftSaving = false;
+  int _lastDraftSaveMs = 0;
+  int _draftSavedPoints = 0;
+  String? _draftError;
 
   @override
   void initState() {
@@ -210,9 +219,73 @@ class _Continuous3DMappingScreenState
         _message = 'Recording limit reached. Save this route.';
       } else {
         _points.add(next);
+        _autoSaveDraft();
       }
     }
     _refresh();
+  }
+
+  MappingSession _sessionSnapshot({
+    required List<MappingPoint> points,
+    required List<MappingMarker> markers,
+    required bool isDraft,
+    required int rawPointCount,
+  }) {
+    final id = _recordingId;
+    final created = _recordingStartedAt;
+    if (id == null || created == null) {
+      throw StateError('Recording identity is not initialized.');
+    }
+    return MappingSession(
+      id: id,
+      venueId: widget.venue.id,
+      venueName: widget.venue.name,
+      floor: widget.startFloor,
+      createdAt: created,
+      startAnchorId: null,
+      startAnchorLabel:
+          '${_floorName(widget.startFloor)} live 3D session origin',
+      originHeadingDegrees: 0,
+      stepLengthMeters: 0,
+      source: isDraft ? 'arcore_spatial_3d_draft' : 'arcore_spatial_3d',
+      points: points,
+      markers: markers,
+      rawPointCount: rawPointCount,
+      trackingInterruptions: _trackingInterruptions,
+      rejectedPoseJumps: _rejectedJumps,
+    );
+  }
+
+  void _autoSaveDraft({bool force = false}) {
+    if (!_recording || _busy || _draftSaving || _points.length < 3 ||
+        _recordingId == null) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (!force && now - _lastDraftSaveMs < 10000) return;
+    if (!force && _points.length == _draftSavedPoints) return;
+
+    _draftSaving = true;
+    _lastDraftSaveMs = now;
+    final pointCount = _points.length;
+    final snapshot = _sessionSnapshot(
+      points: List<MappingPoint>.unmodifiable(_points),
+      markers: List<MappingMarker>.unmodifiable(_markers),
+      isDraft: true,
+      rawPointCount: pointCount,
+    );
+    _pendingDraftSave = _persistDraft(snapshot, pointCount);
+  }
+
+  Future<void> _persistDraft(MappingSession snapshot, int count) async {
+    try {
+      await _storage.save(snapshot);
+      _draftSavedPoints = count;
+      _draftError = null;
+    } catch (error) {
+      _draftError = error.toString();
+    } finally {
+      _draftSaving = false;
+      _refresh();
+    }
   }
 
   Future<void> _startRecording() async {
@@ -229,6 +302,14 @@ class _Continuous3DMappingScreenState
       _trackingInterruptions = 0;
       _rejectedJumps = 0;
       _savedId = null;
+      _recordingStartedAt = DateTime.now();
+      _recordingId =
+          'continuous3d_${_recordingStartedAt!.microsecondsSinceEpoch}';
+      _lastDraftSaveMs = DateTime.now().millisecondsSinceEpoch;
+      _draftSavedPoints = 0;
+      _draftError = null;
+      _pendingDraftSave = null;
+      _draftSaving = false;
       _points.clear();
       _markers.clear();
       _message = 'Checking camera and starting continuous ARCore tracking...';
@@ -317,6 +398,7 @@ class _Continuous3DMappingScreenState
           '${last.upMeters.toStringAsFixed(1)} m. '
           'Mapping continues in the SAME ARCore session.';
     });
+    _autoSaveDraft(force: true);
   }
 
   void _undoLastFloor() {
@@ -330,6 +412,7 @@ class _Continuous3DMappingScreenState
           : _markers.last.floor;
       _message = 'Last floor label removed. Recorded XYZ samples unchanged.';
     });
+    _autoSaveDraft(force: true);
   }
 
   Future<void> _previewInAr() async {
@@ -377,8 +460,15 @@ class _Continuous3DMappingScreenState
 
   Future<void> _saveAndStop() async {
     if (!_recording || _busy) return;
-    setState(() => _busy = true);
+    final wasPaused = _paused;
+    setState(() {
+      _busy = true;
+      _paused = true;
+    });
     try {
+      // A background draft must finish writing BEFORE the final recording
+      // overwrites the same file ID. Never save stale points over the final.
+      await _pendingDraftSave;
       final simplified = const MappingPathSimplifier().simplify(
         points: _points,
         markers: _markers,
@@ -393,25 +483,11 @@ class _Continuous3DMappingScreenState
       if (analysis.pathMeters < 2.0) {
         throw StateError('Walk at least 2 metres of actual 3D route.');
       }
-      final now = DateTime.now();
-      final session = MappingSession(
-        id: 'continuous3d_${now.microsecondsSinceEpoch}',
-        venueId: widget.venue.id,
-        venueName: widget.venue.name,
-        floor: widget.startFloor,
-        createdAt: now,
-        startAnchorId: null,
-        startAnchorLabel:
-            '${_floorName(widget.startFloor)} live 3D session origin',
-        originHeadingDegrees: 0,
-        stepLengthMeters: 0,
-        source: 'arcore_spatial_3d',
+      final session = _sessionSnapshot(
         points: simplified.points,
         markers: simplified.markers,
-        segmentStarts: simplified.segmentStarts,
+        isDraft: false,
         rawPointCount: _points.length,
-        trackingInterruptions: _trackingInterruptions,
-        rejectedPoseJumps: _rejectedJumps,
       );
       await _storage.save(session);
       if (_arStarted) await _ar.stop();
@@ -433,7 +509,10 @@ class _Continuous3DMappingScreenState
             'different session is a later localization milestone.';
       });
     } catch (error) {
-      if (mounted) setState(() => _message = 'Cannot save 3D route: $error');
+      if (mounted) setState(() {
+        _paused = wasPaused;
+        _message = 'Cannot save 3D route: $error';
+      });
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -443,7 +522,13 @@ class _Continuous3DMappingScreenState
     if (_busy) return;
     setState(() => _busy = true);
     try {
+      await _pendingDraftSave;
       if (_arStarted) await _ar.stop();
+      final id = _recordingId;
+      if (id != null && _draftSavedPoints > 0) {
+        // Explicit discard should remove the last offline draft too.
+        await _storage.delete(id);
+      }
       if (!mounted) return;
       setState(() {
         _arStarted = false;
@@ -573,6 +658,22 @@ class _Continuous3DMappingScreenState
               child: Text(_message, style: const TextStyle(height: 1.45)),
             ),
           ),
+          if (_recording) ...[
+            const SizedBox(height: 6),
+            Text(
+              _draftError != null
+                  ? 'Offline draft not saved: $_draftError'
+                  : _draftSavedPoints > 0
+                      ? 'Offline safety copy: $_draftSavedPoints points saved'
+                      : 'Offline safety copy starts automatically after recording.',
+              style: TextStyle(
+                color: _draftError == null
+                    ? const Color(0xFF3DDC97)
+                    : const Color(0xFFFFC978),
+                fontSize: 11,
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           if (!_arStarted && !_starting) ...[
             FilledButton.icon(
