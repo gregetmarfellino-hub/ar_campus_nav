@@ -619,6 +619,7 @@ class _Continuous3DMappingScreenState
               _metric('PATH', '${(summary?.pathMeters ?? 0).toStringAsFixed(1)} m'),
               _metric('SAMPLES', '${_points.length}'),
               _metric('TRACKING PAUSES', '$_trackingInterruptions'),
+              _metric('POSE JUMPS REJECTED', '$_rejectedJumps'),
             ],
           ),
           const SizedBox(height: 13),
