@@ -614,10 +614,10 @@ class ArCoreTrackingEngine(
 
             val overlay = FrameLayout(activity)
             val status = TextView(activity).apply {
-                text = "V10 • LIVE MEASURED 3D TRACE\\n" +
-                    "Walked XYZ path in this SAME ARCore session. " +
-                    "Look toward the stairs to see the path climb. " +
-                    "This is a review, NOT verified navigation after restart."
+                text = "V10 • LIVE 3D ROUTE REVIEW\\n" +
+                    "${points.size} measured XYZ points • renderer active\\n" +
+                    "Point back along the route to inspect its vertical climb. " +
+                    "This is a trace review, not re-localized navigation."
                 textSize = 14f
                 gravity = Gravity.CENTER
                 setTextColor(Color.WHITE)
