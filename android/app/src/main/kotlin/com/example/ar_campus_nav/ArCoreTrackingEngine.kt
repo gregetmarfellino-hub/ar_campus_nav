@@ -1819,9 +1819,11 @@ class ArCoreTrackingEngine(
 
         backgroundRenderer.createOnGlThread()
         qrPlacementRenderer.createOnGlThread()
-        if (navigationMode) {
-            breadcrumbRenderer.createOnGlThread()
-        }
+        // V10 starts as mapping and opens the route review *later* without
+        // recreating the EGL context. The breadcrumb program must exist
+        // before beginContinuous3DPreview() can request any draw; otherwise
+        // ArBreadcrumbRenderer.draw() returns silently (program == 0).
+        breadcrumbRenderer.createOnGlThread()
     }
 
     @Suppress("DEPRECATION")
