@@ -71,6 +71,14 @@ class ArCoreTrackingEngine(
         val semantic: Boolean,
     )
 
+    /** One locally recorded XYZ sample from the SAME active ARCore session. */
+    data class Continuous3DTracePoint(
+        val rightMeters: Float,
+        val forwardMeters: Float,
+        val upMeters: Float,
+        val label: String,
+    )
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private val backgroundRenderer = ArCameraBackgroundRenderer()
     private val breadcrumbRenderer = ArBreadcrumbRenderer()
@@ -79,6 +87,11 @@ class ArCoreTrackingEngine(
     private var session: Session? = null
     private var surfaceView: GLSurfaceView? = null
     private var navigationOverlay: FrameLayout? = null
+    @Volatile private var continuous3DPreviewEnabled = false
+    @Volatile private var continuous3DPreviewPoints: List<Continuous3DTracePoint> =
+        emptyList()
+    private var continuous3DPreviewOverlay: FrameLayout? = null
+    private var continuous3DPreviewStatus: TextView? = null
     private var navigationStatusText: TextView? = null
     private var navigationScanProgressBar: ProgressBar? = null
     private var navigationScanProgressLabel: TextView? = null
@@ -566,6 +579,127 @@ class ArCoreTrackingEngine(
         } catch (error: Exception) {
             cleanupFailedStart()
             "START_ERROR:${error.javaClass.simpleName}:${error.message ?: "unknown"}"
+        }
+    }
+
+    /**
+     * V10 live 3D trace, *not* cross-session navigation.
+     * Shows the actual measured height profile in the world frame still
+     * running from mapping, without stopping ARCore or inventing an alignment.
+     */
+    fun beginContinuous3DPreview(
+        points: List<Continuous3DTracePoint>,
+    ): String {
+        if (!started || !sessionResumed || navigationMode || qrPlacementMode ||
+            trackingOriginPosition == null) {
+            return "NO_ACTIVE_MAPPING_FRAME"
+        }
+        if (continuous3DPreviewEnabled) return "PREVIEW_ALREADY_OPEN"
+        if (points.size < 2 || points.size > 1500 ||
+            points.any { !it.rightMeters.isFinite() ||
+                !it.forwardMeters.isFinite() || !it.upMeters.isFinite() }) {
+            return "INVALID_3D_TRACE"
+        }
+        continuous3DPreviewPoints = points.toList()
+        continuous3DPreviewEnabled = true
+        mainHandler.post {
+            if (!continuous3DPreviewEnabled || !started) return@post
+            // During mapping the GLSurfaceView is intentionally 2x2px:
+            // expand the SAME view rather than recreating the EGL/ARCore
+            // session and losing its unshared world frame.
+            surfaceView?.layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+            )
+
+            val overlay = FrameLayout(activity)
+            val status = TextView(activity).apply {
+                text = "V10 • LIVE 3D ROUTE REVIEW\\n" +
+                    "${points.size} measured XYZ points • renderer active\\n" +
+                    "Point back along the route to inspect its vertical climb. " +
+                    "This is a trace review, not re-localized navigation."
+                textSize = 14f
+                gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+                setPadding(dp(14), dp(12), dp(14), dp(12))
+                background = roundedBackground(0xC9091728.toInt(), dp(16).toFloat())
+            }
+            continuous3DPreviewStatus = status
+            overlay.addView(
+                status,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    gravity = Gravity.TOP
+                    setMargins(dp(18), dp(45), dp(18), 0)
+                },
+            )
+
+            val close = Button(activity).apply {
+                text = "BACK TO MAPPER — KEEP SESSION"
+                textSize = 13f
+                setTextColor(Color.BLACK)
+                background = roundedBackground(0xFF3DDC97.toInt(), dp(18).toFloat())
+                setOnClickListener { endContinuous3DPreview() }
+            }
+            overlay.addView(
+                close,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT, dp(60),
+                ).apply {
+                    gravity = Gravity.BOTTOM
+                    setMargins(dp(24), 0, dp(24), dp(42))
+                },
+            )
+            continuous3DPreviewOverlay = overlay
+            activity.addContentView(
+                overlay,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
+        }
+        return "PREVIEW_STARTED"
+    }
+
+    fun endContinuous3DPreview() {
+        continuous3DPreviewEnabled = false
+        continuous3DPreviewPoints = emptyList()
+        val overlay = continuous3DPreviewOverlay
+        continuous3DPreviewOverlay = null
+        continuous3DPreviewStatus = null
+        mainHandler.post {
+            (overlay?.parent as? ViewGroup)?.removeView(overlay)
+            // Restore the tiny off-screen ARCore camera so the Flutter mapper
+            // stays visible, preserving the same native Session and origin.
+            if (started && !navigationMode) {
+                surfaceView?.layoutParams = FrameLayout.LayoutParams(
+                    2, 2,
+                ).apply {
+                    gravity = Gravity.BOTTOM or Gravity.END
+                }
+            }
+        }
+    }
+
+    private fun continuous3DWorldPoints(): List<FloatArray> {
+        val origin = trackingOriginPosition ?: return emptyList()
+        val points = continuous3DPreviewPoints
+        // A fixed 1.1m camera-to-path display offset places the ribbon near
+        // walking height. The RECORDED elevation difference is preserved
+        // exactly; we do NOT convert points into one shared flat floor.
+        return points.map { point ->
+            floatArrayOf(
+                origin[0] +
+                    trackingRightX * point.rightMeters +
+                    trackingForwardX * point.forwardMeters,
+                origin[1] + point.upMeters - 1.10f,
+                origin[2] +
+                    trackingRightZ * point.rightMeters +
+                    trackingForwardZ * point.forwardMeters,
+            )
         }
     }
 
@@ -1560,6 +1694,11 @@ class ArCoreTrackingEngine(
         val oldOverlay = navigationOverlay
         val oldQrPlacementOverlay = qrPlacementOverlay
         val oldMappingVisualOverlay = mappingVisualOverlay
+        val oldContinuous3DPreviewOverlay = continuous3DPreviewOverlay
+        continuous3DPreviewEnabled = false
+        continuous3DPreviewPoints = emptyList()
+        continuous3DPreviewOverlay = null
+        continuous3DPreviewStatus = null
         val pendingQrPlacement = qrPlacementCompletion
         val oldView = surfaceView
         navigationOverlay = null
@@ -1601,6 +1740,8 @@ class ArCoreTrackingEngine(
             (oldOverlay?.parent as? ViewGroup)?.removeView(oldOverlay)
             (oldQrPlacementOverlay?.parent as? ViewGroup)?.removeView(oldQrPlacementOverlay)
             (oldMappingVisualOverlay?.parent as? ViewGroup)?.removeView(oldMappingVisualOverlay)
+            (oldContinuous3DPreviewOverlay?.parent as? ViewGroup)
+                ?.removeView(oldContinuous3DPreviewOverlay)
             if (oldOverlay == null && oldMappingVisualOverlay == null) {
                 (oldView?.parent as? ViewGroup)?.removeView(oldView)
             }
@@ -1678,9 +1819,11 @@ class ArCoreTrackingEngine(
 
         backgroundRenderer.createOnGlThread()
         qrPlacementRenderer.createOnGlThread()
-        if (navigationMode) {
-            breadcrumbRenderer.createOnGlThread()
-        }
+        // V10 starts as mapping and opens the route review *later* without
+        // recreating the EGL context. The breadcrumb program must exist
+        // before beginContinuous3DPreview() can request any draw; otherwise
+        // ArBreadcrumbRenderer.draw() returns silently (program == 0).
+        breadcrumbRenderer.createOnGlThread()
     }
 
     @Suppress("DEPRECATION")
@@ -1703,6 +1846,7 @@ class ArCoreTrackingEngine(
 
             if (
                 navigationMode ||
+                continuous3DPreviewEnabled ||
                 qrPlacementMode ||
                 mappingVisualAnchorEnabled ||
                 mappingStartQrVisible
@@ -2038,6 +2182,18 @@ class ArCoreTrackingEngine(
                 originRightX = trackingRightX,
                 originRightZ = trackingRightZ,
             )
+            if (continuous3DPreviewEnabled) {
+                val world = continuous3DWorldPoints()
+                if (world.size >= 2) {
+                    // Draw the ENTIRE original 3D staircase trace; no fake
+                    // target direction, floor-flattening or route teleport.
+                    breadcrumbRenderer.draw(
+                        camera,
+                        world,
+                        1,
+                    )
+                }
+            }
         } catch (error: CameraNotAvailableException) {
             emitError("CAMERA_NOT_AVAILABLE", error.message)
         } catch (error: Exception) {
@@ -5032,6 +5188,11 @@ class ArCoreTrackingEngine(
     private fun cleanupFailedStart() {
         val oldOverlay = navigationOverlay
         val oldMappingVisualOverlay = mappingVisualOverlay
+        val oldContinuous3DPreviewOverlay = continuous3DPreviewOverlay
+        continuous3DPreviewEnabled = false
+        continuous3DPreviewPoints = emptyList()
+        continuous3DPreviewOverlay = null
+        continuous3DPreviewStatus = null
         val oldView = surfaceView
         navigationOverlay = null
         mappingVisualOverlay = null
@@ -5054,6 +5215,8 @@ class ArCoreTrackingEngine(
                 (oldOverlay?.parent as? ViewGroup)?.removeView(oldOverlay)
                 (oldMappingVisualOverlay?.parent as? ViewGroup)
                     ?.removeView(oldMappingVisualOverlay)
+                (oldContinuous3DPreviewOverlay?.parent as? ViewGroup)
+                    ?.removeView(oldContinuous3DPreviewOverlay)
                 if (oldOverlay == null && oldMappingVisualOverlay == null) {
                     (oldView?.parent as? ViewGroup)?.removeView(oldView)
                 }

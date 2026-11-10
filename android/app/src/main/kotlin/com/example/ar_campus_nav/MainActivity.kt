@@ -185,6 +185,38 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                         }
                     }
                 }
+                "previewContinuous3dTrace" -> {
+                    val rawPoints =
+                        call.argument<List<Map<String, Any?>>>("points")
+                            ?: emptyList()
+                    val points = rawPoints.mapNotNull { item ->
+                        val right = (item["right"] as? Number)?.toFloat()
+                        val forward = (item["forward"] as? Number)?.toFloat()
+                        val up = (item["up"] as? Number)?.toFloat()
+                        if (right == null || forward == null || up == null) {
+                            null
+                        } else {
+                            ArCoreTrackingEngine.Continuous3DTracePoint(
+                                rightMeters = right,
+                                forwardMeters = forward,
+                                upMeters = up,
+                                label = item["label"]?.toString() ?: "3D route",
+                            )
+                        }
+                    }
+                    result.success(
+                        if (points.size != rawPoints.size) {
+                            "INVALID_3D_TRACE"
+                        } else {
+                            arCoreTrackingEngine?.beginContinuous3DPreview(points)
+                                ?: "NO_ACTIVE_MAPPING_SESSION"
+                        },
+                    )
+                }
+                "closeContinuous3dPreview" -> {
+                    arCoreTrackingEngine?.endContinuous3DPreview()
+                    result.success(null)
+                }
                 "resetArOrigin" -> {
                     arEngine().resetOrigin()
                     result.success(null)
@@ -379,13 +411,28 @@ class MainActivity : FlutterActivity(), SensorEventListener {
             return
         }
 
-        try {
-            val file = File(mappingDirectory(), "${safeId(id)}.json")
-            file.writeText(json, Charsets.UTF_8)
-            result.success(file.absolutePath)
-        } catch (error: Exception) {
-            result.error("save_failed", error.message, null)
-        }
+        // V10 periodically checkpoints XYZ data. Don't block the Android
+        // main thread (and Flutter/AR interactions) on a large JSON write.
+        // Write a temp file in the same directory, then atomically rename it,
+        // preserving the last good draft if the process dies mid-save.
+        Thread {
+            val directory = mappingDirectory()
+            val safeName = safeId(id)
+            val file = File(directory, "$safeName.json")
+            val temp = File(directory, ".$safeName.${System.nanoTime()}.tmp")
+            try {
+                temp.writeText(json, Charsets.UTF_8)
+                if (!temp.renameTo(file)) {
+                    throw java.io.IOException("Could not commit mapping checkpoint.")
+                }
+                runOnUiThread { result.success(file.absolutePath) }
+            } catch (error: Exception) {
+                temp.delete()
+                runOnUiThread {
+                    result.error("save_failed", error.message, null)
+                }
+            }
+        }.start()
     }
 
     private fun listMappings(): List<String> {

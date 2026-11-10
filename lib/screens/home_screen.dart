@@ -11,6 +11,7 @@ import '../services/venue_loader.dart';
 import '../widgets/venue_map.dart';
 import 'anchor_qr_screen.dart';
 import 'spatial_mapping_screen.dart';
+import 'continuous_3d_mapping_screen.dart';
 import 'mapping_sessions_screen.dart';
 import 'qr_anchor_scanner_screen.dart';
 import 'route_screen.dart';
@@ -156,6 +157,22 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
 
+    if (!mounted) return;
+    await _loadVenue();
+  }
+
+  Future<void> _openContinuous3D() async {
+    final venue = _venue;
+    if (venue == null) return;
+
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => Continuous3DMappingScreen(
+          venue: venue,
+          startFloor: _mapFloor,
+        ),
+      ),
+    );
     if (!mounted) return;
     await _loadVenue();
   }
@@ -678,6 +695,21 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: const Icon(Icons.route_rounded),
             label: const Text('SPATIAL MAP / RECORD THIS FLOOR'),
           ),
+        ),
+        const SizedBox(height: 9),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.tonalIcon(
+            onPressed: _openContinuous3D,
+            icon: const Icon(Icons.stairs_rounded),
+            label: const Text('V10 • RECORD CONTINUOUS 3D STAIRCASE ROUTE'),
+          ),
+        ),
+        const SizedBox(height: 5),
+        const Text(
+          'EXPERIMENT: one ARCore session across floors, measured vertical '
+          'geometry, live 3D trace preview. Existing venue map stays unchanged.',
+          style: TextStyle(color: Colors.white54, fontSize: 11),
         ),
         const SizedBox(height: 8),
         SizedBox(

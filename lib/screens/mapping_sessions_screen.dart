@@ -419,13 +419,17 @@ class _MappingSessionsScreenState extends State<MappingSessionsScreen> {
                                 child: Icon(Icons.route_rounded),
                               ),
                               title: Text(
-                                'Floor ${session.floor} · ${session.totalDistanceMeters.toStringAsFixed(1)} m',
+                                session.isDraft3D
+                                    ? 'V10 3D SAFETY DRAFT · ${session.totalDistanceMeters.toStringAsFixed(1)} m'
+                                    : session.isContinuous3D
+                                        ? 'V10 CONTINUOUS 3D · ${session.totalDistanceMeters.toStringAsFixed(1)} m'
+                                    : 'Floor ${session.floor} · ${session.totalDistanceMeters.toStringAsFixed(1)} m',
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w800,
                                 ),
                               ),
                               subtitle: Text(
-                                '${session.isSpatial ? 'ARCore spatial' : 'Legacy step'} · '
+                                '${session.isDraft3D ? 'Auto-saved partial XYZ • not a finished route' : session.isContinuous3D ? 'Live XYZ + height' : session.isSpatial ? 'ARCore spatial' : 'Legacy step'} · '
                                 '${_markerSummary(session)}\n'
                                 '${_dateLabel(session.createdAt)} · '
                                 'Start: ${session.startAnchorLabel ?? 'No anchor'}',

@@ -224,12 +224,20 @@ class MappingSession {
   /// route geometry.
   final int rejectedPoseJumps;
 
-  bool get isSpatial => source == 'arcore_spatial';
+  // A V10 3D route is recorded in ONE uninterrupted ARCore session.
+  // It is NOT a single-floor venue override and cannot be flattened into one.
+  bool get isDraft3D => source == 'arcore_spatial_3d_draft';
+
+  bool get isContinuous3D =>
+      source == 'arcore_spatial_3d' || isDraft3D;
+
+  bool get isSpatial => source == 'arcore_spatial' || isContinuous3D;
 
   int get effectiveRawPointCount =>
       rawPointCount > 0 ? rawPointCount : points.length;
 
   String get qualityLabel {
+    if (isDraft3D) return 'DRAFT';
     if (!isSpatial) return 'LEGACY';
     if (trackingInterruptions >= 3 || rejectedPoseJumps >= 3) return 'REVIEW';
     if (trackingInterruptions > 0 || rejectedPoseJumps > 0) return 'CAUTION';
