@@ -209,6 +209,9 @@ class ArPoseService {
     if (result is! Map) {
       throw const FormatException('Invalid visual QR placement result.');
     }
+    if (result['placement_error'] is String) {
+      throw StateError(result['placement_error'] as String);
+    }
     return VisualQrPlacement.fromMap(result);
   }
 
