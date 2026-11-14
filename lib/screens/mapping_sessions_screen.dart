@@ -527,6 +527,45 @@ class _MappingSessionsScreenState extends State<MappingSessionsScreen> {
                         ),
                       ),
                       const SizedBox(height: 12),
+                      const Text(
+                        'PORTABLE OFFLINE PROJECT',
+                        style: TextStyle(
+                          color: Colors.white54,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Share the campus graph with another Android phone. '
+                        'The file contains XYZ routes, floors, destinations, '
+                        'QR checkpoints, offline visual references and recordings.',
+                        style: TextStyle(color: Colors.white60, fontSize: 12),
+                      ),
+                      const SizedBox(height: 10),
+                      FilledButton.icon(
+                        onPressed: _projectBusy || _venue == null ? null : _shareProject,
+                        icon: const Icon(Icons.share_rounded),
+                        label: const Text('SHARE MAPPING PROJECT'),
+                      ),
+                      const SizedBox(height: 7),
+                      OutlinedButton.icon(
+                        onPressed: _projectBusy || _venue == null ? null : _exportProject,
+                        icon: const Icon(Icons.save_alt_rounded),
+                        label: const Text('SAVE PROJECT FILE (.ARNAV.JSON)'),
+                      ),
+                      const SizedBox(height: 7),
+                      OutlinedButton.icon(
+                        onPressed: _projectBusy ? null : _importProject,
+                        icon: const Icon(Icons.file_open_rounded),
+                        label: const Text('IMPORT SHARED PROJECT FILE'),
+                      ),
+                      if (_projectBusy) ...[
+                        const SizedBox(height: 8),
+                        const LinearProgressIndicator(),
+                      ],
+                      const SizedBox(height: 14),
                       if (!is3D)
                         FilledButton.icon(
                           onPressed: _venue == null ? null : _openGraphEditor,
