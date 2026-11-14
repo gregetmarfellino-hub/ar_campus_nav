@@ -48,19 +48,15 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('QR anchor is identified as reference, not spatial lock',
+  testWidgets('location dialog cannot silently create an unlocalized QR',
       (tester) async {
     final result = Completer<MappingLandmarkInput?>();
     await open(tester, result);
-    await tester.tap(find.text('QR reference'));
+    expect(find.text('QR reference'), findsNothing);
+    expect(find.textContaining('PLACE OFFLINE START CHECKPOINT'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextFormField), 'Main Entrance');
-    await tester.tap(find.text('Save location'));
-    await tester.pumpAndSettle();
-    final tag = await result.future;
-    expect(tag!.type, 'anchor');
-    expect(tag.label, 'Main Entrance');
-    expect(tester.takeException(), isNull);
+    expect(await result.future, isNull);
   });
 
   testWidgets('Empty destination names are rejected before closing',

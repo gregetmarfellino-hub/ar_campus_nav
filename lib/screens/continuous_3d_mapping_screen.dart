@@ -1,4 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
+import 'package:qr_flutter/qr_flutter.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -10,6 +15,7 @@ import '../services/continuous_3d_trace.dart';
 import '../services/loop_closure_diagnostics.dart';
 import '../services/mapping_path_simplifier.dart';
 import '../services/mapping_storage.dart';
+import '../services/visual_anchor_spec.dart';
 import '../widgets/mapping_landmark_dialog.dart';
 
 /// V10 experiment: record a REAL 3D trajectory in ONE running ARCore world.
@@ -444,6 +450,143 @@ class _Continuous3DMappingScreenState
     _autoSaveDraft(force: true);
   }
 
+  Future<Uint8List> _renderCheckpointQr(String anchorId) async {
+    final payload = Uri(
+      scheme: 'arnav',
+      host: 'anchor',
+      queryParameters: <String, String>{
+        'venue': widget.venue.id,
+        'id': anchorId,
+      },
+    ).toString();
+    final painter = QrPainter(
+      data: payload,
+      version: QrVersions.auto,
+      errorCorrectionLevel: QrErrorCorrectLevel.L,
+    );
+    final data = await painter.toImageData(
+      VisualAnchorSpec.renderPixels.toDouble(),
+      format: ui.ImageByteFormat.png,
+    );
+    if (data == null) throw StateError('Could not render offline checkpoint QR.');
+    return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+  }
+
+  Future<void> _placeOfflineCheckpoint() async {
+    if (!_recording || _paused || _trackingInterrupted || _busy ||
+        _points.isEmpty || !_arStarted) return;
+    // Keep the active ARCore session and ALL existing XYZ points intact.
+    final linkedPoint = _points.last;
+    final linkedIndex = _points.length - 1;
+    setState(() {
+      _paused = true;
+      _automaticRecoveryPending = false;
+      _busy = true;
+      _message = 'PAUSED for visual checkpoint. Remain near this route point.';
+    });
+    var stored = false;
+    var message = 'Visual checkpoint cancelled; recording still intact.';
+    try {
+      var label = '';
+      final requestedName = await showDialog<String>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Place offline navigation checkpoint'),
+          content: TextField(
+            autofocus: true,
+            maxLength: 80,
+            decoration: const InputDecoration(
+              labelText: 'Checkpoint name',
+              hintText: 'E.g. West Entrance or North Stairs',
+              helperText: 'Stand near the mapped path; point at a distinctive wall.',
+            ),
+            onChanged: (value) => label = value,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(label.trim()),
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      );
+      if (requestedName == null) return;
+      if (requestedName.length < 2 || requestedName.length > 80) {
+        message = 'Name must be between 2 and 80 characters. Nothing changed.';
+        return;
+      }
+      final id = 'v13_anchor_${DateTime.now().microsecondsSinceEpoch}';
+      final qr = await _renderCheckpointQr(id);
+      if (!mounted || !_recording) return;
+      // Native shows the real AR camera, locks a virtual marker to a physical
+      // plane, and records nearby scene detail for offline relocalization.
+      // Unlike old V10 start placement, V13 MUST NOT reset the mapping origin.
+      final placement = await _ar.placeVisualQrAnchor(
+        qrPng: qr,
+        widthMeters: VisualAnchorSpec.qrWidthMeters,
+        preserveMappingFrame: true,
+      );
+      if (!mounted || !_recording) return;
+      if (placement == null) return;
+      if (!placement.hasOfflineReference ||
+          !placement.rightMeters.isFinite ||
+          !placement.forwardMeters.isFinite ||
+          !placement.upMeters.isFinite ||
+          !placement.facingDegrees.isFinite) {
+        message = 'No valid offline scene reference was captured. '
+            'Checkpoint not saved; original route is unchanged.';
+        return;
+      }
+      setState(() => _markers.add(MappingMarker(
+        id: id,
+        label: requestedName,
+        type: 'anchor',
+        floor: _floor,
+        xMeters: linkedPoint.xMeters,
+        yMeters: linkedPoint.yMeters,
+        upMeters: linkedPoint.upMeters,
+        pointIndex: linkedIndex,
+        checkpointRightMeters: placement.rightMeters,
+        checkpointForwardMeters: placement.forwardMeters,
+        checkpointUpMeters: placement.upMeters,
+        anchorFacingDegrees: placement.facingDegrees,
+        offlineVisualReferencePngBase64:
+            base64Encode(placement.offlineReferencePng!),
+        offlineVisualReferenceWidthMeters: placement.offlineReferenceWidthMeters,
+        offlineVisualStartOffsetX: placement.offlineStartOffsetX,
+        offlineVisualStartOffsetY: placement.offlineStartOffsetY,
+        offlineVisualStartOffsetZ: placement.offlineStartOffsetZ,
+        offlineVisualStartForwardX: placement.offlineStartForwardX,
+        offlineVisualStartForwardY: placement.offlineStartForwardY,
+        offlineVisualStartForwardZ: placement.offlineStartForwardZ,
+        offlineExtraReferenceJson: placement.offlineExtraReferenceJson,
+      )));
+      stored = true;
+      message = '$requestedName saved with a local visual reference. '
+          'The original 3D route frame was NOT reset.';
+    } catch (error) {
+      message = 'Checkpoint not saved: $error. Existing route is unchanged.';
+    } finally {
+      if (mounted) {
+        final safeToResume = _recording && !_trackingInterrupted &&
+            _pose.isTracking &&
+            _distance(linkedPoint, _pointFrom(_pose)) <= 0.80;
+        setState(() {
+          _busy = false;
+          _paused = !safeToResume;
+          _message = safeToResume ? '$message Recording resumed.' :
+              '$message Return within 0.8 m of your last route point '
+              'and press RESUME to avoid a false path connection.';
+        });
+        if (stored) _autoSaveDraft(force: true);
+      }
+    }
+  }
+
   Future<void> _markLandmark() async {
     if (!_recording || _paused || _trackingInterrupted ||
         _points.isEmpty || _busy) return;
@@ -690,7 +833,7 @@ class _Continuous3DMappingScreenState
                   ),
                   const SizedBox(height: 9),
                   Text(
-                    'START → WALK → TAG ROOMS / QR LANDMARKS → SAVE. '
+                    'START → WALK → TAG ROOMS / PLACE CHECKPOINTS → SAVE. '
                     'Record corridors and stairs in one ARCore session. '
                     'Floor changes are one-tap optional labels; '
                     'there is no separate compass or per-floor mapper.',
@@ -829,7 +972,22 @@ class _Continuous3DMappingScreenState
               onPressed: _busy || _paused || _trackingInterrupted
                   ? null : _markLandmark,
               icon: const Icon(Icons.add_location_alt_rounded),
-              label: const Text('TAG ROOM / QR / STAIR LANDMARK'),
+              label: const Text('TAG ROOM / STAIR / LOCATION'),
+            ),
+            const SizedBox(height: 8),
+            FilledButton.icon(
+              onPressed: _busy || _paused || _trackingInterrupted
+                  ? null : _placeOfflineCheckpoint,
+              icon: const Icon(Icons.add_location_rounded),
+              label: const Text('PLACE OFFLINE START CHECKPOINT'),
+            ),
+            const SizedBox(height: 5),
+            const Text(
+              'Place the visible virtual QR in AR and capture a detailed '
+              'door/sign/wall nearby. It saves a checkpoint without resetting '
+              'your continuous route. A different phone must recognize the '
+              'same scene before AR guidance can start.',
+              style: TextStyle(color: Colors.white54, fontSize: 11),
             ),
             const SizedBox(height: 8),
             OutlinedButton.icon(

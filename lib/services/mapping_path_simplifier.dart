@@ -188,6 +188,20 @@ class MappingPathSimplifier {
           pointIndex: newIndex,
           referenceAnchorId: marker.referenceAnchorId,
           anchorFacingDegrees: marker.anchorFacingDegrees,
+          checkpointRightMeters: marker.checkpointRightMeters,
+          checkpointForwardMeters: marker.checkpointForwardMeters,
+          checkpointUpMeters: marker.checkpointUpMeters,
+          offlineVisualReferencePngBase64:
+              marker.offlineVisualReferencePngBase64,
+          offlineVisualReferenceWidthMeters:
+              marker.offlineVisualReferenceWidthMeters,
+          offlineVisualStartOffsetX: marker.offlineVisualStartOffsetX,
+          offlineVisualStartOffsetY: marker.offlineVisualStartOffsetY,
+          offlineVisualStartOffsetZ: marker.offlineVisualStartOffsetZ,
+          offlineVisualStartForwardX: marker.offlineVisualStartForwardX,
+          offlineVisualStartForwardY: marker.offlineVisualStartForwardY,
+          offlineVisualStartForwardZ: marker.offlineVisualStartForwardZ,
+          offlineExtraReferenceJson: marker.offlineExtraReferenceJson,
         );
       }),
     );

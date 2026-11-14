@@ -188,6 +188,7 @@ class _HomeScreenState extends State<HomeScreen> {
     AnchorPoint? fallback;
     for (final anchor in venue.anchors) {
       if (anchor.nodeId != nodeId) continue;
+      if (anchor.offlineCheckpointReady) return anchor;
       if (anchor.visualPoseReady) return anchor;
       fallback ??= anchor;
     }
@@ -199,9 +200,9 @@ class _HomeScreenState extends State<HomeScreen> {
     if (venue == null) return;
 
     if (_is3DGraph) {
-      // 3D graph is geometrically routable, but fresh AR sessions are not
-      // localized against its physical QR marker yet. Offer a truthful
-      // route PLAN, not a false AR camera start/manual compass fallback.
+      // V13: 3D route stays viewable on every phone, but live AR is allowed
+      // only if the selected start has a saved visual checkpoint. Native
+      // ARCore must still recognize the local scene before drawing arrows.
       try {
         final route = _routeEngine.shortestPath(
           venue: venue,
@@ -215,7 +216,9 @@ class _HomeScreenState extends State<HomeScreen> {
               venue: venue,
               destination: destination,
               initialRoute: route,
-              allowArGuidance: false,
+              initialAnchor: _anchorForStartNode(venue),
+              requireOfflineCheckpoint: true,
+              allowArGuidance: true,
             ),
           ),
         );

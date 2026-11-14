@@ -121,23 +121,28 @@ class _AnchorQrScreenState extends State<AnchorQrScreen> {
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(color: const Color(0x33F9C74F)),
                   ),
-                  child: const Row(
+                  child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(
+                      const Icon(
                         Icons.push_pin_rounded,
                         color: Color(0xFFF9C74F),
                       ),
                       SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'Print and deploy this QR at its actual marked '
-                          'campus location. It identifies the correct '
-                          'saved 3D graph node. A regular QR scanner does '
-                          'not measure 6DoF camera pose, distance or yaw. '
-                          'ARCore relocalization from this new session '
-                          'is NOT yet calibrated; do not treat scanning '
-                          'the code as verified AR positioning.',
+                          anchor.offlineCheckpointReady
+                              ? 'Offline visual checkpoint recorded. No '
+                                'printed QR is required: select this location '
+                                'and aim the camera at the SAVED physical '
+                                'door/sign/wall detail. Only a successful '
+                                'ARCore scene recognition locks the virtual '
+                                'QR and navigation route.'
+                              : 'This QR contains a location ID only. '
+                                'A QR scan by itself cannot verify the '
+                                'phone\'s real-world position or direction. '
+                                'Use the mapper\'s offline checkpoint capture '
+                                'for real AR positioning.',
                           style: TextStyle(
                             color: Colors.white70,
                             height: 1.45,
@@ -297,7 +302,7 @@ class _QrCard extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           Text(
-            'AR CAMPUS NAV • ${anchor.visualPoseReady ? 'VISUAL POSE READY' : 'POSITION ONLY'}',
+            'AR CAMPUS NAV • ${anchor.offlineCheckpointReady ? 'OFFLINE SCENE SAVED' : anchor.visualPoseReady ? 'PRINTED QR READY' : 'POSITION ONLY'}',
             style: const TextStyle(
               color: Color(0xFF9DBEF7),
               fontSize: 10,
@@ -318,7 +323,7 @@ class _VisualPoseStatus extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ready = anchor.visualPoseReady;
+    final ready = anchor.offlineCheckpointReady || anchor.visualPoseReady;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -344,7 +349,11 @@ class _VisualPoseStatus extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              ready
+              anchor.offlineCheckpointReady
+                  ? 'Offline scene reference saved. Select this checkpoint '
+                      'on the route and wait for ARCore to recognize the real '
+                      'surroundings. Cross-device accuracy still needs testing.'
+                  : ready
                   ? 'Visual pose ready • QR width '
                       '${(VisualAnchorSpec.qrWidthMeters * 100).toStringAsFixed(0)} cm. '
                       'AR Guide can localize position + direction directly '

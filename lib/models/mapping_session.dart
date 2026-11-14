@@ -85,6 +85,18 @@ class MappingMarker {
     this.upMeters = 0,
     this.referenceAnchorId,
     this.anchorFacingDegrees,
+    this.checkpointRightMeters,
+    this.checkpointForwardMeters,
+    this.checkpointUpMeters,
+    this.offlineVisualReferencePngBase64,
+    this.offlineVisualReferenceWidthMeters,
+    this.offlineVisualStartOffsetX,
+    this.offlineVisualStartOffsetY,
+    this.offlineVisualStartOffsetZ,
+    this.offlineVisualStartForwardX,
+    this.offlineVisualStartForwardY,
+    this.offlineVisualStartForwardZ,
+    this.offlineExtraReferenceJson,
   });
 
   final String id;
@@ -103,6 +115,20 @@ class MappingMarker {
   /// Mapping-local heading of the QR poster's outward-facing normal.
   /// Captured only when the mapper explicitly records QR installation facing.
   final double? anchorFacingDegrees;
+  /// Actual camera-measured virtual checkpoint pose in the uninterrupted
+  /// mapping frame. The semantic graph node can be nearby, not coincident.
+  final double? checkpointRightMeters;
+  final double? checkpointForwardMeters;
+  final double? checkpointUpMeters;
+  final String? offlineVisualReferencePngBase64;
+  final double? offlineVisualReferenceWidthMeters;
+  final double? offlineVisualStartOffsetX;
+  final double? offlineVisualStartOffsetY;
+  final double? offlineVisualStartOffsetZ;
+  final double? offlineVisualStartForwardX;
+  final double? offlineVisualStartForwardY;
+  final double? offlineVisualStartForwardZ;
+  final String? offlineExtraReferenceJson;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -117,6 +143,30 @@ class MappingMarker {
           'reference_anchor_id': referenceAnchorId,
         if (anchorFacingDegrees != null)
           'anchor_facing_degrees': anchorFacingDegrees,
+        if (checkpointRightMeters != null)
+          'checkpoint_right_m': checkpointRightMeters,
+        if (checkpointForwardMeters != null)
+          'checkpoint_forward_m': checkpointForwardMeters,
+        if (checkpointUpMeters != null)
+          'checkpoint_up_m': checkpointUpMeters,
+        if (offlineVisualReferencePngBase64 != null)
+          'offline_visual_reference_png_b64': offlineVisualReferencePngBase64,
+        if (offlineVisualReferenceWidthMeters != null)
+          'offline_visual_reference_width_m': offlineVisualReferenceWidthMeters,
+        if (offlineVisualStartOffsetX != null)
+          'offline_visual_start_offset_x': offlineVisualStartOffsetX,
+        if (offlineVisualStartOffsetY != null)
+          'offline_visual_start_offset_y': offlineVisualStartOffsetY,
+        if (offlineVisualStartOffsetZ != null)
+          'offline_visual_start_offset_z': offlineVisualStartOffsetZ,
+        if (offlineVisualStartForwardX != null)
+          'offline_visual_start_forward_x': offlineVisualStartForwardX,
+        if (offlineVisualStartForwardY != null)
+          'offline_visual_start_forward_y': offlineVisualStartForwardY,
+        if (offlineVisualStartForwardZ != null)
+          'offline_visual_start_forward_z': offlineVisualStartForwardZ,
+        if (offlineExtraReferenceJson != null)
+          'offline_extra_reference_json': offlineExtraReferenceJson,
       };
 
   factory MappingMarker.fromJson(Map<String, dynamic> json) {
@@ -132,6 +182,27 @@ class MappingMarker {
       referenceAnchorId: json['reference_anchor_id'] as String?,
       anchorFacingDegrees:
           (json['anchor_facing_degrees'] as num?)?.toDouble(),
+      checkpointRightMeters: (json['checkpoint_right_m'] as num?)?.toDouble(),
+      checkpointForwardMeters: (json['checkpoint_forward_m'] as num?)?.toDouble(),
+      checkpointUpMeters: (json['checkpoint_up_m'] as num?)?.toDouble(),
+      offlineVisualReferencePngBase64:
+          json['offline_visual_reference_png_b64'] as String?,
+      offlineVisualReferenceWidthMeters:
+          (json['offline_visual_reference_width_m'] as num?)?.toDouble(),
+      offlineVisualStartOffsetX:
+          (json['offline_visual_start_offset_x'] as num?)?.toDouble(),
+      offlineVisualStartOffsetY:
+          (json['offline_visual_start_offset_y'] as num?)?.toDouble(),
+      offlineVisualStartOffsetZ:
+          (json['offline_visual_start_offset_z'] as num?)?.toDouble(),
+      offlineVisualStartForwardX:
+          (json['offline_visual_start_forward_x'] as num?)?.toDouble(),
+      offlineVisualStartForwardY:
+          (json['offline_visual_start_forward_y'] as num?)?.toDouble(),
+      offlineVisualStartForwardZ:
+          (json['offline_visual_start_forward_z'] as num?)?.toDouble(),
+      offlineExtraReferenceJson:
+          json['offline_extra_reference_json'] as String?,
     );
   }
 }

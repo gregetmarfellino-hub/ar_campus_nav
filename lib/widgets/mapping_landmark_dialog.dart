@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
 /// One small optional location tag while recording continuous 3D geometry.
-/// A QR reference means a physically installed / printed ID, NOT a persistent
-/// virtual ARCore anchor that magically relocalizes after a fresh session.
+/// Location tags are semantic route labels. Virtual QR capture is a separate
+/// native, measured action in the ONE unified 3D mapper.
 class MappingLandmarkInput {
   const MappingLandmarkInput(this.type, this.label);
   final String type;
@@ -50,7 +50,6 @@ class _MappingLandmarkDialogState extends State<MappingLandmarkDialog> {
                 children: [
                   for (final entry in const <(String, String)>[
                     ('destination', 'Room / place'),
-                    ('anchor', 'QR reference'),
                     ('stairs', 'Stairs'),
                     ('elevator', 'Elevator'),
                   ])
@@ -77,17 +76,11 @@ class _MappingLandmarkDialogState extends State<MappingLandmarkDialog> {
                 onChanged: (value) => _name = value,
                 onFieldSubmitted: (_) => _save(),
               ),
-              if (_type == 'anchor')
-                const Text(
-                  'A QR ID will be generated when this route is published. '
-                  'Print/place that QR at THIS measured landmark. '
-                  'A QR scan identifies the location but does not yet '
-                  'measure the phone pose or align a new ARCore session.',
-                  style: TextStyle(
-                    color: Color(0xFFF9C74F),
-                    fontSize: 12,
-                  ),
-                ),
+              const Text(
+                'For a navigable start checkpoint, use PLACE OFFLINE START '
+                'CHECKPOINT in the mapper instead of a location tag.',
+                style: TextStyle(color: Colors.white54, fontSize: 12),
+              ),
             ],
           ),
         ),

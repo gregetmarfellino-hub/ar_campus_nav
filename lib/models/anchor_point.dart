@@ -15,6 +15,10 @@ class AnchorPoint {
     this.offlineVisualStartForwardY,
     this.offlineVisualStartForwardZ,
     this.offlineExtraReferenceJson,
+    this.checkpointRightMeters,
+    this.checkpointForwardMeters,
+    this.checkpointUpMeters,
+    this.checkpointFacingDegrees,
   });
 
   final String id;
@@ -38,6 +42,20 @@ class AnchorPoint {
 
   /// Optional second locally captured image reference (JSON, backward compatible).
   final String? offlineExtraReferenceJson;
+
+  /// Real pose of this virtual checkpoint in the original recording frame.
+  /// The route node is normally where the mapper was standing, while the
+  /// placed marker can be on an adjacent wall. They must NOT be conflated.
+  final double? checkpointRightMeters;
+  final double? checkpointForwardMeters;
+  final double? checkpointUpMeters;
+  final double? checkpointFacingDegrees;
+
+  bool get offlineCheckpointReady => offlineVisualReady &&
+      checkpointRightMeters != null && checkpointForwardMeters != null &&
+      checkpointUpMeters != null && checkpointFacingDegrees != null &&
+      checkpointRightMeters!.isFinite && checkpointForwardMeters!.isFinite &&
+      checkpointUpMeters!.isFinite && checkpointFacingDegrees!.isFinite;
 
   bool get offlineVisualReady =>
       offlineVisualReferencePngBase64?.isNotEmpty == true &&
@@ -78,6 +96,10 @@ class AnchorPoint {
       offlineVisualStartForwardZ:
           (json['offline_visual_start_forward_z'] as num?)?.toDouble(),
       offlineExtraReferenceJson: json['offline_extra_reference_json'] as String?,
+      checkpointRightMeters: (json['checkpoint_right_m'] as num?)?.toDouble(),
+      checkpointForwardMeters: (json['checkpoint_forward_m'] as num?)?.toDouble(),
+      checkpointUpMeters: (json['checkpoint_up_m'] as num?)?.toDouble(),
+      checkpointFacingDegrees: (json['checkpoint_facing_deg'] as num?)?.toDouble(),
     );
   }
 }

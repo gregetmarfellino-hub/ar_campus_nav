@@ -78,6 +78,14 @@ class VenueCodec {
               'offline_visual_start_forward_z': anchor.offlineVisualStartForwardZ,
             if (anchor.offlineExtraReferenceJson != null)
               'offline_extra_reference_json': anchor.offlineExtraReferenceJson,
+            if (anchor.checkpointRightMeters != null)
+              'checkpoint_right_m': anchor.checkpointRightMeters,
+            if (anchor.checkpointForwardMeters != null)
+              'checkpoint_forward_m': anchor.checkpointForwardMeters,
+            if (anchor.checkpointUpMeters != null)
+              'checkpoint_up_m': anchor.checkpointUpMeters,
+            if (anchor.checkpointFacingDegrees != null)
+              'checkpoint_facing_deg': anchor.checkpointFacingDegrees,
           },
       ],
     };

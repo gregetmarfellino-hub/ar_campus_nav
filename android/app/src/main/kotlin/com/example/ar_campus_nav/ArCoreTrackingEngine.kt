@@ -115,6 +115,10 @@ class ArCoreTrackingEngine(
     private var qrPlacementButton: Button? = null
     private var qrPlacementExtraButton: Button? = null
     @Volatile private var qrPlacementMode = false
+    // V13: checkpoint capture can happen anywhere along a V11 3D recording.
+    // NEVER rebase the shared mapping origin when this flag is enabled.
+    private var qrPlacementPreserveFrame = false
+    private var qrCheckpointWorldAnchor: Anchor? = null
     @Volatile private var qrPlacementRequested = false
     @Volatile private var qrPlacementDistanceMeters = 1.0f
     private var qrPlacementLocked = false
@@ -226,6 +230,8 @@ class ArCoreTrackingEngine(
     private var navigationOfflineStartForwardY = 0f
     private var navigationOfflineStartForwardZ = -1f
     private var navigationOfflineEnabled = false
+    // V13 saved 3D maps cannot silently fall back to an unverified camera pose.
+    private var navigationVerifiedOfflineRequired = false
     @Volatile private var navigationOfflineRescanRequested = false
     private var navigationOfflineSampleCount = 0
     private var navigationOfflinePositionX = 0f
@@ -406,6 +412,7 @@ class ArCoreTrackingEngine(
         points: List<RoutePoint>,
         startLabel: String = "Route start",
         anchorLocalized: Boolean = false,
+        requireVerifiedOffline: Boolean = false,
         visualAnchorPng: ByteArray? = null,
         visualAnchorWidthMeters: Float? = null,
         visualAnchorLabel: String? = null,
@@ -423,6 +430,7 @@ class ArCoreTrackingEngine(
         if (points.size < 2) return "ROUTE_TOO_SHORT"
 
         navigationMode = true
+        navigationVerifiedOfflineRequired = requireVerifiedOffline
         navigationDestination = destination
         navigationStartLabel = startLabel
         navigationAnchorLocalized = anchorLocalized
@@ -465,6 +473,9 @@ class ArCoreTrackingEngine(
             forwardZ = offlineStartForwardZ,
         )
 
+        if (requireVerifiedOffline && !offlineReady) {
+            return "OFFLINE_REFERENCE_REQUIRED"
+        }
         if (offlineReady) {
             configureOfflineExtraReference(offlineExtraReferenceJson)
             clearVisualAnchorConfiguration()
@@ -715,6 +726,7 @@ class ArCoreTrackingEngine(
     fun beginVisualQrPlacement(
         qrPng: ByteArray,
         widthMeters: Float,
+        preserveMappingFrame: Boolean = false,
         onComplete: (Map<String, Any>?) -> Unit,
     ): String? {
         if (!started || session == null || surfaceView == null) {
@@ -740,6 +752,7 @@ class ArCoreTrackingEngine(
         qrPlacementBitmap?.recycle()
         qrPlacementBitmap = bitmap
         qrPlacementWidthMeters = widthMeters
+        qrPlacementPreserveFrame = preserveMappingFrame
         qrPlacementDistanceMeters = 1.0f
         qrPlacementSnapToSurface = true
         qrPlacementCompletion = onComplete
@@ -1014,7 +1027,8 @@ class ArCoreTrackingEngine(
         camera: com.google.ar.core.Camera,
     ) {
         if (qrPlacementLocked) {
-            val anchorReady = mappingStartWorldAnchor?.trackingState == TrackingState.TRACKING
+            val anchorReady = (if (qrPlacementPreserveFrame) qrCheckpointWorldAnchor
+                else mappingStartWorldAnchor)?.trackingState == TrackingState.TRACKING
             if (qrPlacementTrackingReady != anchorReady) {
                 setQrPlacementTrackingReady(anchorReady)
             }
@@ -1086,10 +1100,10 @@ class ArCoreTrackingEngine(
                             (qrPlacementLockedPayload ?: emptyMap()) + capture.first!!
                         offlineReferenceCaptured = true
                         qrPlacementStatusText?.text =
-                            "START AREA SAVED — this route now carries its own " +
+                            (if (qrPlacementPreserveFrame) "CHECKPOINT SAVED — " else "START AREA SAVED — ") + "this route now carries its own " +
                                 "offline visual fingerprint. Move the phone once " +
                                 "more if you want, then tap START RECORDING."
-                        button?.text = "START RECORDING"
+                        button?.text = if (qrPlacementPreserveFrame) "SAVE CHECKPOINT" else "START RECORDING"
                         qrPlacementExtraButton?.visibility =
                             android.view.View.VISIBLE
                     } else {
@@ -1224,31 +1238,54 @@ class ArCoreTrackingEngine(
             setQrPlacementTrackingReady(false)
             return
         }
-        releaseMappingStartAnchor()
-        mappingStartWorldAnchor = newAnchor
-        mappingStartQrVisible = true
-        mappingStartQrWidthMeters = qrPlacementWidthMeters
-
-        // This anchor is now the mapping coordinate frame itself.
-        trackingOriginPosition = anchorPose.translation.copyOf()
-        trackingForwardX = outwardX
-        trackingForwardZ = outwardZ
-        trackingRightX = -trackingForwardZ
-        trackingRightZ = trackingForwardX
-
-        // Because we just rebased the frame to this marker, the start marker
-        // is exactly local origin with verified facing 0 degrees.
-        qrPlacementLockedPayload = mapOf(
-            "right_m" to 0.0,
-            "forward_m" to 0.0,
-            "up_m" to 0.0,
-            "facing_deg" to 0.0,
-        )
+        if (qrPlacementPreserveFrame) {
+            // Keep the entire 3D path in the ORIGINAL ARCore local frame.
+            // The virtual QR can be on an adjacent wall; its precise pose
+            // is stored separately from the nearest walkable route vertex.
+            val origin = trackingOriginPosition ?: return
+            qrCheckpointWorldAnchor?.detach()
+            qrCheckpointWorldAnchor = newAnchor
+            val pos = anchorPose.translation
+            val dx = pos[0] - origin[0]
+            val dy = pos[1] - origin[1]
+            val dz = pos[2] - origin[2]
+            val localRight = dx * trackingRightX + dz * trackingRightZ
+            val localForward = dx * trackingForwardX + dz * trackingForwardZ
+            val facingRight = outwardX * trackingRightX + outwardZ * trackingRightZ
+            val facingForward = outwardX * trackingForwardX + outwardZ * trackingForwardZ
+            val localFacing = atan2(facingRight, facingForward) *
+                (180.0f / Math.PI.toFloat())
+            qrPlacementLockedPayload = mapOf(
+                "right_m" to localRight.toDouble(),
+                "forward_m" to localForward.toDouble(),
+                "up_m" to dy.toDouble(),
+                "facing_deg" to localFacing.toDouble(),
+            )
+            // No mappingStartWorldAnchor, no reset of the route frame.
+        } else {
+            // The older dedicated start-marker workflow intentionally
+            // creates a fresh local mapping origin.
+            releaseMappingStartAnchor()
+            mappingStartWorldAnchor = newAnchor
+            mappingStartQrVisible = true
+            mappingStartQrWidthMeters = qrPlacementWidthMeters
+            trackingOriginPosition = anchorPose.translation.copyOf()
+            trackingForwardX = outwardX
+            trackingForwardZ = outwardZ
+            trackingRightX = -trackingForwardZ
+            trackingRightZ = trackingForwardX
+            qrPlacementLockedPayload = mapOf(
+                "right_m" to 0.0,
+                "forward_m" to 0.0,
+                "up_m" to 0.0,
+                "facing_deg" to 0.0,
+            )
+        }
         qrPlacementLocked = true
 
         mainHandler.post {
             qrPlacementStatusText?.text =
-                "START LOCKED — the QR is fixed. Now aim the center of the " +
+                (if (qrPlacementPreserveFrame) "CHECKPOINT LOCKED — mapping continues in the same XYZ frame. " else "START LOCKED — the QR is fixed. ") + "Now aim the center of the " +
                     "camera at ONE nearby textured flat surface (door, sign, " +
                     "tiles, poster, wall detail), then tap SAVE START AREA."
             qrPlacementButton?.text = "SAVE START AREA"
@@ -1263,8 +1300,9 @@ class ArCoreTrackingEngine(
     ): Pair<Map<String, Any>?, String?> {
         val view = surfaceView
             ?: return Pair(null, "AR view is not ready. Try again.")
-        val startAnchor = mappingStartWorldAnchor
-            ?: return Pair(null, "Start QR anchor is missing. Re-place the start.")
+        val startAnchor = (if (qrPlacementPreserveFrame) qrCheckpointWorldAnchor
+            else mappingStartWorldAnchor)
+            ?: return Pair(null, "Visual checkpoint anchor is missing. Re-place it.")
 
         if (view.width < 100 || view.height < 100) {
             return Pair(null, "AR view is still sizing. Hold steady and retry.")
@@ -1595,10 +1633,43 @@ class ArCoreTrackingEngine(
         }
     }
 
+    private fun finalCheckpointPose(payload: Map<String, Any>?): Map<String, Any>? {
+        if (payload == null || !qrPlacementPreserveFrame) return payload
+        val anchor = qrCheckpointWorldAnchor ?: return null
+        val origin = trackingOriginPosition ?: return null
+        if (anchor.trackingState != TrackingState.TRACKING) return null
+
+        // The world anchor is refined after PLACE QR HERE. Recompute its final
+        // position AND facing immediately before saving; never pair a newer
+        // visual image->QR transform with the first unrefined QR coordinates.
+        val pose = anchor.pose
+        val world = pose.translation
+        val forward = pose.getTransformedAxis(2, -1f)
+        val length = sqrt(forward[0] * forward[0] + forward[2] * forward[2])
+        if (length < 0.1f) return null
+        val right = (world[0] - origin[0]) * trackingRightX +
+            (world[2] - origin[2]) * trackingRightZ
+        val distanceForward = (world[0] - origin[0]) * trackingForwardX +
+            (world[2] - origin[2]) * trackingForwardZ
+        val facingRight = (forward[0] * trackingRightX +
+            forward[2] * trackingRightZ) / length
+        val facingForward = (forward[0] * trackingForwardX +
+            forward[2] * trackingForwardZ) / length
+        val facingDeg = atan2(facingRight, facingForward) *
+            (180.0f / Math.PI.toFloat())
+        return payload + mapOf(
+            "right_m" to right.toDouble(),
+            "forward_m" to distanceForward.toDouble(),
+            "up_m" to (world[1] - origin[1]).toDouble(),
+            "facing_deg" to facingDeg.toDouble(),
+        )
+    }
+
     private fun finishQrPlacement(payload: Map<String, Any>?) {
         if (!qrPlacementMode && qrPlacementCompletion == null) return
 
-        val accepted = payload != null
+        val savedPayload = finalCheckpointPose(payload)
+        val accepted = savedPayload != null
         qrPlacementMode = false
         qrPlacementRequested = false
         qrPlacementTrackingReady = false
@@ -1608,9 +1679,13 @@ class ArCoreTrackingEngine(
         offlineReferenceCaptured = false
         offlineExtraCaptureRequested = false
         offlineExtraReferenceCaptured = false
-        if (!accepted) {
+        if (qrPlacementPreserveFrame) {
+            qrCheckpointWorldAnchor?.detach()
+            qrCheckpointWorldAnchor = null
+        } else if (!accepted) {
             releaseMappingStartAnchor()
         }
+        qrPlacementPreserveFrame = false
         val callback = qrPlacementCompletion
         qrPlacementCompletion = null
 
@@ -1632,14 +1707,15 @@ class ArCoreTrackingEngine(
                 qrPlacementBitmap = null
             }
 
-            callback?.invoke(payload)
+            callback?.invoke(savedPayload)
         }
     }
 
     private fun drawLockedMappingStartQr(
         camera: com.google.ar.core.Camera,
     ) {
-        val anchor = mappingStartWorldAnchor ?: return
+        val anchor = (if (qrPlacementMode && qrPlacementPreserveFrame)
+            qrCheckpointWorldAnchor else mappingStartWorldAnchor) ?: return
         if (anchor.trackingState != TrackingState.TRACKING) return
 
         val pose = anchor.pose
@@ -1651,7 +1727,8 @@ class ArCoreTrackingEngine(
             center = pose.translation,
             rightAxis = rightAxis,
             upAxis = upAxis,
-            sizeMeters = mappingStartQrWidthMeters,
+            sizeMeters = if (qrPlacementMode && qrPlacementPreserveFrame)
+                qrPlacementWidthMeters else mappingStartQrWidthMeters,
         )
     }
 
@@ -1691,6 +1768,7 @@ class ArCoreTrackingEngine(
 
         pause()
 
+        navigationVerifiedOfflineRequired = false
         val oldOverlay = navigationOverlay
         val oldQrPlacementOverlay = qrPlacementOverlay
         val oldMappingVisualOverlay = mappingVisualOverlay
@@ -1725,6 +1803,9 @@ class ArCoreTrackingEngine(
         qrPlacementExtraButton = null
         qrPlacementCompletion = null
         qrPlacementMode = false
+        qrPlacementPreserveFrame = false
+        qrCheckpointWorldAnchor?.detach()
+        qrCheckpointWorldAnchor = null
         qrPlacementRequested = false
         qrPlacementTrackingReady = false
         qrPlacementLocked = false
@@ -1989,9 +2070,10 @@ class ArCoreTrackingEngine(
                     navigationArrivalShown = false
                     activeRouteIndex = 1
                     mainHandler.post {
-                        navigationQuickAlignButton?.visibility = View.VISIBLE
+                        navigationQuickAlignButton?.visibility =
+                            if (navigationVerifiedOfflineRequired) View.GONE else View.VISIBLE
                         navigationAlignButton?.apply {
-                            visibility = View.VISIBLE
+                            visibility = if (navigationVerifiedOfflineRequired) View.GONE else View.VISIBLE
                             isEnabled = true
                             alpha = 1f
                             text = "WALK ALIGN"
@@ -4872,6 +4954,7 @@ class ArCoreTrackingEngine(
                 dp(22).toFloat(),
             )
             setOnClickListener {
+                if (navigationVerifiedOfflineRequired) return@setOnClickListener
                 // The explicit manual option replaces automatic image locking
                 // for this session; visual checkpoints remain available when
                 // the user does not choose manual heading.
@@ -4898,6 +4981,7 @@ class ArCoreTrackingEngine(
                 navigationQuickAlignRequested = true
             }
         }
+        if (navigationVerifiedOfflineRequired) quickAlign.visibility = View.GONE
         navigationQuickAlignButton = quickAlign
 
         val align = Button(activity).apply {
@@ -4915,6 +4999,7 @@ class ArCoreTrackingEngine(
                 dp(22).toFloat(),
             )
             setOnClickListener {
+                if (navigationVerifiedOfflineRequired) return@setOnClickListener
                 if (navigationOfflineEnabled) {
                     logOfflineDiagnostic(
                         "MANUAL_FALLBACK_SELECTED",
@@ -4942,6 +5027,7 @@ class ArCoreTrackingEngine(
                 }
             }
         }
+        if (navigationVerifiedOfflineRequired) align.visibility = View.GONE
         navigationAlignButton = align
 
         val reanchor = Button(activity).apply {
