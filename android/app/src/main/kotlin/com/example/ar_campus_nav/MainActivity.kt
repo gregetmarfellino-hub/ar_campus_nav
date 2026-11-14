@@ -1,6 +1,12 @@
 package com.example.ar_campus_nav
 
 import android.Manifest
+import android.app.Activity
+import android.content.ClipData
+import android.content.Intent
+import android.net.Uri
+import androidx.core.content.FileProvider
+import java.io.ByteArrayOutputStream
 import android.content.Context
 import android.content.pm.PackageManager
 import android.hardware.Sensor
@@ -21,6 +27,9 @@ class MainActivity : FlutterActivity(), SensorEventListener {
         private const val AR_POSE_CHANNEL = "ar_campus_nav/ar_pose"
         private const val ACTIVITY_PERMISSION_REQUEST = 7401
         private const val CAMERA_PERMISSION_REQUEST = 7402
+        private const val PROJECT_IMPORT_REQUEST = 7410
+        private const val PROJECT_EXPORT_REQUEST = 7411
+        private const val MAX_PROJECT_BYTES = 24 * 1024 * 1024
     }
 
     private lateinit var sensorManager: SensorManager
@@ -28,6 +37,8 @@ class MainActivity : FlutterActivity(), SensorEventListener {
     private var stepSink: EventChannel.EventSink? = null
     private var pendingPermissionResult: MethodChannel.Result? = null
     private var pendingCameraPermissionResult: MethodChannel.Result? = null
+    private var pendingProjectFileResult: MethodChannel.Result? = null
+    private var pendingExportProjectJson: String? = null
     private var arPoseSink: EventChannel.EventSink? = null
     private var arCoreTrackingEngine: ArCoreTrackingEngine? = null
 
@@ -48,6 +59,9 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                 "listMappings" -> result.success(listMappings())
                 "loadMapping" -> loadMapping(call.argument("id"), result)
                 "deleteMapping" -> deleteMapping(call.argument("id"), result)
+                "importVenueProjectFile" -> openVenueProjectFile(result)
+                "exportVenueProjectFile" -> exportVenueProjectFile(call.argument("name"), call.argument("json"), result)
+                "shareVenueProjectFile" -> shareVenueProjectFile(call.argument("name"), call.argument("json"), result)
                 "ensureCameraPermission" -> ensureCameraPermission(result)
                 "arCoreAvailability" -> result.success(arEngine().availabilityLabel())
                 "startArTracking" -> {
@@ -396,6 +410,139 @@ class MainActivity : FlutterActivity(), SensorEventListener {
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+
+
+    // Android Storage Access Framework: no storage permissions and no cloud.
+    // Always read/write caller-selected documents, never arbitrary paths.
+    private fun openVenueProjectFile(result: MethodChannel.Result) {
+        if (pendingProjectFileResult != null) {
+            result.error("picker_busy", "A project document picker is already open.", null)
+            return
+        }
+        pendingProjectFileResult = result
+        try {
+            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "application/json"
+                putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/json", "text/plain", "application/octet-stream"))
+            }
+            startActivityForResult(intent, PROJECT_IMPORT_REQUEST)
+        } catch (error: Exception) {
+            pendingProjectFileResult = null
+            result.error("project_picker_failed", error.message, null)
+        }
+    }
+
+    private fun exportVenueProjectFile(name: String?, json: String?, result: MethodChannel.Result) {
+        if (pendingProjectFileResult != null) {
+            result.error("picker_busy", "A project document picker is already open.", null)
+            return
+        }
+        if (json.isNullOrBlank() || json.toByteArray(Charsets.UTF_8).size > MAX_PROJECT_BYTES) {
+            result.error("invalid_project", "Project is empty or exceeds 24 MiB.", null)
+            return
+        }
+        pendingProjectFileResult = result
+        pendingExportProjectJson = json
+        try {
+            val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE)
+                type = "application/json"
+                putExtra(Intent.EXTRA_TITLE, safeProjectFileName(name))
+            }
+            startActivityForResult(intent, PROJECT_EXPORT_REQUEST)
+        } catch (error: Exception) {
+            pendingProjectFileResult = null
+            pendingExportProjectJson = null
+            result.error("project_export_failed", error.message, null)
+        }
+    }
+
+    private fun safeProjectFileName(name: String?): String {
+        val stem = (name ?: "campus.arnav.json")
+            .replace(Regex("[^A-Za-z0-9_.-]"), "_")
+            .take(100)
+        return if (stem.endsWith(".json")) stem else "$stem.json"
+    }
+
+    private fun shareVenueProjectFile(name: String?, json: String?, result: MethodChannel.Result) {
+        if (json.isNullOrBlank() || json.toByteArray(Charsets.UTF_8).size > MAX_PROJECT_BYTES) {
+            result.error("invalid_project", "Project is empty or exceeds 24 MiB.", null)
+            return
+        }
+        // FileProvider grants temporary read access to a single generated JSON.
+        Thread {
+            try {
+                val directory = File(cacheDir, "ar_nav_shares").apply { mkdirs() }
+                val file = File(directory, safeProjectFileName(name))
+                file.writeText(json, Charsets.UTF_8)
+                val uri = FileProvider.getUriForFile(
+                    this, "${applicationContext.packageName}.share", file,
+                )
+                runOnUiThread {
+                    try {
+                        val send = Intent(Intent.ACTION_SEND).apply {
+                            type = "application/json"
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            clipData = ClipData.newUri(contentResolver, "Campus project", uri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        startActivity(Intent.createChooser(send, "Share offline campus project"))
+                        result.success(true) // Chooser opened, not proof of delivery.
+                    } catch (error: Exception) {
+                        result.error("project_share_failed", error.message, null)
+                    }
+                }
+            } catch (error: Exception) {
+                runOnUiThread { result.error("project_share_failed", error.message, null) }
+            }
+        }.start()
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != PROJECT_IMPORT_REQUEST && requestCode != PROJECT_EXPORT_REQUEST) return
+
+        val callback = pendingProjectFileResult
+        pendingProjectFileResult = null
+        val exportJson = pendingExportProjectJson
+        pendingExportProjectJson = null
+        val uri: Uri? = data?.data
+        if (callback == null) return
+        if (resultCode != Activity.RESULT_OK || uri == null) {
+            callback.success(null)
+            return
+        }
+
+        Thread {
+            try {
+                if (requestCode == PROJECT_IMPORT_REQUEST) {
+                    val output = ByteArrayOutputStream()
+                    contentResolver.openInputStream(uri)?.use { stream ->
+                        val buffer = ByteArray(8192)
+                        while (true) {
+                            val count = stream.read(buffer)
+                            if (count < 0) break
+                            if (output.size() + count > MAX_PROJECT_BYTES) {
+                                throw java.io.IOException("Project exceeds 24 MiB.")
+                            }
+                            output.write(buffer, 0, count)
+                        }
+                    } ?: throw java.io.IOException("Could not read selected project.")
+                    val json = output.toString(Charsets.UTF_8.name())
+                    runOnUiThread { callback.success(json) }
+                } else {
+                    if (exportJson == null) throw java.io.IOException("Export data was lost.")
+                    contentResolver.openOutputStream(uri, "wt")?.use {
+                        it.write(exportJson.toByteArray(Charsets.UTF_8))
+                    } ?: throw java.io.IOException("Could not open export destination.")
+                    runOnUiThread { callback.success(uri.toString()) }
+                }
+            } catch (error: Exception) {
+                runOnUiThread { callback.error("project_file_failed", error.message, null) }
+            }
+        }.start()
+    }
 
     private fun mappingDirectory(): File {
         return File(filesDir, "ar_nav_mappings").apply { mkdirs() }
