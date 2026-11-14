@@ -124,8 +124,13 @@ class RouteEngine {
       // staircase. Only explicit, matching portal types may cross floors.
       if (a.floor != b.floor) {
         final kind = edge.transitionType;
-        if ((kind != 'stairs' && kind != 'elevator') ||
-            a.type != kind || b.type != kind) {
+        if (kind != 'stairs' && kind != 'elevator') {
+          continue;
+        }
+        if (!edge.measured3D && (a.type != kind || b.type != kind)) {
+          // Old floor layers stay strictly portal-matched. A real 3D
+          // recording, however, can change floor midway through a
+          // measured stair segment without labels at both endpoints.
           continue;
         }
       } else if (edge.transitionType != null) {
