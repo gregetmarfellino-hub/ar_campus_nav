@@ -354,7 +354,7 @@ class _VisualPoseStatus extends StatelessWidget {
                       'on the route and wait for ARCore to recognize the real '
                       'surroundings. Cross-device accuracy still needs testing.'
                   : ready
-                  ? 'Visual pose ready • QR width 
+                  ? 'Visual pose ready • QR width '
                       '${(VisualAnchorSpec.qrWidthMeters * 100).toStringAsFixed(0)} cm. '
                       'AR Guide can localize position + direction directly '
                       'from this QR.'
