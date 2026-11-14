@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../models/mapping_session.dart';
+import '../models/nav_node.dart';
 import '../models/venue.dart';
 import '../services/mapping_storage.dart';
 import '../services/venue_loader.dart';
@@ -72,6 +73,132 @@ class _MappingSessionsScreenState extends State<MappingSessionsScreen> {
         _error = error.toString();
         _loading = false;
       });
+    }
+  }
+
+  Future<void> _createProject() async {
+    if (_projectBusy) return;
+    var draftName = '';
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Create independent campus project'),
+        content: TextField(
+          autofocus: true,
+          maxLength: 80,
+          decoration: const InputDecoration(
+            labelText: 'Building / project name',
+            hintText: 'E.g. Engineering Building',
+          ),
+          onChanged: (value) => draftName = value,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(draftName.trim()),
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.length < 2 || !mounted) return;
+    setState(() => _projectBusy = true);
+    try {
+      final id = 'campus_${DateTime.now().microsecondsSinceEpoch}';
+      final venue = Venue(
+        id: id,
+        name: name,
+        description: 'Offline user-created venue. Walk and publish a 3D mapping.',
+        defaultStartNodeId: 'project_origin',
+        floors: const [1],
+        nodes: const [
+          NavNode(
+            id: 'project_origin',
+            label: 'Not mapped yet',
+            floor: 1,
+            x: 0,
+            y: 0,
+            type: 'waypoint',
+          ),
+        ],
+        edges: const [],
+        destinations: const [],
+        anchors: const [],
+      );
+      await _overrideStorage.save(VenueOverrideDocument(
+        venue: venue,
+        coordinateSpace: 'sample',
+        appliedSessionIds: const [],
+        updatedAt: DateTime.now(),
+      ));
+      await _overrideStorage.selectProject(id);
+      await _reload();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(
+          'Project $name created. Return Home and start the V11 mapper.',
+        )),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not create project: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _projectBusy = false);
+    }
+  }
+
+  Future<void> _switchProject() async {
+    if (_projectBusy) return;
+    setState(() => _projectBusy = true);
+    try {
+      final projects = await _overrideStorage.listProjects();
+      if (!mounted) return;
+      final id = await showModalBottomSheet<String>(
+        context: context,
+        isScrollControlled: true,
+        builder: (sheetContext) => SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              const ListTile(
+                title: Text('Switch offline project'),
+                subtitle: Text('Other saved projects stay on this phone.'),
+              ),
+              for (final item in projects)
+                ListTile(
+                  title: Text(item.venue.name),
+                  subtitle: Text(
+                    '${item.venue.nodes.length} nodes · '
+                    '${item.venue.anchors.length} checkpoints',
+                  ),
+                  trailing: item.venue.id == _venue?.id
+                      ? const Icon(Icons.check_circle)
+                      : null,
+                  onTap: () => Navigator.of(sheetContext).pop(item.venue.id),
+                ),
+              ListTile(
+                title: const Text('Bundled demo campus'),
+                onTap: () => Navigator.of(sheetContext).pop('__demo__'),
+              ),
+            ],
+          ),
+        ),
+      );
+      if (id == null) return;
+      await _overrideStorage.selectProject(id == '__demo__' ? null : id);
+      await _reload();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not switch project: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _projectBusy = false);
     }
   }
 
@@ -544,6 +671,18 @@ class _MappingSessionsScreenState extends State<MappingSessionsScreen> {
                         style: TextStyle(color: Colors.white60, fontSize: 12),
                       ),
                       const SizedBox(height: 10),
+                      OutlinedButton.icon(
+                        onPressed: _projectBusy ? null : _createProject,
+                        icon: const Icon(Icons.add_circle_outline_rounded),
+                        label: const Text('CREATE NEW CAMPUS PROJECT'),
+                      ),
+                      const SizedBox(height: 7),
+                      OutlinedButton.icon(
+                        onPressed: _projectBusy ? null : _switchProject,
+                        icon: const Icon(Icons.swap_horiz_rounded),
+                        label: const Text('SWITCH SAVED PROJECT'),
+                      ),
+                      const SizedBox(height: 7),
                       FilledButton.icon(
                         onPressed: _projectBusy || _venue == null ? null : _shareProject,
                         icon: const Icon(Icons.share_rounded),
