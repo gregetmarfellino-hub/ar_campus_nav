@@ -12,10 +12,12 @@ class AnchorQrScreen extends StatefulWidget {
     super.key,
     required this.venue,
     this.initialAnchorId,
+    this.is3DGraph = false,
   });
 
   final Venue venue;
   final String? initialAnchorId;
+  final bool is3DGraph;
 
   @override
   State<AnchorQrScreen> createState() => _AnchorQrScreenState();
@@ -67,8 +69,10 @@ class _AnchorQrScreenState extends State<AnchorQrScreen> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
               children: [
-                const Text(
-                  'DEPLOYMENT ANCHOR',
+                Text(
+                  widget.is3DGraph
+                      ? 'V11 3D LOCATION REFERENCE'
+                      : 'DEPLOYMENT ANCHOR',
                   style: TextStyle(
                     color: Colors.white54,
                     fontSize: 11,
@@ -127,12 +131,13 @@ class _AnchorQrScreenState extends State<AnchorQrScreen> {
                       SizedBox(width: 10),
                       Expanded(
                         child: Text(
-                          'Keep this exact physical QR deployed at the '
-                          'anchor location used during mapping. It can be on '
-                          'any suitable support; keep it upright and do not '
-                          'move it after the map is recorded. The black/white '
-                          'QR image itself must be 16 cm wide so ARCore can '
-                          'recover metric scale.',
+                          'Print and deploy this QR at its actual marked '
+                          'campus location. It identifies the correct '
+                          'saved 3D graph node. A regular QR scanner does '
+                          'not measure 6DoF camera pose, distance or yaw. '
+                          'ARCore relocalization from this new session '
+                          'is NOT yet calibrated; do not treat scanning '
+                          'the code as verified AR positioning.',
                           style: TextStyle(
                             color: Colors.white70,
                             height: 1.45,
@@ -161,25 +166,22 @@ class _AnchorQrScreenState extends State<AnchorQrScreen> {
                   label: const Text('COPY QR PAYLOAD'),
                 ),
                 const SizedBox(height: 10),
-                OutlinedButton.icon(
-                  onPressed: () {
-                    Navigator.of(context).pop(anchor);
-                  },
-                  icon: const Icon(Icons.science_outlined),
-                  label: const Text('TEST FROM THIS ANCHOR'),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'TEST FROM THIS ANCHOR bypasses camera scanning. Use it only '
-                  'while physically standing at this mapped anchor. For the '
-                  'real visitor flow, scan the QR with SCAN LOCATION.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Colors.white38,
-                    fontSize: 11,
-                    height: 1.4,
+                if (!widget.is3DGraph) ...[
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.of(context).pop(anchor);
+                    },
+                    icon: const Icon(Icons.science_outlined),
+                    label: const Text('TEST FROM THIS ANCHOR'),
                   ),
-                ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'This test bypasses camera scanning and assumes '
+                    'a known physical starting position.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.white38, fontSize: 11),
+                  ),
+                ],
               ],
             ),
     );
