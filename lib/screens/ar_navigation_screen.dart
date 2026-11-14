@@ -391,6 +391,7 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
         destinationName: widget.destination.name,
         startLabel: _route.nodes.first.label,
         anchorLocalized: _anchor != null,
+        requireVerifiedOffline: _anchor?.offlineCheckpointReady == true,
         points: points,
         visualAnchorPng: visualPng,
         visualAnchorWidthMeters: visualAnchor == null
