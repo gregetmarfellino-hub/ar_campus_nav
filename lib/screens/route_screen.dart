@@ -185,7 +185,10 @@ class _RouteScreenState extends State<RouteScreen> {
     final visibleLegIndices = <int>[
       for (var i = 0; i < route.legs.length; i++)
         if (route.legs[i].isFloorTransition ||
-            (route.legs[i].to.label != 'Recorded path' &&
+            ((!widget.allowArGuidance
+                    ? route.legs[i].to.type != 'waypoint'
+                    : true) &&
+                route.legs[i].to.label != 'Recorded path' &&
                 route.legs[i].to.type != 'path'))
           i,
     ];
