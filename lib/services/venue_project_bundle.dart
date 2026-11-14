@@ -102,6 +102,9 @@ class VenueProjectBundle {
     }
     final anchorIds = <String>{};
     for (final anchor in venue.anchors) {
+      if (!nodeIds.contains(anchor.nodeId)) {
+        throw const FormatException('QR checkpoint points to a missing node.');
+      }
       final node = venue.nodeById(anchor.nodeId);
       if (!validId.hasMatch(anchor.id) ||
           !anchorIds.add(anchor.id) ||
