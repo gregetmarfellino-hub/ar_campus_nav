@@ -229,10 +229,22 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
 
     final start = nodes.first;
 
-    // An offline visual start resolves the ORIGINAL mapper's world frame.
-    // The venue map flips/rotates mapping-local Y into south-positive map Y.
-    // Undo that saved transform rather than inferring a heading from the first
-    // walking segment; both turns and U-turns must remain in the original frame.
+    // V13: the virtual QR's real pose can differ from the linked walkable
+    // route node. Map right/forward into the checkpoint's own metric frame.
+    // This is what makes each independently placed entrance face correctly.
+    if (_anchor?.offlineCheckpointReady == true &&
+        _anchor?.nodeId == start.id) {
+      final checkpoint = _anchor!;
+      return ArRouteCoordinates.from3DCheckpointNodes(
+        nodes,
+        checkpointRightMeters: checkpoint.checkpointRightMeters!,
+        checkpointForwardMeters: checkpoint.checkpointForwardMeters!,
+        checkpointFacingDegrees: checkpoint.checkpointFacingDegrees!,
+      );
+    }
+
+    // Legacy offline visual starts used a different Y-axis venue transform;
+    // retain support for imported old maps without confusing V13's raw XYZ.
     if (_anchor?.offlineVisualReady == true &&
         _anchor?.nodeId == start.id) {
       return ArRouteCoordinates.fromMappedVenueNodes(
