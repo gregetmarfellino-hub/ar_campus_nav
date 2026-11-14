@@ -1633,10 +1633,43 @@ class ArCoreTrackingEngine(
         }
     }
 
+    private fun finalCheckpointPose(payload: Map<String, Any>?): Map<String, Any>? {
+        if (payload == null || !qrPlacementPreserveFrame) return payload
+        val anchor = qrCheckpointWorldAnchor ?: return null
+        val origin = trackingOriginPosition ?: return null
+        if (anchor.trackingState != TrackingState.TRACKING) return null
+
+        // The world anchor is refined after PLACE QR HERE. Recompute its final
+        // position AND facing immediately before saving; never pair a newer
+        // visual image->QR transform with the first unrefined QR coordinates.
+        val pose = anchor.pose
+        val world = pose.translation
+        val forward = pose.getTransformedAxis(2, -1f)
+        val length = sqrt(forward[0] * forward[0] + forward[2] * forward[2])
+        if (length < 0.1f) return null
+        val right = (world[0] - origin[0]) * trackingRightX +
+            (world[2] - origin[2]) * trackingRightZ
+        val distanceForward = (world[0] - origin[0]) * trackingForwardX +
+            (world[2] - origin[2]) * trackingForwardZ
+        val facingRight = (forward[0] * trackingRightX +
+            forward[2] * trackingRightZ) / length
+        val facingForward = (forward[0] * trackingForwardX +
+            forward[2] * trackingForwardZ) / length
+        val facingDeg = atan2(facingRight, facingForward) *
+            (180.0f / Math.PI.toFloat())
+        return payload + mapOf(
+            "right_m" to right.toDouble(),
+            "forward_m" to distanceForward.toDouble(),
+            "up_m" to (world[1] - origin[1]).toDouble(),
+            "facing_deg" to facingDeg.toDouble(),
+        )
+    }
+
     private fun finishQrPlacement(payload: Map<String, Any>?) {
         if (!qrPlacementMode && qrPlacementCompletion == null) return
 
-        val accepted = payload != null
+        val savedPayload = finalCheckpointPose(payload)
+        val accepted = savedPayload != null
         qrPlacementMode = false
         qrPlacementRequested = false
         qrPlacementTrackingReady = false
@@ -1674,7 +1707,7 @@ class ArCoreTrackingEngine(
                 qrPlacementBitmap = null
             }
 
-            callback?.invoke(payload)
+            callback?.invoke(savedPayload)
         }
     }
 
