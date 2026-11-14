@@ -194,6 +194,7 @@ class ArPoseService {
   Future<VisualQrPlacement?> placeVisualQrAnchor({
     required Uint8List qrPng,
     required double widthMeters,
+    bool preserveMappingFrame = false,
   }) async {
     if (!platformSupported) return null;
     final result = await _native.invokeMethod<dynamic>(
@@ -201,6 +202,7 @@ class ArPoseService {
       <String, dynamic>{
         'qr_png': qrPng,
         'qr_width_m': widthMeters,
+        'preserve_mapping_frame': preserveMappingFrame,
       },
     );
     if (result == null) return null;
