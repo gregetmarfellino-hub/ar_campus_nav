@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ar_campus_nav/models/anchor_point.dart';
 import 'package:ar_campus_nav/models/destination.dart';
@@ -95,18 +97,38 @@ void main() {
     expect(decoded.suggestedFileName, 'My_Shared_Campus.arnav.json');
   });
 
-  test('rejects unsupported schema and broken cross-file references', () {
-    final value = fixture().toJson();
-    value['schema'] = 'ar_campus_nav.project.v999';
-    expect(() => VenueProjectBundle.decode(
-      const VenueProjectBundlePlaceholder().toJsonString(value),
-    ), throwsFormatException);
+  test('route from imported checkpoint retains 3D stair connectivity', () {
+    final imported = VenueProjectBundle.decode(fixture().encode());
+    final route = const RouteEngine().shortestPath(
+      venue: imported.document.venue,
+      startNodeId: imported.document.venue.anchors.single.nodeId,
+      destinationNodeId: imported.document.venue.destinations.single.nodeId,
+    );
+    expect(route.totalDistanceMeters, 5.5);
+    expect(route.nodes.last.upMeters, 3.2);
+    expect(route.legs.single.transitionType, 'stairs');
   });
-}
 
-/// Avoids depending on platform channels just to serialize malformed fixtures.
-class VenueProjectBundlePlaceholder {
-  const VenueProjectBundlePlaceholder();
-  String toJsonString(Map<String, dynamic> value) =>
-      const JsonEncoder().convert(value);
+  test('rejects unsupported schema, missing nodes and broken QR references', () {
+    final wrongSchema = jsonDecode(fixture().encode()) as Map<String, dynamic>;
+    wrongSchema['schema'] = 'ar_campus_nav.project.v999';
+    expect(() => VenueProjectBundle.decode(jsonEncode(wrongSchema)),
+        throwsFormatException);
+
+    final brokenGraph = jsonDecode(fixture().encode()) as Map<String, dynamic>;
+    final document = brokenGraph['document'] as Map<String, dynamic>;
+    final venue = document['venue'] as Map<String, dynamic>;
+    final anchors = venue['anchors'] as List<dynamic>;
+    (anchors.first as Map<String, dynamic>)['node_id'] = 'not_in_graph';
+    expect(() => VenueProjectBundle.decode(jsonEncode(brokenGraph)),
+        throwsFormatException);
+  });
+
+  test('rejects mapping recordings from a different venue', () {
+    final source = jsonDecode(fixture().encode()) as Map<String, dynamic>;
+    final recordings = source['recordings'] as List<dynamic>;
+    (recordings.first as Map<String, dynamic>)['venue_id'] = 'other_campus';
+    expect(() => VenueProjectBundle.decode(jsonEncode(source)),
+        throwsFormatException);
+  });
 }
