@@ -19,7 +19,10 @@ class VenueOverrideDocument {
   final List<String> appliedSessionIds;
   final DateTime updatedAt;
 
-  bool get usesRecordedMeters => coordinateSpace == 'world_meters';
+  bool get isContinuous3D => coordinateSpace == 'world_xyz_3d';
+
+  bool get usesRecordedMeters =>
+      coordinateSpace == 'world_meters' || isContinuous3D;
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
