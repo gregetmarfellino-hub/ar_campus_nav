@@ -120,7 +120,7 @@ void main() {
     final imported = VenueProjectBundle.decode(bundle.encode());
     expect(imported.document.venue.anchors, hasLength(2));
     expect(imported.document.venue.anchors.last.offlineCheckpointReady, isTrue);
-    expect(imported.recordings.single.markers[1].checkpointFacingDegrees, 90);
+    expect(imported.recordings.single.markers[1].anchorFacingDegrees, 90);
     expect(imported.document.venue.edges, hasLength(4));
   });
 
