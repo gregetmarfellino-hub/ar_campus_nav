@@ -261,7 +261,7 @@ class _MappingSessionsScreenState extends State<MappingSessionsScreen> {
       counts[marker.type] = (counts[marker.type] ?? 0) + 1;
     }
 
-    const order = <String>['destination', 'waypoint', 'stairs', 'anchor'];
+    const order = <String>['destination', 'anchor', 'floor_level', 'stairs', 'elevator', 'waypoint'];
     final parts = <String>[];
     for (final type in order) {
       final count = counts[type] ?? 0;
@@ -270,7 +270,9 @@ class _MappingSessionsScreenState extends State<MappingSessionsScreen> {
         'destination' => 'dest',
         'waypoint' => 'waypoint',
         'stairs' => 'stairs',
-        'anchor' => 'anchor',
+        'anchor' => 'QR',
+        'floor_level' => 'floors',
+        'elevator' => 'elevator',
         _ => type,
       };
       parts.add('$count $label');
@@ -291,6 +293,7 @@ class _MappingSessionsScreenState extends State<MappingSessionsScreen> {
   Widget build(BuildContext context) {
     final document = _document;
     final isRecorded = document?.usesRecordedMeters ?? false;
+    final is3D = document?.isContinuous3D ?? false;
 
     return Scaffold(
       appBar: AppBar(
@@ -343,18 +346,24 @@ class _MappingSessionsScreenState extends State<MappingSessionsScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    isRecorded
-                                        ? 'Recorded venue active'
-                                        : 'Bundled sample active',
+                                    is3D
+                                        ? 'V11 measured 3D venue active'
+                                        : isRecorded
+                                            ? 'Recorded venue active'
+                                            : 'Bundled sample active',
                                     style: const TextStyle(
                                       fontWeight: FontWeight.w800,
                                     ),
                                   ),
                                   const SizedBox(height: 3),
                                   Text(
-                                    isRecorded
-                                        ? '${document!.appliedSessionIds.length} recording(s) applied'
-                                        : 'Apply a recording to replace the sample floor.',
+                                    is3D
+                                        ? '${_venue?.nodes.length ?? 0} XYZ nodes • '
+                                            '${_venue?.destinations.length ?? 0} destinations • '
+                                            '${_venue?.anchors.length ?? 0} QR references'
+                                        : isRecorded
+                                            ? '${document!.appliedSessionIds.length} recording(s) applied'
+                                            : 'Publish a 3D recording to replace the demo venue.',
                                     style: const TextStyle(
                                       color: Colors.white54,
                                       fontSize: 11,
@@ -367,11 +376,19 @@ class _MappingSessionsScreenState extends State<MappingSessionsScreen> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      FilledButton.icon(
-                        onPressed: _venue == null ? null : _openGraphEditor,
-                        icon: const Icon(Icons.edit_road_rounded),
-                        label: const Text('EDIT SAVED VENUE WAYPOINTS'),
-                      ),
+                      if (!is3D)
+                        FilledButton.icon(
+                          onPressed: _venue == null ? null : _openGraphEditor,
+                          icon: const Icon(Icons.edit_road_rounded),
+                          label: const Text('EDIT SAVED VENUE WAYPOINTS'),
+                        )
+                      else
+                        const Text(
+                          'Full XYZ height is preserved. Editing with the '
+                          'old flat waypoint tool is disabled to protect '
+                          'the new 3D venue.',
+                          style: TextStyle(color: Colors.white60, fontSize: 12),
+                        ),
                       if (_hasGraphBackup) ...[
                         const SizedBox(height: 8),
                         OutlinedButton.icon(
@@ -420,9 +437,9 @@ class _MappingSessionsScreenState extends State<MappingSessionsScreen> {
                               ),
                               title: Text(
                                 session.isDraft3D
-                                    ? 'V10 3D SAFETY DRAFT · ${session.totalDistanceMeters.toStringAsFixed(1)} m'
+                                    ? '3D SAFETY DRAFT · ${session.totalDistanceMeters.toStringAsFixed(1)} m'
                                     : session.isContinuous3D
-                                        ? 'V10 CONTINUOUS 3D · ${session.totalDistanceMeters.toStringAsFixed(1)} m'
+                                        ? 'UNIFIED 3D ROUTE · ${session.totalDistanceMeters.toStringAsFixed(1)} m'
                                     : 'Floor ${session.floor} · ${session.totalDistanceMeters.toStringAsFixed(1)} m',
                                 style: const TextStyle(
                                   fontWeight: FontWeight.w800,
