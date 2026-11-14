@@ -241,6 +241,7 @@ class ArPoseService {
     required String startLabel,
     required bool anchorLocalized,
     required List<Map<String, dynamic>> points,
+    bool requireVerifiedOffline = false,
     Uint8List? visualAnchorPng,
     double? visualAnchorWidthMeters,
     String? visualAnchorLabel,
@@ -262,6 +263,7 @@ class ArPoseService {
             'destination': destinationName,
             'start_label': startLabel,
             'anchor_localized': anchorLocalized,
+            'require_verified_offline': requireVerifiedOffline,
             'points': points,
             if (visualAnchorPng != null)
               'visual_anchor_png': visualAnchorPng,
