@@ -599,8 +599,14 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildLoaded(Venue venue) {
+    // A dense 3D trajectory can contain hundreds of sampled waypoints.
+    // The start picker should list meaningful real-world locations, not
+    // expose every internal tracking vertex as a navigation option.
     final startNodes = venue.nodes
-        .where((node) => node.type != 'restricted')
+        .where((node) => node.type != 'restricted' &&
+            (!_is3DGraph ||
+                node.type != 'waypoint' ||
+                node.id == venue.defaultStartNodeId))
         .toList(growable: false);
 
     final normalizedQuery = _query.trim().toLowerCase();
