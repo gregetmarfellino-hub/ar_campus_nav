@@ -125,6 +125,7 @@ class _HomeScreenState extends State<HomeScreen> {
         builder: (_) => AnchorQrScreen(
           venue: venue,
           initialAnchorId: initialAnchorId,
+          is3DGraph: _is3DGraph,
         ),
       ),
     );
