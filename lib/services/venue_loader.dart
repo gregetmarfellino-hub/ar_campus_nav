@@ -13,8 +13,14 @@ class VenueLoader {
   const VenueLoader();
 
   Future<Venue> load(String packagePath) async {
+    const storage = VenueOverrideStorage();
+    final selectedId = await storage.loadSelectedProjectId();
+    if (selectedId != null) {
+      final selected = await storage.load(selectedId);
+      if (selected != null) return selected.venue;
+    }
     final bundled = await loadBundled(packagePath);
-    final override = await const VenueOverrideStorage().load(bundled.id);
+    final override = await storage.load(bundled.id);
     return override?.venue ?? bundled;
   }
 
