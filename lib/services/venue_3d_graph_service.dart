@@ -69,6 +69,7 @@ class Venue3DGraphService {
     final floors = <int>{session.floor};
     final nodeIds = <String>[];
     var currentFloor = session.floor;
+    var transitionKind = 'stairs';
 
     for (var i = 0; i < points.length; i++) {
       final p = points[i];
@@ -80,6 +81,11 @@ class Venue3DGraphService {
         }
       }
       final semantic = group.where((m) => m.type != 'floor_level').toList();
+      for (final marker in semantic) {
+        if (marker.type == 'stairs' || marker.type == 'elevator') {
+          transitionKind = marker.type;
+        }
+      }
       final primary = semantic.isEmpty ? null : semantic.first;
       final id = 'v11_${session.id}_pt_$i';
       nodeIds.add(id);
@@ -143,7 +149,9 @@ class Venue3DGraphService {
         from: nodeIds[i - 1],
         to: id,
         distanceMeters: distance,
-        transitionType: previousFloor == currentFloor ? null : 'stairs',
+        transitionType:
+            previousFloor == currentFloor ? null : transitionKind,
+        measured3D: true,
       ));
     }
 
