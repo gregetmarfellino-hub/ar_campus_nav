@@ -22,6 +22,7 @@ class VenueCodec {
             'floor': node.floor,
             'x': node.x,
             'y': node.y,
+            'up_m': node.upMeters,
             'type': node.type,
           },
       ],
