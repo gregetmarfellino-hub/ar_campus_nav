@@ -7,6 +7,7 @@ import '../models/nav_edge.dart';
 import '../models/nav_node.dart';
 import '../models/venue.dart';
 import 'continuous_3d_trace.dart';
+import 'loop_closure_diagnostics.dart';
 import 'mapping_path_simplifier.dart';
 
 /// Builds the ACTIVE campus venue from a single uninterrupted ARCore world.
@@ -80,7 +81,11 @@ class Venue3DGraphService {
           floors.add(currentFloor);
         }
       }
-      final semantic = group.where((m) => m.type != 'floor_level').toList();
+      // QA-only return-to-start checks must remain in the saved recording,
+      // but must not be presented as rooms, landmarks or route instructions.
+      final semantic = group.where((m) =>
+          m.type != 'floor_level' &&
+          m.type != LoopClosureDiagnostics.markerType).toList();
       for (final marker in semantic) {
         if (marker.type == 'stairs' || marker.type == 'elevator') {
           transitionKind = marker.type;

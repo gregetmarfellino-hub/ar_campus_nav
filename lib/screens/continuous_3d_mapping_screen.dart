@@ -7,6 +7,7 @@ import '../models/mapping_session.dart';
 import '../models/venue.dart';
 import '../services/ar_pose_service.dart';
 import '../services/continuous_3d_trace.dart';
+import '../services/loop_closure_diagnostics.dart';
 import '../services/mapping_path_simplifier.dart';
 import '../services/mapping_storage.dart';
 import '../widgets/mapping_landmark_dialog.dart';
@@ -411,6 +412,38 @@ class _Continuous3DMappingScreenState
     _autoSaveDraft(force: true);
   }
 
+  // Only the person at the physical start can confirm a real loop closure.
+  // This saves a diagnostic marker; it NEVER snaps or corrects the path.
+  void _markLoopClosure() {
+    if (!_recording || _paused || _trackingInterrupted || _busy ||
+        !_pose.isTracking || _points.length < 2) return;
+    final index = _points.length - 1;
+    final check = LoopClosureDiagnostics.measure(
+      points: _points,
+      pointIndex: index,
+    );
+    if (check == null || check.traveledMeters < 10) return;
+    final p = _points[index];
+    setState(() {
+      _markers.add(MappingMarker(
+        id: 'v11_loop_check_${DateTime.now().microsecondsSinceEpoch}',
+        label: 'Return to start (drift check)',
+        type: LoopClosureDiagnostics.markerType,
+        floor: _floor,
+        xMeters: p.xMeters,
+        yMeters: p.yMeters,
+        upMeters: p.upMeters,
+        pointIndex: index,
+      ));
+      _message = 'LOOP CHECK: ${check.discrepancyMeters.toStringAsFixed(2)} m '
+          '3D start-to-return separation after '
+          '${check.traveledMeters.toStringAsFixed(1)} m traveled. '
+          'Only meaningful if you physically returned to the original '
+          'start. Includes phone placement error; NO geometry was changed.';
+    });
+    _autoSaveDraft(force: true);
+  }
+
   Future<void> _markLandmark() async {
     if (!_recording || _paused || _trackingInterrupted ||
         _points.isEmpty || _busy) return;
@@ -615,6 +648,13 @@ class _Continuous3DMappingScreenState
             startFloor: widget.startFloor,
           )
         : null;
+    final loopMarkers = _markers.where(
+      (m) => m.type == LoopClosureDiagnostics.markerType,
+    ).toList();
+    final latestLoopCheck = loopMarkers.isEmpty ? null
+        : LoopClosureDiagnostics.measure(
+            points: _points, pointIndex: loopMarkers.last.pointIndex,
+          );
     final status = _trackingInterrupted
         ? 'TRACKING UNCERTAIN'
         : _paused ? 'PAUSED'
@@ -679,9 +719,14 @@ class _Continuous3DMappingScreenState
               _metric('SAMPLES', '${_points.length}'),
               _metric('TRACKING PAUSES', '$_trackingInterruptions'),
               _metric('POSE JUMPS REJECTED', '$_rejectedJumps'),
+              if (latestLoopCheck != null)
+                _metric('LAST LOOP GAP',
+                    '${latestLoopCheck.discrepancyMeters.toStringAsFixed(2)} m'),
               _metric('AR YAW (REL.)',
                   '${_relativeYawDegrees.toStringAsFixed(0)}°'),
-              _metric('ROOM / QR MARKERS', '${_markers.where((m) => m.type != 'floor_level').length}'),
+              _metric('ROOM / QR MARKERS',
+                  '${_markers.where((m) => m.type != 'floor_level' &&
+                      m.type != LoopClosureDiagnostics.markerType).length}'),
             ],
           ),
           const SizedBox(height: 13),
@@ -785,6 +830,21 @@ class _Continuous3DMappingScreenState
                   ? null : _markLandmark,
               icon: const Icon(Icons.add_location_alt_rounded),
               label: const Text('TAG ROOM / QR / STAIR LANDMARK'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _busy || _paused || _trackingInterrupted ||
+                      (summary?.pathMeters ?? 0) < 10
+                  ? null : _markLoopClosure,
+              icon: const Icon(Icons.analytics_outlined),
+              label: const Text('CHECK DRIFT: RETURNED TO START'),
+            ),
+            const SizedBox(height: 5),
+            const Text(
+              'Only tap while physically back at the SAME starting spot '
+              'after at least 10 m of walking. Reports a 3D loop gap; '
+              'does not correct geometry or prove metric accuracy.',
+              style: TextStyle(color: Colors.white54, fontSize: 11),
             ),
             if (_markers.any((m) => m.type == 'floor_level')) ...[
               const SizedBox(height: 4),
