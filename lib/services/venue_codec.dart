@@ -34,6 +34,7 @@ class VenueCodec {
             'distance_m': edge.distanceMeters,
             'bidirectional': edge.bidirectional,
             'accessible': edge.accessible,
+            if (edge.measured3D) 'measured_3d': true,
             if (edge.transitionType != null)
               'transition_type': edge.transitionType,
           },
