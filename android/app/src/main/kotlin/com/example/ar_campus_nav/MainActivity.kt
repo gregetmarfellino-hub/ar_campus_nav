@@ -187,6 +187,7 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                         val error = arEngine().beginVisualQrPlacement(
                             qrPng = qrPng,
                             widthMeters = widthMeters,
+                            preserveMappingFrame = call.argument<Boolean>("preserve_mapping_frame") ?: false,
                         ) { placement ->
                             result.success(placement)
                         }
