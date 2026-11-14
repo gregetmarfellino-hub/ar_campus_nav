@@ -230,6 +230,8 @@ class ArCoreTrackingEngine(
     private var navigationOfflineStartForwardY = 0f
     private var navigationOfflineStartForwardZ = -1f
     private var navigationOfflineEnabled = false
+    // V13 saved 3D maps cannot silently fall back to an unverified camera pose.
+    private var navigationVerifiedOfflineRequired = false
     @Volatile private var navigationOfflineRescanRequested = false
     private var navigationOfflineSampleCount = 0
     private var navigationOfflinePositionX = 0f
@@ -410,6 +412,7 @@ class ArCoreTrackingEngine(
         points: List<RoutePoint>,
         startLabel: String = "Route start",
         anchorLocalized: Boolean = false,
+        requireVerifiedOffline: Boolean = false,
         visualAnchorPng: ByteArray? = null,
         visualAnchorWidthMeters: Float? = null,
         visualAnchorLabel: String? = null,
@@ -427,6 +430,7 @@ class ArCoreTrackingEngine(
         if (points.size < 2) return "ROUTE_TOO_SHORT"
 
         navigationMode = true
+        navigationVerifiedOfflineRequired = requireVerifiedOffline
         navigationDestination = destination
         navigationStartLabel = startLabel
         navigationAnchorLocalized = anchorLocalized
@@ -469,6 +473,9 @@ class ArCoreTrackingEngine(
             forwardZ = offlineStartForwardZ,
         )
 
+        if (requireVerifiedOffline && !offlineReady) {
+            return "OFFLINE_REFERENCE_REQUIRED"
+        }
         if (offlineReady) {
             configureOfflineExtraReference(offlineExtraReferenceJson)
             clearVisualAnchorConfiguration()
@@ -1728,6 +1735,7 @@ class ArCoreTrackingEngine(
 
         pause()
 
+        navigationVerifiedOfflineRequired = false
         val oldOverlay = navigationOverlay
         val oldQrPlacementOverlay = qrPlacementOverlay
         val oldMappingVisualOverlay = mappingVisualOverlay
@@ -2029,9 +2037,10 @@ class ArCoreTrackingEngine(
                     navigationArrivalShown = false
                     activeRouteIndex = 1
                     mainHandler.post {
-                        navigationQuickAlignButton?.visibility = View.VISIBLE
+                        navigationQuickAlignButton?.visibility =
+                            if (navigationVerifiedOfflineRequired) View.GONE else View.VISIBLE
                         navigationAlignButton?.apply {
-                            visibility = View.VISIBLE
+                            visibility = if (navigationVerifiedOfflineRequired) View.GONE else View.VISIBLE
                             isEnabled = true
                             alpha = 1f
                             text = "WALK ALIGN"
@@ -4912,6 +4921,7 @@ class ArCoreTrackingEngine(
                 dp(22).toFloat(),
             )
             setOnClickListener {
+                if (navigationVerifiedOfflineRequired) return@setOnClickListener
                 // The explicit manual option replaces automatic image locking
                 // for this session; visual checkpoints remain available when
                 // the user does not choose manual heading.
@@ -4938,6 +4948,7 @@ class ArCoreTrackingEngine(
                 navigationQuickAlignRequested = true
             }
         }
+        if (navigationVerifiedOfflineRequired) quickAlign.visibility = View.GONE
         navigationQuickAlignButton = quickAlign
 
         val align = Button(activity).apply {
@@ -4955,6 +4966,7 @@ class ArCoreTrackingEngine(
                 dp(22).toFloat(),
             )
             setOnClickListener {
+                if (navigationVerifiedOfflineRequired) return@setOnClickListener
                 if (navigationOfflineEnabled) {
                     logOfflineDiagnostic(
                         "MANUAL_FALLBACK_SELECTED",
@@ -4982,6 +4994,7 @@ class ArCoreTrackingEngine(
                 }
             }
         }
+        if (navigationVerifiedOfflineRequired) align.visibility = View.GONE
         navigationAlignButton = align
 
         val reanchor = Button(activity).apply {
