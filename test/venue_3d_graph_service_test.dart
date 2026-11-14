@@ -172,8 +172,11 @@ void main() {
     expect(decoded.venue.nodes.last.upMeters, 3.1);
     expect(decoded.venue.edges.last.distanceMeters, greaterThan(0));
     expect(decoded.venue.anchors.single.id, 'qr_entrance');
-    expect(decoded.venue.destinations.single.name, 'North Stairs',
-        reason: 'Only marker-linked places should be published.');
+    expect(
+      decoded.venue.destinations.map((d) => d.name).toSet(),
+      {'North Stairs', 'Computer Lab'},
+      reason: 'Only real tagged locations should be published.',
+    );
     final serialized = const VenueCodec().toJson(venue);
     expect(
       (serialized['nodes'] as List<dynamic>).last['up_m'],
