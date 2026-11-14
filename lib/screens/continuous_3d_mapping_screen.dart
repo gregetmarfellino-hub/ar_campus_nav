@@ -9,6 +9,7 @@ import '../services/ar_pose_service.dart';
 import '../services/continuous_3d_trace.dart';
 import '../services/mapping_path_simplifier.dart';
 import '../services/mapping_storage.dart';
+import '../widgets/mapping_landmark_dialog.dart';
 
 /// V10 experiment: record a REAL 3D trajectory in ONE running ARCore world.
 ///
@@ -88,6 +89,15 @@ class _Continuous3DMappingScreenState
 
   String _floorName(int floor) =>
       floor < 0 ? 'Basement ${floor.abs()}' : 'Floor $floor';
+
+  // ARCore camera yaw is relative to THIS tracking session, not magnetic
+  // north. Keep a compass-style readout without a second mapping engine.
+  double get _relativeYawDegrees {
+    final p = _pose;
+    final sinY = 2 * (p.qw * p.qy + p.qx * p.qz);
+    final cosY = 1 - 2 * (p.qy * p.qy + p.qz * p.qz);
+    return (math.atan2(sinY, cosY) * 180 / math.pi + 360) % 360;
+  }
 
   MappingPoint _pointFrom(ArPose pose) => MappingPoint(
         xMeters: pose.x,
@@ -401,6 +411,54 @@ class _Continuous3DMappingScreenState
     _autoSaveDraft(force: true);
   }
 
+  Future<void> _markLandmark() async {
+    if (!_recording || _paused || _trackingInterrupted ||
+        _points.isEmpty || _busy) return;
+    final point = _points.last;
+    final index = _points.length - 1;
+    final wasPaused = _paused;
+    setState(() {
+      _paused = true;
+      _automaticRecoveryPending = false;
+    });
+    final chosen = await showDialog<MappingLandmarkInput>(
+      context: context,
+      builder: (_) => const MappingLandmarkDialog(),
+    );
+    if (!mounted || !_recording) return;
+    // Pin to the measured position where the mapper was paused.
+    setState(() {
+      if (chosen != null) {
+        final id = 'v11_${chosen.type}_${DateTime.now().microsecondsSinceEpoch}';
+        _markers.add(MappingMarker(
+          id: id,
+          label: chosen.label,
+          type: chosen.type,
+          floor: _floor,
+          xMeters: point.xMeters,
+          yMeters: point.yMeters,
+          upMeters: point.upMeters,
+          pointIndex: index,
+        ));
+      }
+      final safelyNearby = _pose.isTracking && !_trackingInterrupted &&
+          _distance(point, _pointFrom(_pose)) <= 0.8;
+      if (!wasPaused && safelyNearby) {
+        _paused = false;
+        _message = chosen == null
+            ? 'Marker canceled. Continuing the same 3D recording.'
+            : '${chosen.label} pinned to measured XYZ. Recording resumed.';
+      } else {
+        _paused = true;
+        _message = chosen == null
+            ? 'Marker canceled. Resume at the last trusted point.'
+            : '${chosen.label} pinned. Return near the last recorded '
+                'point and RESUME before walking farther.';
+      }
+    });
+    if (chosen != null) _autoSaveDraft(force: true);
+  }
+
   void _undoLastFloor() {
     if (!_recording || _markers.isEmpty) return;
     final last = _markers.last;
@@ -504,9 +562,9 @@ class _Continuous3DMappingScreenState
             '${analysis.pathMeters.toStringAsFixed(1)} m path, '
             '${analysis.netHeightMeters.toStringAsFixed(1)} m height delta, '
             '${analysis.visitedFloors.length} labeled floor(s). '
-            'The XYZ geometry is saved separately; NO existing floor '
-            'map or QR anchor was modified. Reopening AR accurately in a '
-            'different session is a later localization milestone.';
+            'Route is saved offline. OPEN SAVED MAPPINGS → PUBLISH 3D '
+            'CAMPUS GRAPH to connect rooms, QR IDs and stairs. '
+            'Fresh-session AR positioning still requires landmark alignment.';
       });
     } catch (error) {
       if (mounted) setState(() {
@@ -566,7 +624,7 @@ class _Continuous3DMappingScreenState
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('V10 • Continuous 3D'),
+        title: const Text('V11 • Campus 3D Mapper'),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(18, 8, 18, 30),
@@ -578,30 +636,31 @@ class _Continuous3DMappingScreenState
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'ONE ARCORE SESSION • REAL XYZ PATH',
+                    'ONE MAPPER • ROOMS + QR + 3D STAIRS',
                     style: TextStyle(
                       color: _blue, fontWeight: FontWeight.w900, fontSize: 11,
                     ),
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Corridor → Staircase → Upstairs',
+                    'Map your actual campus',
                     style: TextStyle(
                       fontWeight: FontWeight.w900, fontSize: 21,
                     ),
                   ),
                   const SizedBox(height: 9),
                   Text(
-                    'START → WALK → FINISH & SAVE. '
-                    'Keep ARCore running through the actual stairs. '
-                    'Floor labels are optional: one tap at a landing, '
-                    'without keyboard dialogs or re-calibration.',
+                    'START → WALK → TAG ROOMS / QR LANDMARKS → SAVE. '
+                    'Record corridors and stairs in one ARCore session. '
+                    'Floor changes are one-tap optional labels; '
+                    'there is no separate compass or per-floor mapper.',
                   ),
                   const SizedBox(height: 10),
                   const Text(
-                    'EXPERIMENT: saved 3D geometry is NOT automatically '
-                    're-localizable after ARCore restarts and does not '
-                    'overwrite the old 2D venue graph.',
+                    'After saving, open Saved Mappings and publish your '
+                    'XYZ recording to the campus venue graph. '
+                    'Printed QR labels identify places, but alignment '
+                    'from a fresh AR session still needs verification.',
                     style: TextStyle(color: Colors.white60, fontSize: 12),
                   ),
                 ],
@@ -620,6 +679,9 @@ class _Continuous3DMappingScreenState
               _metric('SAMPLES', '${_points.length}'),
               _metric('TRACKING PAUSES', '$_trackingInterruptions'),
               _metric('POSE JUMPS REJECTED', '$_rejectedJumps'),
+              _metric('AR YAW (REL.)',
+                  '${_relativeYawDegrees.toStringAsFixed(0)}°'),
+              _metric('ROOM / QR MARKERS', '${_markers.where((m) => m.type != 'floor_level').length}'),
             ],
           ),
           const SizedBox(height: 13),
@@ -687,8 +749,8 @@ class _Continuous3DMappingScreenState
             if (_savedId != null) ...[
               const SizedBox(height: 9),
               const Text(
-                'Saved offline. View the trace in Saved Mappings. '
-                'It is protected from APPLY TO FLOOR until V11.',
+                'Saved offline. Open SAVED MAPPINGS to publish this '
+                '3D graph. Existing venue stays unchanged until you publish.',
                 style: TextStyle(color: _green),
               ),
             ],
@@ -716,6 +778,13 @@ class _Continuous3DMappingScreenState
                   ? null : _markNextFloor,
               icon: const Icon(Icons.layers_rounded),
               label: const Text('REACHED NEXT FLOOR (OPTIONAL)'),
+            ),
+            const SizedBox(height: 8),
+            FilledButton.tonalIcon(
+              onPressed: _busy || _paused || _trackingInterrupted
+                  ? null : _markLandmark,
+              icon: const Icon(Icons.add_location_alt_rounded),
+              label: const Text('TAG ROOM / QR / STAIR LANDMARK'),
             ),
             if (_markers.any((m) => m.type == 'floor_level')) ...[
               const SizedBox(height: 4),

@@ -8,9 +8,9 @@ import '../models/venue.dart';
 import '../services/anchor_codec.dart';
 import '../services/route_engine.dart';
 import '../services/venue_loader.dart';
+import '../services/venue_override_storage.dart';
 import '../widgets/venue_map.dart';
 import 'anchor_qr_screen.dart';
-import 'spatial_mapping_screen.dart';
 import 'continuous_3d_mapping_screen.dart';
 import 'mapping_sessions_screen.dart';
 import 'qr_anchor_scanner_screen.dart';
@@ -27,10 +27,12 @@ class _HomeScreenState extends State<HomeScreen> {
   static const _demoPackage = 'assets/venues/demo_campus';
 
   final VenueLoader _loader = const VenueLoader();
+  final VenueOverrideStorage _overrideStorage = const VenueOverrideStorage();
   final RouteEngine _routeEngine = const RouteEngine();
   final AnchorCodec _anchorCodec = const AnchorCodec();
 
   Venue? _venue;
+  bool _is3DGraph = false;
   String? _startNodeId;
   AnchorPoint? _activeAnchor;
   String _query = '';
@@ -46,10 +48,12 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _loadVenue() async {
     try {
       final venue = await _loader.load(_demoPackage);
+      final document = await _overrideStorage.load(venue.id);
       if (!mounted) return;
 
       setState(() {
         _venue = venue;
+        _is3DGraph = document?.isContinuous3D ?? false;
         _startNodeId = venue.defaultStartNodeId;
         if (!venue.floors.contains(_mapFloor)) {
           _mapFloor = venue.nodeById(venue.defaultStartNodeId).floor;
@@ -90,7 +94,11 @@ class _HomeScreenState extends State<HomeScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Location confirmed: ${anchor.label}. Start navigation before moving away.',
+            _is3DGraph
+                ? 'QR ID identifies ${anchor.label}. Position/rotation '
+                    'in a new ARCore session are NOT aligned yet.'
+                : 'Location confirmed: ${anchor.label}. '
+                    'Start navigation before moving away.',
           ),
         ),
       );
@@ -117,6 +125,7 @@ class _HomeScreenState extends State<HomeScreen> {
         builder: (_) => AnchorQrScreen(
           venue: venue,
           initialAnchorId: initialAnchorId,
+          is3DGraph: _is3DGraph,
         ),
       ),
     );
@@ -145,26 +154,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _openMapper() async {
     final venue = _venue;
     if (venue == null) return;
-
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => SpatialMappingScreen(
-          venue: venue,
-          initialAnchor: _activeAnchor?.floor == _mapFloor
-              ? _activeAnchor : null,
-          initialFloor: _mapFloor,
-        ),
-      ),
-    );
-
-    if (!mounted) return;
-    await _loadVenue();
-  }
-
-  Future<void> _openContinuous3D() async {
-    final venue = _venue;
-    if (venue == null) return;
-
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => Continuous3DMappingScreen(
@@ -208,6 +197,36 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _openRoute(Destination destination) async {
     final venue = _venue;
     if (venue == null) return;
+
+    if (_is3DGraph) {
+      // 3D graph is geometrically routable, but fresh AR sessions are not
+      // localized against its physical QR marker yet. Offer a truthful
+      // route PLAN, not a false AR camera start/manual compass fallback.
+      try {
+        final route = _routeEngine.shortestPath(
+          venue: venue,
+          startNodeId: _startNodeId ?? venue.defaultStartNodeId,
+          destinationNodeId: destination.nodeId,
+        );
+        if (!mounted) return;
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => RouteScreen(
+              venue: venue,
+              destination: destination,
+              initialRoute: route,
+              allowArGuidance: false,
+            ),
+          ),
+        );
+      } catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('3D route unavailable: $error')),
+        );
+      }
+      return;
+    }
 
     // A visual-ready anchor does NOT need the old standalone scanner first.
     // It is only an expected physical target here; ARCore confirms its pose
@@ -580,8 +599,14 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildLoaded(Venue venue) {
+    // A dense 3D trajectory can contain hundreds of sampled waypoints.
+    // The start picker should list meaningful real-world locations, not
+    // expose every internal tracking vertex as a navigation option.
     final startNodes = venue.nodes
-        .where((node) => node.type != 'restricted')
+        .where((node) => node.type != 'restricted' &&
+            (!_is3DGraph ||
+                node.type != 'waypoint' ||
+                node.id == venue.defaultStartNodeId))
         .toList(growable: false);
 
     final normalizedQuery = _query.trim().toLowerCase();
@@ -690,26 +715,21 @@ class _HomeScreenState extends State<HomeScreen> {
         const SizedBox(height: 8),
         SizedBox(
           width: double.infinity,
-          child: OutlinedButton.icon(
+          child: FilledButton.icon(
             onPressed: _openMapper,
-            icon: const Icon(Icons.route_rounded),
-            label: const Text('SPATIAL MAP / RECORD THIS FLOOR'),
+            icon: const Icon(Icons.view_in_ar_rounded),
+            label: const Text('V11 • OPEN CAMPUS 3D MAPPER'),
           ),
         ),
-        const SizedBox(height: 9),
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton.tonalIcon(
-            onPressed: _openContinuous3D,
-            icon: const Icon(Icons.stairs_rounded),
-            label: const Text('V10 • RECORD CONTINUOUS 3D STAIRCASE ROUTE'),
-          ),
-        ),
-        const SizedBox(height: 5),
-        const Text(
-          'EXPERIMENT: one ARCore session across floors, measured vertical '
-          'geometry, live 3D trace preview. Existing venue map stays unchanged.',
-          style: TextStyle(color: Colors.white54, fontSize: 11),
+        const SizedBox(height: 6),
+        Text(
+          _is3DGraph
+              ? 'ACTIVE 3D CAMPUS MAP: recorded rooms, QR landmarks and '
+                  'stairs are connected. AR alignment after restart is not yet verified.'
+              : 'One mapper for corridors, stairs, rooms, QR landmarks '
+                  'and relative orientation. Publish the finished route '
+                  'from Saved Mappings to make it the active venue.',
+          style: const TextStyle(color: Colors.white54, fontSize: 11),
         ),
         const SizedBox(height: 8),
         SizedBox(
@@ -758,10 +778,9 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                       SizedBox(height: 3),
                       Text(
-                        'Scan a venue location QR while standing at that '
-                        'marker. That anchor becomes the physical origin for '
-                        'accurate AR navigation. The manual point below is '
-                        'only a preview/test fallback.',
+                        'QR identifies the mapped location. '
+                        'For a 3D graph the camera still needs a measured '
+                        'physical alignment before AR guidance is safe.',
                         style: TextStyle(
                           color: Colors.white54,
                           fontSize: 11,
@@ -783,8 +802,8 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         const SizedBox(height: 14),
-        const Text(
-          'PREVIEW / TEST START',
+        Text(
+          _is3DGraph ? 'PLAN ROUTE FROM MAPPED LOCATION' : 'PREVIEW / TEST START',
           style: TextStyle(
             color: Colors.white38,
             fontSize: 10,

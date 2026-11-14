@@ -22,12 +22,15 @@ class RouteScreen extends StatefulWidget {
     required this.destination,
     required this.initialRoute,
     this.initialAnchor,
+    this.allowArGuidance = true,
   });
 
   final Venue venue;
   final Destination destination;
   final RouteResult initialRoute;
   final AnchorPoint? initialAnchor;
+  /// Disable camera directions until a fresh session's 3D world is aligned.
+  final bool allowArGuidance;
 
   @override
   State<RouteScreen> createState() => _RouteScreenState();
@@ -182,7 +185,10 @@ class _RouteScreenState extends State<RouteScreen> {
     final visibleLegIndices = <int>[
       for (var i = 0; i < route.legs.length; i++)
         if (route.legs[i].isFloorTransition ||
-            (route.legs[i].to.label != 'Recorded path' &&
+            ((!widget.allowArGuidance
+                    ? route.legs[i].to.type != 'waypoint'
+                    : true) &&
+                route.legs[i].to.label != 'Recorded path' &&
                 route.legs[i].to.type != 'path'))
           i,
     ];
@@ -222,7 +228,20 @@ class _RouteScreenState extends State<RouteScreen> {
             onScan: _scanCheckpoint,
           ),
           const SizedBox(height: 14),
-          if (!route.crossesFloors)
+          if (!widget.allowArGuidance)
+            const Card(
+              child: Padding(
+                padding: EdgeInsets.all(15),
+                child: Text(
+                  'V11 3D CAMPUS MAP • ROUTE PLAN ONLY. '
+                  'XYZ geometry and actual stair heights are saved, but '
+                  'the phone has not been physically re-localized in this '
+                  'new ARCore session. Do not follow AR arrows until a '
+                  'landmark pose has been measured and verified.',
+                ),
+              ),
+            )
+          else if (!route.crossesFloors)
             _SpatialAlignmentCard(anchor: anchor)
           else
             Card(
@@ -243,14 +262,16 @@ class _RouteScreenState extends State<RouteScreen> {
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
-              onPressed: arrived
+              onPressed: arrived || !widget.allowArGuidance
                   ? null
                   : route.crossesFloors
                       ? _openMultiFloorGuide
                       : _openArGuide,
               icon: const Icon(Icons.view_in_ar_rounded),
               label: Text(
-                route.crossesFloors
+                !widget.allowArGuidance
+                    ? 'AR WAITING FOR PHYSICAL QR ALIGNMENT'
+                    : route.crossesFloors
                     ? 'START FLOOR-BY-FLOOR AR NAVIGATION'
                     : anchor == null
                     ? 'START AR MANUAL PREVIEW'

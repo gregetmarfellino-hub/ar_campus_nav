@@ -6,6 +6,7 @@ class NavEdge {
     this.bidirectional = true,
     this.accessible = true,
     this.transitionType,
+    this.measured3D = false,
   });
 
   final String from;
@@ -18,6 +19,11 @@ class NavEdge {
   /// 'stairs' | 'elevator'. Null means an ordinary on-floor corridor.
   final String? transitionType;
 
+  /// True ONLY when a cross-floor edge came from one continuous, measured
+  /// ARCore XYZ session. Legacy portals still require two matching stairs
+  /// or elevator nodes rather than inventing links between unrelated maps.
+  final bool measured3D;
+
   bool get isFloorTransition => transitionType != null;
 
   factory NavEdge.fromJson(Map<String, dynamic> json) {
@@ -28,6 +34,7 @@ class NavEdge {
       bidirectional: json['bidirectional'] as bool? ?? true,
       accessible: json['accessible'] as bool? ?? true,
       transitionType: json['transition_type'] as String?,
+      measured3D: json['measured_3d'] as bool? ?? false,
     );
   }
 }
