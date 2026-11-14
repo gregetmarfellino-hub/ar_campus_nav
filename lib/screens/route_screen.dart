@@ -23,6 +23,7 @@ class RouteScreen extends StatefulWidget {
     required this.initialRoute,
     this.initialAnchor,
     this.allowArGuidance = true,
+    this.requireOfflineCheckpoint = false,
   });
 
   final Venue venue;
@@ -31,6 +32,8 @@ class RouteScreen extends StatefulWidget {
   final AnchorPoint? initialAnchor;
   /// Disable camera directions until a fresh session's 3D world is aligned.
   final bool allowArGuidance;
+  /// V13 3D venues must never fall back to arbitrary compass/manual pose.
+  final bool requireOfflineCheckpoint;
 
   @override
   State<RouteScreen> createState() => _RouteScreenState();
@@ -43,6 +46,12 @@ class _RouteScreenState extends State<RouteScreen> {
   late RouteResult _route;
   late int _previewFloor;
   AnchorPoint? _anchor;
+
+  bool get _liveArAllowed => widget.allowArGuidance &&
+      (!widget.requireOfflineCheckpoint ||
+          (_anchor?.offlineCheckpointReady == true &&
+           _route.nodes.first.id == _anchor!.nodeId &&
+           !_route.crossesFloors));
 
   @override
   void initState() {
@@ -104,7 +113,7 @@ class _RouteScreenState extends State<RouteScreen> {
     // V8 is a complete multi-floor graph/preview. Native AR still assumes a
     // single horizontal world basis: never feed cross-floor legs into it.
     // V9 will split the route at portals and re-localize at the next floor.
-    if (_route.legs.isEmpty || _route.crossesFloors) return;
+    if (_route.legs.isEmpty || _route.crossesFloors || !_liveArAllowed) return;
 
     final result = await Navigator.of(context).push<ArNavigationResult>(
       MaterialPageRoute<ArNavigationResult>(
@@ -185,7 +194,7 @@ class _RouteScreenState extends State<RouteScreen> {
     final visibleLegIndices = <int>[
       for (var i = 0; i < route.legs.length; i++)
         if (route.legs[i].isFloorTransition ||
-            ((!widget.allowArGuidance
+            ((!_liveArAllowed
                     ? route.legs[i].to.type != 'waypoint'
                     : true) &&
                 route.legs[i].to.label != 'Recorded path' &&
@@ -228,16 +237,30 @@ class _RouteScreenState extends State<RouteScreen> {
             onScan: _scanCheckpoint,
           ),
           const SizedBox(height: 14),
-          if (!widget.allowArGuidance)
+          if (!_liveArAllowed)
+            Card(
+              child: Padding(
+                padding: EdgeInsets.all(15),
+                child: Text(
+                  widget.requireOfflineCheckpoint
+                      ? 'OFFLINE MAP READY — AR WAITING FOR A VISUAL START. '
+                        'Select a mapped visual checkpoint on Home, or scan '
+                        'a physically displayed location QR. Live AR starts '
+                        'only after the camera recognizes the saved scene. '
+                        'Cross-floor AR remains disabled while alignment '
+                        'between floors is unverified.'
+                      : 'AR localization is not available for this route.',
+                ),
+              ),
+            )
+          else if (widget.requireOfflineCheckpoint)
             const Card(
               child: Padding(
                 padding: EdgeInsets.all(15),
                 child: Text(
-                  'V11 3D CAMPUS MAP • ROUTE PLAN ONLY. '
-                  'XYZ geometry and actual stair heights are saved, but '
-                  'the phone has not been physically re-localized in this '
-                  'new ARCore session. Do not follow AR arrows until a '
-                  'landmark pose has been measured and verified.',
+                  'OFFLINE VISUAL CHECKPOINT SAVED. Start AR, then point '
+                  'at the same distinctive wall, door or sign until the '
+                  'camera confirms its physical pose. No connection needed.',
                 ),
               ),
             )
@@ -262,15 +285,17 @@ class _RouteScreenState extends State<RouteScreen> {
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
-              onPressed: arrived || !widget.allowArGuidance
+              onPressed: arrived || !_liveArAllowed
                   ? null
                   : route.crossesFloors
                       ? _openMultiFloorGuide
                       : _openArGuide,
               icon: const Icon(Icons.view_in_ar_rounded),
               label: Text(
-                !widget.allowArGuidance
-                    ? 'AR WAITING FOR PHYSICAL QR ALIGNMENT'
+                !_liveArAllowed
+                    ? widget.requireOfflineCheckpoint
+                        ? 'AR REQUIRES A SAVED VISUAL CHECKPOINT'
+                        : 'AR ALIGNMENT NOT AVAILABLE'
                     : route.crossesFloors
                     ? 'START FLOOR-BY-FLOOR AR NAVIGATION'
                     : anchor == null
