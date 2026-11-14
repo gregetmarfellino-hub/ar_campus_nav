@@ -472,59 +472,67 @@ class _Continuous3DMappingScreenState
     return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
   }
 
+  /// Open the old V10 camera first; naming must not obstruct visual placement.
+  /// A cancelled/empty name uses a safe default rather than losing captured AR.
+  Future<String> _nameOfflineCheckpoint(String suggested) async {
+    var value = suggested;
+    final chosen = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Checkpoint saved — give it a name'),
+        content: TextFormField(
+          autofocus: true,
+          initialValue: suggested,
+          maxLength: 80,
+          decoration: const InputDecoration(
+            labelText: 'Entrance / checkpoint name',
+            helperText: 'Optional. The AR checkpoint is already captured.',
+          ),
+          onChanged: (name) => value = name,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(suggested),
+            child: const Text('Keep default'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(value.trim()),
+            child: const Text('Save name'),
+          ),
+        ],
+      ),
+    );
+    final text = chosen?.trim() ?? '';
+    return text.length >= 2 && text.length <= 80 ? text : suggested;
+  }
+
   Future<void> _placeOfflineCheckpoint() async {
     if (!_recording || _paused || _trackingInterrupted || _busy ||
         _points.isEmpty || !_arStarted) return;
-    // Keep the active ARCore session and ALL existing XYZ points intact.
+
+    // Any entrance on any mapped floor; never reset the original XYZ basis.
     final linkedPoint = _points.last;
     final linkedIndex = _points.length - 1;
+    final checkpointNumber = _markers.where((m) => m.type == 'anchor').length + 1;
+    final defaultLabel = checkpointNumber == 1
+        ? 'Main Entrance'
+        : 'Entrance $checkpointNumber';
     setState(() {
       _paused = true;
       _automaticRecoveryPending = false;
       _busy = true;
-      _message = 'PAUSED for visual checkpoint. Remain near this route point.';
+      _message = 'OPENING VIRTUAL QR CAMERA — place the QR first, then '
+          'capture a distinctive wall/sign reference. No name required.';
     });
     var stored = false;
-    var message = 'Visual checkpoint cancelled; recording still intact.';
+    var message = 'Virtual QR placement cancelled; original 3D path intact.';
     try {
-      var label = '';
-      final requestedName = await showDialog<String>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Place offline navigation checkpoint'),
-          content: TextField(
-            autofocus: true,
-            maxLength: 80,
-            decoration: const InputDecoration(
-              labelText: 'Checkpoint name',
-              hintText: 'E.g. West Entrance or North Stairs',
-              helperText: 'Stand near the mapped path; point at a distinctive wall.',
-            ),
-            onChanged: (value) => label = value,
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(label.trim()),
-              child: const Text('Continue'),
-            ),
-          ],
-        ),
-      );
-      if (requestedName == null) return;
-      if (requestedName.length < 2 || requestedName.length > 80) {
-        message = 'Name must be between 2 and 80 characters. Nothing changed.';
-        return;
-      }
-      final id = 'v13_anchor_${DateTime.now().microsecondsSinceEpoch}';
+      final id = 'v14_anchor_${DateTime.now().microsecondsSinceEpoch}';
       final qr = await _renderCheckpointQr(id);
       if (!mounted || !_recording) return;
-      // Native shows the real AR camera, locks a virtual marker to a physical
-      // plane, and records nearby scene detail for offline relocalization.
-      // Unlike old V10 start placement, V13 MUST NOT reset the mapping origin.
+
+      // Native V10 PLACE QR HERE → SAVE START AREA flow.
+      // V14 keeps the V11 world frame unchanged for each new checkpoint.
       final placement = await _ar.placeVisualQrAnchor(
         qrPng: qr,
         widthMeters: VisualAnchorSpec.qrWidthMeters,
@@ -537,13 +545,18 @@ class _Continuous3DMappingScreenState
           !placement.forwardMeters.isFinite ||
           !placement.upMeters.isFinite ||
           !placement.facingDegrees.isFinite) {
-        message = 'No valid offline scene reference was captured. '
-            'Checkpoint not saved; original route is unchanged.';
+        message = 'AR QR was placed, but the offline scene reference '
+            'is incomplete. Aim at a textured door/sign and retry. '
+            'Original route is unchanged.';
         return;
       }
+
+      // The native AR camera has closed before this optional naming step.
+      final label = await _nameOfflineCheckpoint(defaultLabel);
+      if (!mounted || !_recording) return;
       setState(() => _markers.add(MappingMarker(
         id: id,
-        label: requestedName,
+        label: label,
         type: 'anchor',
         floor: _floor,
         xMeters: linkedPoint.xMeters,
@@ -566,10 +579,11 @@ class _Continuous3DMappingScreenState
         offlineExtraReferenceJson: placement.offlineExtraReferenceJson,
       )));
       stored = true;
-      message = '$requestedName saved with a local visual reference. '
-          'The original 3D route frame was NOT reset.';
+      message = '$label: virtual QR + offline visual reference SAVED. '
+          'Continuous XYZ origin never changed.';
     } catch (error) {
-      message = 'Checkpoint not saved: $error. Existing route is unchanged.';
+      message = 'COULD NOT OPEN/SAVE VIRTUAL QR: $error. '
+          'The existing route remains unchanged.';
     } finally {
       if (mounted) {
         final safeToResume = _recording && !_trackingInterrupted &&
@@ -578,9 +592,10 @@ class _Continuous3DMappingScreenState
         setState(() {
           _busy = false;
           _paused = !safeToResume;
-          _message = safeToResume ? '$message Recording resumed.' :
-              '$message Return within 0.8 m of your last route point '
-              'and press RESUME to avoid a false path connection.';
+          _message = safeToResume
+              ? '$message Recording resumed.'
+              : '$message Return near the last mapped point and '
+                'tap RESUME to avoid a false route connection.';
         });
         if (stored) _autoSaveDraft(force: true);
       }
@@ -979,14 +994,14 @@ class _Continuous3DMappingScreenState
               onPressed: _busy || _paused || _trackingInterrupted
                   ? null : _placeOfflineCheckpoint,
               icon: const Icon(Icons.add_location_rounded),
-              label: const Text('PLACE OFFLINE START CHECKPOINT'),
+              label: const Text('PLACE VIRTUAL QR / ENTRANCE'),
             ),
             const SizedBox(height: 5),
             const Text(
-              'Place the visible virtual QR in AR and capture a detailed '
-              'door/sign/wall nearby. It saves a checkpoint without resetting '
-              'your continuous route. A different phone must recognize the '
-              'same scene before AR guidance can start.',
+              'Tap to OPEN THE AR CAMERA FIRST. Place the virtual QR, then '
+              'SAVE START AREA using a distinctive physical wall/sign. '
+              'Name the checkpoint AFTER capture. Repeat anywhere along '
+              'the route without resetting the measured XYZ path.',
               style: TextStyle(color: Colors.white54, fontSize: 11),
             ),
             const SizedBox(height: 8),

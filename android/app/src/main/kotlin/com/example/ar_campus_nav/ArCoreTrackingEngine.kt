@@ -736,7 +736,13 @@ class ArCoreTrackingEngine(
             return "QR placement is only available while mapping."
         }
         if (qrPlacementMode) {
-            return "QR placement is already open."
+            return "Virtual QR camera is already open."
+        }
+        if (!sessionResumed) {
+            return "ARCore camera is paused. Return to the mapper and retry."
+        }
+        if (continuous3DPreviewEnabled) {
+            return "Close the 3D preview before placing a checkpoint."
         }
         if (trackingOriginPosition == null) {
             return "Mapping origin is not ready yet. Wait for TRACKING, then try again."
@@ -754,7 +760,11 @@ class ArCoreTrackingEngine(
         qrPlacementWidthMeters = widthMeters
         qrPlacementPreserveFrame = preserveMappingFrame
         qrPlacementDistanceMeters = 1.0f
-        qrPlacementSnapToSurface = true
+        // Old start QR could wait for a tracked plane. In continuous V11
+        // mapping a checkpoint must be VISIBLE immediately, even when a
+        // featureless wall has not yielded a plane yet. Let the mapper
+        // optionally enable SNAP TO SURFACE once ARCore has one.
+        qrPlacementSnapToSurface = !preserveMappingFrame
         qrPlacementCompletion = onComplete
         qrPlacementRequested = false
         qrPlacementTrackingReady = false
@@ -768,7 +778,25 @@ class ArCoreTrackingEngine(
         qrPlacementMode = true
         qrPlacementRenderer.setBitmap(bitmap)
 
-        mainHandler.post { createQrPlacementOverlay() }
+        mainHandler.post {
+            try {
+                if (!qrPlacementMode || !started || surfaceView == null) {
+                    finishQrPlacement(
+                        null,
+                        "The ARCore session closed while opening the QR camera.",
+                    )
+                } else {
+                    createQrPlacementOverlay()
+                }
+            } catch (error: Exception) {
+                finishQrPlacement(
+                    null,
+                    "Virtual QR camera overlay failed: " +
+                        error.javaClass.simpleName + " " +
+                        (error.message ?: ""),
+                )
+            }
+        }
         return null
     }
 
@@ -789,9 +817,14 @@ class ArCoreTrackingEngine(
         val overlay = FrameLayout(activity)
 
         val status = TextView(activity).apply {
-            text =
+            text = if (qrPlacementPreserveFrame) {
+                "STEP 1/3 • PLACE VIRTUAL QR\nThe live QR preview is visible " +
+                    "without a tracked plane. Adjust distance or enable " +
+                    "surface snap. Tap PLACE QR HERE to lock it."
+            } else {
                 "PLACE QR ON A SURFACE\nMove slowly and aim at a detailed wall " +
                     "or floor. Place the QR when its preview appears."
+            }
             setTextColor(Color.WHITE)
             textSize = 16f
             gravity = Gravity.CENTER
@@ -811,7 +844,7 @@ class ArCoreTrackingEngine(
         )
 
         val distanceRow = LinearLayout(activity).apply {
-            visibility = View.GONE
+            visibility = if (qrPlacementSnapToSurface) View.GONE else View.VISIBLE
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             background = roundedBackground(0xB8000000.toInt(), dp(22).toFloat())
@@ -866,7 +899,8 @@ class ArCoreTrackingEngine(
         )
 
         val snap = Button(activity).apply {
-            text = "SNAP TO SURFACE: ON"
+            text = if (qrPlacementSnapToSurface) "SNAP TO SURFACE: ON"
+                else "SNAP TO SURFACE: OFF"
             textSize = 13f
             setTextColor(Color.WHITE)
             background = roundedBackground(0xCC263E63.toInt(), dp(20).toFloat())
@@ -928,11 +962,13 @@ class ArCoreTrackingEngine(
                         offlineReferenceCaptureRequested = true
                         isEnabled = false
                         qrPlacementStatusText?.text =
-                            "Capturing this real entrance area for offline restore..."
+                            "STEP 2/3 • CAPTURE REAL SCENE\nAim straight at a distinctive " +
+                                "door/sign/textured wall. Wait for ARCore to measure it."
                     }
                     else -> {
                         qrPlacementRequested = true
-                        qrPlacementStatusText?.text = "Locking this exact 3D QR pose..."
+                        qrPlacementStatusText?.text = "Locking the virtual QR pose without " +
+                            "resetting your recorded route..."
                     }
                 }
             }
@@ -1100,9 +1136,13 @@ class ArCoreTrackingEngine(
                             (qrPlacementLockedPayload ?: emptyMap()) + capture.first!!
                         offlineReferenceCaptured = true
                         qrPlacementStatusText?.text =
-                            (if (qrPlacementPreserveFrame) "CHECKPOINT SAVED — " else "START AREA SAVED — ") + "this route now carries its own " +
-                                "offline visual fingerprint. Move the phone once " +
-                                "more if you want, then tap START RECORDING."
+                            if (qrPlacementPreserveFrame) {
+                                "STEP 3/3 • SCENE SAVED\nTap SAVE CHECKPOINT. " +
+                                    "You can optionally capture a second view first."
+                            } else {
+                                "START AREA SAVED — this route now carries its own " +
+                                    "offline visual reference. Tap START RECORDING."
+                            }
                         button?.text = if (qrPlacementPreserveFrame) "SAVE CHECKPOINT" else "START RECORDING"
                         qrPlacementExtraButton?.visibility =
                             android.view.View.VISIBLE
@@ -1285,9 +1325,11 @@ class ArCoreTrackingEngine(
 
         mainHandler.post {
             qrPlacementStatusText?.text =
-                (if (qrPlacementPreserveFrame) "CHECKPOINT LOCKED — mapping continues in the same XYZ frame. " else "START LOCKED — the QR is fixed. ") + "Now aim the center of the " +
-                    "camera at ONE nearby textured flat surface (door, sign, " +
-                    "tiles, poster, wall detail), then tap SAVE START AREA."
+                (if (qrPlacementPreserveFrame)
+                    "STEP 2/3 • QR LOCKED\nYour route XYZ is unchanged. "
+                 else "START LOCKED — the QR is fixed. ") +
+                    "Aim at a distinctive, TRACKED flat door/sign/wall " +
+                    "and tap SAVE START AREA."
             qrPlacementButton?.text = "SAVE START AREA"
             qrPlacementDistanceRow?.visibility = android.view.View.GONE
             qrPlacementSnapButton?.visibility = android.view.View.GONE
@@ -1665,7 +1707,10 @@ class ArCoreTrackingEngine(
         )
     }
 
-    private fun finishQrPlacement(payload: Map<String, Any>?) {
+    private fun finishQrPlacement(
+        payload: Map<String, Any>?,
+        failure: String? = null,
+    ) {
         if (!qrPlacementMode && qrPlacementCompletion == null) return
 
         val savedPayload = finalCheckpointPose(payload)
@@ -1707,7 +1752,9 @@ class ArCoreTrackingEngine(
                 qrPlacementBitmap = null
             }
 
-            callback?.invoke(savedPayload)
+            callback?.invoke(
+                savedPayload ?: failure?.let { mapOf("placement_error" to it) },
+            )
         }
     }
 
