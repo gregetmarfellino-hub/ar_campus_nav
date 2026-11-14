@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../models/mapping_session.dart';
@@ -5,6 +7,8 @@ import '../models/venue.dart';
 import '../services/mapping_storage.dart';
 import '../services/venue_loader.dart';
 import '../services/venue_override_storage.dart';
+import '../services/venue_project_bundle.dart';
+import '../services/venue_project_transfer.dart';
 import 'mapping_review_screen.dart';
 import 'venue_graph_editor_screen.dart';
 
@@ -24,12 +28,14 @@ class _MappingSessionsScreenState extends State<MappingSessionsScreen> {
   final MappingStorage _mappingStorage = const MappingStorage();
   final VenueLoader _venueLoader = const VenueLoader();
   final VenueOverrideStorage _overrideStorage = const VenueOverrideStorage();
+  final VenueProjectTransfer _projectTransfer = const VenueProjectTransfer();
 
   List<MappingSession> _sessions = const [];
   Venue? _venue;
   VenueOverrideDocument? _document;
   bool _hasGraphBackup = false;
   bool _loading = true;
+  bool _projectBusy = false;
   String? _error;
 
   @override
@@ -66,6 +72,150 @@ class _MappingSessionsScreenState extends State<MappingSessionsScreen> {
         _error = error.toString();
         _loading = false;
       });
+    }
+  }
+
+  VenueProjectBundle _exportBundle() {
+    final venue = _venue;
+    if (venue == null) throw StateError('No campus project loaded.');
+    return VenueProjectBundle(
+      document: _document ??
+          VenueOverrideDocument(
+            venue: venue,
+            coordinateSpace: 'sample',
+            appliedSessionIds: const [],
+            updatedAt: DateTime.now(),
+          ),
+      recordings: _sessions,
+    );
+  }
+
+  Future<void> _shareProject() async {
+    if (_projectBusy) return;
+    setState(() => _projectBusy = true);
+    try {
+      final project = _exportBundle();
+      final opened = await _projectTransfer.shareFile(
+        name: project.suggestedFileName,
+        content: project.encode(),
+      );
+      if (!mounted) return;
+      if (opened) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(
+            'Choose an app to send the portable offline project file.',
+          )),
+        );
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not share project: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _projectBusy = false);
+    }
+  }
+
+  Future<void> _exportProject() async {
+    if (_projectBusy) return;
+    setState(() => _projectBusy = true);
+    try {
+      final project = _exportBundle();
+      final uri = await _projectTransfer.saveFile(
+        name: project.suggestedFileName,
+        content: project.encode(),
+      );
+      if (!mounted) return;
+      if (uri != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Offline project JSON saved to selected folder.')),
+        );
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not export project: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _projectBusy = false);
+    }
+  }
+
+  Future<void> _importProject() async {
+    if (_projectBusy) return;
+    setState(() => _projectBusy = true);
+    try {
+      final raw = await _projectTransfer.pickFile();
+      if (raw == null || !mounted) return;
+      final project = VenueProjectBundle.decode(raw);
+      final venue = project.document.venue;
+      final existing = await _overrideStorage.load(venue.id);
+      if (!mounted) return;
+
+      final proceed = await showDialog<bool>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('Import offline campus project?'),
+              content: Text(
+                '${venue.name}\n'
+                '${venue.nodes.length} route nodes · ${venue.edges.length} links\n'
+                '${venue.anchors.length} QR checkpoints · '
+                '${project.recordings.length} recordings\n\n'
+                'The saved routes and QR IDs will work offline. '
+                'Live AR still requires physical camera localization.\n\n'
+                '${existing == null ? 'This project will be added to the phone.' : 'A project with this ID already exists. Importing will replace its active graph; its previous graph will be backed up.'}',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(true),
+                  child: const Text('Import project'),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+      if (!proceed || !mounted) return;
+
+      // Preflight ALL recording collisions before any file is overwritten.
+      for (final session in project.recordings) {
+        final saved = await _mappingStorage.load(session.id);
+        if (saved != null &&
+            jsonEncode(saved.toJson()) != jsonEncode(session.toJson())) {
+          throw StateError(
+            'Recording ID ${session.id} already exists with different data. '
+            'Import cancelled to protect existing mappings.',
+          );
+        }
+      }
+
+      if (existing != null) await _overrideStorage.saveGraphBackup(existing);
+      for (final session in project.recordings) {
+        if (await _mappingStorage.load(session.id) == null) {
+          await _mappingStorage.save(session);
+        }
+      }
+      await _overrideStorage.save(project.document);
+      // Only switch Home AFTER the graph and recordings were safely written.
+      await _overrideStorage.selectProject(venue.id);
+      await _reload();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(
+          'Imported ${venue.name} offline. Select a checkpoint to plan a route.',
+        )),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not import project: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _projectBusy = false);
     }
   }
 
@@ -240,6 +390,7 @@ class _MappingSessionsScreenState extends State<MappingSessionsScreen> {
           updatedAt: DateTime.now(),
         ),
       );
+      await _overrideStorage.selectProject(null);
       await _reload();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
