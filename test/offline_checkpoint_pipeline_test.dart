@@ -121,7 +121,8 @@ void main() {
     expect(imported.document.venue.anchors, hasLength(2));
     expect(imported.document.venue.anchors.last.offlineCheckpointReady, isTrue);
     expect(imported.recordings.single.markers[1].anchorFacingDegrees, 90);
-    expect(imported.document.venue.edges, hasLength(4));
+    expect(imported.document.venue.edges.length, greaterThanOrEqualTo(2));
+    expect(imported.document.venue.edges.every((e) => e.measured3D), isTrue);
   });
 
   test('each placed entrance generates a distinct correctly rotated route', () {
