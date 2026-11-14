@@ -465,7 +465,7 @@ class _Continuous3DMappingScreenState
       errorCorrectionLevel: QrErrorCorrectLevel.L,
     );
     final data = await painter.toImageData(
-      VisualAnchorSpec.renderPixels,
+      VisualAnchorSpec.renderPixels.toDouble(),
       format: ui.ImageByteFormat.png,
     );
     if (data == null) throw StateError('Could not render offline checkpoint QR.');
