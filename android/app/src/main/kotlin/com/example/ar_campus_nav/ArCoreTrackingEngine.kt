@@ -778,7 +778,25 @@ class ArCoreTrackingEngine(
         qrPlacementMode = true
         qrPlacementRenderer.setBitmap(bitmap)
 
-        mainHandler.post { createQrPlacementOverlay() }
+        mainHandler.post {
+            try {
+                if (!qrPlacementMode || !started || surfaceView == null) {
+                    finishQrPlacement(
+                        null,
+                        "The ARCore session closed while opening the QR camera.",
+                    )
+                } else {
+                    createQrPlacementOverlay()
+                }
+            } catch (error: Exception) {
+                finishQrPlacement(
+                    null,
+                    "Virtual QR camera overlay failed: " +
+                        error.javaClass.simpleName + " " +
+                        (error.message ?: ""),
+                )
+            }
+        }
         return null
     }
 
@@ -1689,7 +1707,10 @@ class ArCoreTrackingEngine(
         )
     }
 
-    private fun finishQrPlacement(payload: Map<String, Any>?) {
+    private fun finishQrPlacement(
+        payload: Map<String, Any>?,
+        failure: String? = null,
+    ) {
         if (!qrPlacementMode && qrPlacementCompletion == null) return
 
         val savedPayload = finalCheckpointPose(payload)
@@ -1731,7 +1752,9 @@ class ArCoreTrackingEngine(
                 qrPlacementBitmap = null
             }
 
-            callback?.invoke(savedPayload)
+            callback?.invoke(
+                savedPayload ?: failure?.let { mapOf("placement_error" to it) },
+            )
         }
     }
 
