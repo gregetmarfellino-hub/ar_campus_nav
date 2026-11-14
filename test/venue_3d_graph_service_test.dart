@@ -2,6 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:ar_campus_nav/models/mapping_session.dart';
 import 'package:ar_campus_nav/models/venue.dart';
+import 'package:ar_campus_nav/models/nav_node.dart';
+import 'package:ar_campus_nav/models/nav_edge.dart';
 import 'package:ar_campus_nav/services/anchor_codec.dart';
 import 'package:ar_campus_nav/services/venue_3d_graph_service.dart';
 import 'package:ar_campus_nav/services/venue_codec.dart';
@@ -228,4 +230,52 @@ void main() {
     }).nodes.single;
     expect(node.upMeters, 0);
   });
+  test('A measured 3D crossing works while old fake portal stays blocked', () {
+    Venue venueWithCrossing({required bool measured}) => Venue(
+      id: 'safety',
+      name: 'Safety',
+      description: '',
+      defaultStartNodeId: 'bottom',
+      floors: const [1, 2],
+      nodes: const [
+        NavNode(
+          id: 'bottom', label: 'Lower corridor',
+          floor: 1, x: 0, y: 0, upMeters: 0, type: 'waypoint',
+        ),
+        NavNode(
+          id: 'upper', label: 'Upper corridor',
+          floor: 2, x: 3, y: 0, upMeters: 3, type: 'waypoint',
+        ),
+      ],
+      edges: [
+        NavEdge(
+          from: 'bottom', to: 'upper', distanceMeters: 4.243,
+          transitionType: 'stairs', measured3D: measured,
+        ),
+      ],
+      destinations: const [],
+      anchors: const [],
+    );
+    const engine = RouteEngine();
+    expect(
+      () => engine.shortestPath(
+        venue: venueWithCrossing(measured: false),
+        startNodeId: 'bottom', destinationNodeId: 'upper',
+      ),
+      throwsStateError,
+    );
+    final venue = venueWithCrossing(measured: true);
+    final route = engine.shortestPath(
+      venue: venue,
+      startNodeId: 'bottom', destinationNodeId: 'upper',
+    );
+    expect(route.crossesFloors, isTrue);
+    expect(route.totalDistanceMeters, 4.243);
+    expect(route.legs.single.transitionType, 'stairs');
+    final restored = const VenueCodec().fromJson(
+      const VenueCodec().toJson(venue),
+    );
+    expect(restored.edges.single.measured3D, isTrue);
+  });
+
 }
