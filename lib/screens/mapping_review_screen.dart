@@ -438,11 +438,11 @@ class _MappingReviewScreenState extends State<MappingReviewScreen> {
               child: Padding(
                 padding: const EdgeInsets.all(15),
                 child: Text(
-                  'V11 UNIFIED 3D CAMPUS ROUTE — '
+                  ('V11 UNIFIED 3D CAMPUS ROUTE — '
                   '${trace!.pathMeters.toStringAsFixed(1)} m XYZ path, '
                   '${trace.netHeightMeters.toStringAsFixed(1)} m net height, '
-                  '${trace.ascentMeters.toStringAsFixed(1)} m total ascent.\n\n'
-                  session.isDraft3D
+                  '${trace.ascentMeters.toStringAsFixed(1)} m total ascent.\n\n') +
+                  (session.isDraft3D
                       ? 'AUTOSAVED SAFETY DRAFT: this is not a completed '
                           'route. It remains available after a crash, but '
                           'cannot replace the active campus graph.'
@@ -451,7 +451,7 @@ class _MappingReviewScreenState extends State<MappingReviewScreen> {
                           'room labels, stair links and printed QR IDs. '
                           'The existing venue is backed up. '
                           'QR scanning alone does not relocalize a new '
-                          'ARCore camera; alignment is not yet verified.',
+                          'ARCore camera; alignment is not yet verified.'),
                 ),
               ),
             ),
