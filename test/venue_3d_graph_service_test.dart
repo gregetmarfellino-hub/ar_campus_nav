@@ -9,6 +9,7 @@ import 'package:ar_campus_nav/services/venue_3d_graph_service.dart';
 import 'package:ar_campus_nav/services/venue_codec.dart';
 import 'package:ar_campus_nav/services/venue_override_storage.dart';
 import 'package:ar_campus_nav/services/route_engine.dart';
+import 'package:ar_campus_nav/services/loop_closure_diagnostics.dart';
 
 Venue blankCampus() => const Venue(
       id: 'campus',
@@ -216,6 +217,38 @@ void main() {
       ),
       throwsStateError,
     );
+  });
+
+  test('V11 QA drift markers do not become navigable room labels', () {
+    final source = climbSession();
+    final json = source.toJson();
+    json['markers'] = [
+      ...source.markers.map((marker) => marker.toJson()),
+      const MappingMarker(
+        id: 'qa_return',
+        label: 'Return to start (drift check)',
+        type: LoopClosureDiagnostics.markerType,
+        floor: 2,
+        xMeters: 9,
+        yMeters: 0,
+        upMeters: 3.1,
+        pointIndex: 4,
+      ).toJson(),
+    ];
+    final withCheck = MappingSession.fromJson(json);
+    final venue = const Venue3DGraphService().build(
+      template: blankCampus(),
+      session: withCheck,
+    );
+    expect(
+      venue.nodes.any((n) => n.label == 'Return to start (drift check)'),
+      isFalse,
+    );
+    expect(
+      venue.destinations.any((d) => d.name == 'Return to start (drift check)'),
+      isFalse,
+    );
+    expect(venue.destinations.any((d) => d.name == 'Computer Lab'), isTrue);
   });
 
   test('Old flat venue schema remains readable with zero-default height', () {
