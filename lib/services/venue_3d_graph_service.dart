@@ -124,9 +124,25 @@ class Venue3DGraphService {
             label: marker.label,
             nodeId: id,
             floor: currentFloor,
-            // A printed QR ID identifies the place, but a new AR session
-            // requires a measured physical pose before AR alignment.
+            // V13 visual checkpoint is linked to THIS measured path node,
+            // but the visual QR itself can be placed on an adjacent surface.
+            // Independent offline localization still must verify the scene.
             visualHeadingVerified: false,
+            checkpointRightMeters: marker.checkpointRightMeters,
+            checkpointForwardMeters: marker.checkpointForwardMeters,
+            checkpointUpMeters: marker.checkpointUpMeters,
+            checkpointFacingDegrees: marker.anchorFacingDegrees,
+            offlineVisualReferencePngBase64:
+                marker.offlineVisualReferencePngBase64,
+            offlineVisualReferenceWidthMeters:
+                marker.offlineVisualReferenceWidthMeters,
+            offlineVisualStartOffsetX: marker.offlineVisualStartOffsetX,
+            offlineVisualStartOffsetY: marker.offlineVisualStartOffsetY,
+            offlineVisualStartOffsetZ: marker.offlineVisualStartOffsetZ,
+            offlineVisualStartForwardX: marker.offlineVisualStartForwardX,
+            offlineVisualStartForwardY: marker.offlineVisualStartForwardY,
+            offlineVisualStartForwardZ: marker.offlineVisualStartForwardZ,
+            offlineExtraReferenceJson: marker.offlineExtraReferenceJson,
           ));
         } else if (marker.type == 'destination' ||
                    marker.type == 'stairs' ||
