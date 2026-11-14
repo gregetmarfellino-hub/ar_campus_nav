@@ -99,6 +99,8 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                         call.argument<String>("start_label") ?: "Route start"
                     val anchorLocalized =
                         call.argument<Boolean>("anchor_localized") ?: false
+                    val requireVerifiedOffline =
+                        call.argument<Boolean>("require_verified_offline") ?: false
                     val visualAnchorPng =
                         call.argument<ByteArray>("visual_anchor_png")
                     val visualAnchorWidthMeters =
@@ -152,6 +154,7 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                             points = points,
                             startLabel = startLabel,
                             anchorLocalized = anchorLocalized,
+                            requireVerifiedOffline = requireVerifiedOffline,
                             visualAnchorPng = visualAnchorPng,
                             visualAnchorWidthMeters = visualAnchorWidthMeters,
                             visualAnchorLabel = visualAnchorLabel,
