@@ -1631,9 +1631,6 @@ class ArCoreTrackingEngine(
 
         val accepted = payload != null
         qrPlacementMode = false
-        qrPlacementPreserveFrame = false
-        qrCheckpointWorldAnchor?.detach()
-        qrCheckpointWorldAnchor = null
         qrPlacementRequested = false
         qrPlacementTrackingReady = false
         qrPlacementLocked = false
@@ -1765,6 +1762,9 @@ class ArCoreTrackingEngine(
         qrPlacementExtraButton = null
         qrPlacementCompletion = null
         qrPlacementMode = false
+        qrPlacementPreserveFrame = false
+        qrCheckpointWorldAnchor?.detach()
+        qrCheckpointWorldAnchor = null
         qrPlacementRequested = false
         qrPlacementTrackingReady = false
         qrPlacementLocked = false
