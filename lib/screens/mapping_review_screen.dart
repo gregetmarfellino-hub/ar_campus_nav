@@ -5,6 +5,7 @@ import '../models/venue.dart';
 import '../services/venue_mapping_service.dart';
 import '../services/continuous_3d_trace.dart';
 import '../services/venue_override_storage.dart';
+import '../services/venue_3d_graph_service.dart';
 import '../widgets/mapping_session_map.dart';
 
 class MappingReviewScreen extends StatefulWidget {
@@ -42,6 +43,79 @@ class _MappingReviewScreenState extends State<MappingReviewScreen> {
       _document = document;
       _loading = false;
     });
+  }
+
+  Future<void> _publishContinuous3D() async {
+    final session = widget.session;
+    if (!session.isContinuous3D || session.isDraft3D || _busy) return;
+    final already = _document?.isContinuous3D == true &&
+        _document!.appliedSessionIds.contains(session.id);
+    if (already) return;
+    final accepted = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Publish measured 3D campus map?'),
+            content: const Text(
+              'This replaces the ACTIVE sample/previous venue with a '
+              'connected graph built from the one real 3D route: rooms, '
+              'stairs, height, and QR location IDs. Your original recordings '
+              'remain saved. A backup of the current venue is created first. '
+              'Other independent ARCore sessions cannot be merged without '
+              'verified physical alignment. QR labels identify a location '
+              'but do not yet relocalize an ARCore camera.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Publish 3D campus graph'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+    if (!accepted || !mounted) return;
+    setState(() => _busy = true);
+    try {
+      final venue = const Venue3DGraphService().build(
+        template: widget.currentVenue,
+        session: session,
+      );
+      final current = _document ??
+          VenueOverrideDocument(
+            venue: widget.currentVenue,
+            coordinateSpace: 'sample',
+            appliedSessionIds: const [],
+            updatedAt: DateTime.now(),
+          );
+      // Do not destroy the previous graph when the new recording is published.
+      await _overrideStorage.saveGraphBackup(current);
+      await _overrideStorage.save(VenueOverrideDocument(
+        venue: venue,
+        coordinateSpace: 'world_xyz_3d',
+        appliedSessionIds: [session.id],
+        updatedAt: DateTime.now(),
+      ));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            '3D campus graph published! The active map now contains '
+            'your measured rooms, QR landmarks, stairs and XYZ heights.',
+          ),
+        ),
+      );
+      Navigator.of(context).pop(true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not publish 3D graph: $error')),
+      );
+    }
   }
 
   Future<void> _apply() async {
@@ -364,17 +438,34 @@ class _MappingReviewScreenState extends State<MappingReviewScreen> {
               child: Padding(
                 padding: const EdgeInsets.all(15),
                 child: Text(
-                  'V10 CONTINUOUS 3D TRACE — '
+                  'V11 UNIFIED 3D CAMPUS ROUTE — '
                   '${trace!.pathMeters.toStringAsFixed(1)} m XYZ path, '
                   '${trace.netHeightMeters.toStringAsFixed(1)} m net height, '
                   '${trace.ascentMeters.toStringAsFixed(1)} m total ascent.\n\n'
-                  'This trace retains its real relative vertical geometry. '
-                  'It cannot be APPLY TO FLOOR or MERGE into the older '
-                  '2D venue without destroying the stairs. '
-                  'Your current Floor 1/Floor 2 maps are untouched. '
-                  'Reopening this trace in a different ARCore session '
-                  'requires new localization (V11–V12).',
+                  session.isDraft3D
+                      ? 'AUTOSAVED SAFETY DRAFT: this is not a completed '
+                          'route. It remains available after a crash, but '
+                          'cannot replace the active campus graph.'
+                      : 'Publish this continuous route as the active '
+                          '3D campus venue. It keeps actual XYZ heights, '
+                          'room labels, stair links and printed QR IDs. '
+                          'The existing venue is backed up. '
+                          'QR scanning alone does not relocalize a new '
+                          'ARCore camera; alignment is not yet verified.',
                 ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _busy || session.isDraft3D || alreadyApplied
+                  ? null : _publishContinuous3D,
+              icon: const Icon(Icons.account_tree_rounded),
+              label: Text(
+                session.isDraft3D
+                    ? 'DRAFT — FINISH A ROUTE FIRST'
+                    : alreadyApplied
+                        ? '3D GRAPH ALREADY PUBLISHED'
+                        : 'PUBLISH 3D CAMPUS GRAPH',
               ),
             ),
           ] else ...[
