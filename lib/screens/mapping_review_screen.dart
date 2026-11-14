@@ -4,6 +4,7 @@ import '../models/mapping_session.dart';
 import '../models/venue.dart';
 import '../services/venue_mapping_service.dart';
 import '../services/continuous_3d_trace.dart';
+import '../services/loop_closure_diagnostics.dart';
 import '../services/venue_override_storage.dart';
 import '../services/venue_3d_graph_service.dart';
 import '../widgets/mapping_session_map.dart';
@@ -253,6 +254,7 @@ class _MappingReviewScreenState extends State<MappingReviewScreen> {
             startFloor: session.floor,
           )
         : null;
+    final loopChecks = LoopClosureDiagnostics.fromSession(session);
     final spatialAlignmentReady =
         session.isSpatial &&
         _document != null &&
@@ -378,6 +380,37 @@ class _MappingReviewScreenState extends State<MappingReviewScreen> {
                 ),
             ],
           ),
+          if (loopChecks.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'RETURN-TO-START DRIFT CHECKS',
+                      style: TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 6),
+                    for (final check in loopChecks)
+                      Text(
+                        '${check.discrepancyMeters.toStringAsFixed(2)} m '
+                        '3D separation after '
+                        '${check.traveledMeters.toStringAsFixed(1)} m walked',
+                      ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Operator-confirmed approximate loop discrepancy. '
+                      'Phone placement and physical return errors are included. '
+                      'No map points were shifted or automatically corrected.',
+                      style: TextStyle(color: Colors.white60, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 18),
           const Text(
             'MARKERS',
@@ -516,6 +549,7 @@ class _MappingReviewScreenState extends State<MappingReviewScreen> {
       'destination' => Icons.flag_rounded,
       'stairs' => Icons.stairs_rounded,
       'floor_level' => Icons.layers_rounded,
+      LoopClosureDiagnostics.markerType => Icons.analytics_outlined,
       'anchor' => Icons.qr_code_2_rounded,
       _ => Icons.add_location_alt_rounded,
     };
