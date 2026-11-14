@@ -71,6 +71,24 @@ class VenueOverrideStorage {
     }
   }
 
+  Future<List<VenueOverrideDocument>> listProjects() async {
+    final raw = await _native.invokeMethod<List<dynamic>>('listMappings');
+    final prefix = MappingStorage.reservedVenuePrefix;
+    final projects = <VenueOverrideDocument>[];
+    for (final item in raw ?? const <dynamic>[]) {
+      final id = item as String;
+      if (!id.startsWith(prefix) ||
+          id == _selectionId ||
+          id.startsWith('${prefix}graph_backup__')) {
+        continue;
+      }
+      final document = await load(id.substring(prefix.length));
+      if (document != null) projects.add(document);
+    }
+    projects.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    return projects;
+  }
+
   Future<void> selectProject(String? venueId) async {
     final path = await _native.invokeMethod<String>(
       'saveMapping',
