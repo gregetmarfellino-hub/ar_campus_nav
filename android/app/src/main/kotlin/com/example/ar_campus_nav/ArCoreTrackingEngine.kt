@@ -445,7 +445,7 @@ class ArCoreTrackingEngine(
         if (heightAware && !requireVerifiedOffline) {
             return "VERIFIED_3D_START_REQUIRED"
         }
-        if (heightAware && points.first().floor != points.last().floor &&
+        if (heightAware && points.map { it.floor }.toSet().size > 1 &&
             points.maxOf { it.upMeters } - points.minOf { it.upMeters } < 0.60f) {
             return "3D_HEIGHT_NOT_MEASURED"
         }
@@ -564,6 +564,13 @@ class ArCoreTrackingEngine(
                 lightEstimationMode = Config.LightEstimationMode.DISABLED
             }
             configureVisualImageDatabase(newSession, config)
+            // Registration may fail even when PNG bytes were present. Never
+            // secretly fall back to an unverified manual start for 3D stairs.
+            if (navigationMode && navigationVerifiedOfflineRequired &&
+                !navigationOfflineEnabled) {
+                newSession.close()
+                return "OFFLINE_SCENE_REGISTRATION_FAILED"
+            }
             newSession.configure(config)
             session = newSession
 
@@ -4768,7 +4775,7 @@ class ArCoreTrackingEngine(
                 navigationRightX * point.rightMeters +
                     navigationForwardX * point.forwardMeters,
                 routeLocalHeight +
-                    if (navigationHeightAware) point.upMeters - startUp else 0f,
+                    (if (navigationHeightAware) point.upMeters - startUp else 0f),
                 navigationRightZ * point.rightMeters +
                     navigationForwardZ * point.forwardMeters,
             )
