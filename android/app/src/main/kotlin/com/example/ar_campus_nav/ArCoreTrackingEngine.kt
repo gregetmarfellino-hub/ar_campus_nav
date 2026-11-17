@@ -4452,24 +4452,32 @@ class ArCoreTrackingEngine(
     private fun routeSegmentDistance(
         right: Float,
         forward: Float,
+        userUp: Float,
         from: RoutePoint,
         to: RoutePoint,
     ): Float {
         val dx = to.rightMeters - from.rightMeters
         val df = to.forwardMeters - from.forwardMeters
-        val squared = dx * dx + df * df
+        val du = if (navigationHeightAware) to.upMeters - from.upMeters else 0f
+        val squared = dx * dx + df * df + du * du
+        val ux = right - from.rightMeters
+        val uf = forward - from.forwardMeters
+        val uu = if (navigationHeightAware) userUp - from.upMeters else 0f
         if (squared < 0.000001f) {
-            val ux = right - from.rightMeters
-            val uf = forward - from.forwardMeters
-            return sqrt(ux * ux + uf * uf)
+            return sqrt(ux * ux + uf * uf + uu * uu)
         }
-        val t = (
-            ((right - from.rightMeters) * dx +
-                (forward - from.forwardMeters) * df) / squared
-        ).coerceIn(0f, 1f)
-        val ex = right - (from.rightMeters + t * dx)
-        val ef = forward - (from.forwardMeters + t * df)
-        return sqrt(ex * ex + ef * ef)
+        val t = ((ux * dx + uf * df + uu * du) / squared).coerceIn(0f, 1f)
+        val ex = ux - t * dx
+        val ef = uf - t * df
+        val eu = uu - t * du
+        return sqrt(ex * ex + ef * ef + eu * eu)
+    }
+
+    private fun routeDistance(a: RoutePoint, b: RoutePoint): Float {
+        val dx = b.rightMeters - a.rightMeters
+        val df = b.forwardMeters - a.forwardMeters
+        val du = if (navigationHeightAware) b.upMeters - a.upMeters else 0f
+        return sqrt(dx * dx + df * df + du * du)
     }
 
     /**
@@ -4487,9 +4495,11 @@ class ArCoreTrackingEngine(
         if (navigationPoints.size < 2) return false
         val currentIndex = activeRouteIndex.coerceIn(
             1, navigationPoints.lastIndex)
+        val userUp = navigationUserMeasuredUp(local)
         val currentSegmentDistance = routeSegmentDistance(
             local.right,
             local.forward,
+            userUp,
             navigationPoints[currentIndex - 1],
             navigationPoints[currentIndex],
         )
@@ -4498,6 +4508,7 @@ class ArCoreTrackingEngine(
             val distance = routeSegmentDistance(
                 local.right,
                 local.forward,
+                userUp,
                 navigationPoints[i - 1],
                 navigationPoints[i],
             )
@@ -4557,13 +4568,16 @@ class ArCoreTrackingEngine(
         // On switchbacks, short steps and corridor turns, the old 1.15 m
         // radius could skip several future nodes and point the guide sideways.
         // Progress along the CURRENT segment, preserving the recorded order.
+        val userUp = navigationUserMeasuredUp(local)
         var advanced = 0
         while (activeRouteIndex < navigationPoints.lastIndex && advanced < 6) {
             val previous = navigationPoints[activeRouteIndex - 1]
             val target = navigationPoints[activeRouteIndex]
             val sx = target.rightMeters - previous.rightMeters
             val sf = target.forwardMeters - previous.forwardMeters
-            val squaredLength = sx * sx + sf * sf
+            val su = if (navigationHeightAware)
+                target.upMeters - previous.upMeters else 0f
+            val squaredLength = sx * sx + sf * sf + su * su
             if (squaredLength < 0.0001f) {
                 activeRouteIndex++
                 advanced++
@@ -4572,14 +4586,21 @@ class ArCoreTrackingEngine(
 
             val ux = local.right - previous.rightMeters
             val uf = local.forward - previous.forwardMeters
-            val along = (ux * sx + uf * sf) / squaredLength
+            val uu = if (navigationHeightAware)
+                userUp - previous.upMeters else 0f
+            val along = (ux * sx + uf * sf + uu * su) / squaredLength
             val clamped = along.coerceIn(0f, 1f)
             val lateralX = ux - clamped * sx
             val lateralF = uf - clamped * sf
-            val lateral = sqrt(lateralX * lateralX + lateralF * lateralF)
+            val lateralU = uu - clamped * su
+            val lateral = sqrt(
+                lateralX * lateralX + lateralF * lateralF +
+                    lateralU * lateralU,
+            )
 
-            // Do not skip turns simply because the next point is nearby.
-            if (along < 0.85f || lateral > 0.65f) break
+            // Do not confuse overlapping staircase turns on two levels.
+            val tolerance = if (navigationHeightAware) 0.85f else 0.65f
+            if (along < 0.85f || lateral > tolerance) break
             activeRouteIndex++
             advanced++
         }
@@ -4588,12 +4609,12 @@ class ArCoreTrackingEngine(
         // do not claim arrival just because an earlier nearby node was passed.
         if (activeRouteIndex == navigationPoints.lastIndex) {
             val end = navigationPoints.last()
-            val distanceToEnd = sqrt(
-                (end.rightMeters - local.right) * (end.rightMeters - local.right) +
-                    (end.forwardMeters - local.forward) *
-                    (end.forwardMeters - local.forward),
-            )
-            if (distanceToEnd <= 0.65f) {
+            val endX = end.rightMeters - local.right
+            val endF = end.forwardMeters - local.forward
+            val endU = if (navigationHeightAware) end.upMeters - userUp else 0f
+            val distanceToEnd = sqrt(endX * endX + endF * endF + endU * endU)
+            val threshold = if (navigationHeightAware) 0.85f else 0.65f
+            if (distanceToEnd <= threshold) {
                 if (!navigationArrivalShown) {
                     navigationArrivalShown = true
                     setNavigationArrivalUi()
@@ -4616,7 +4637,8 @@ class ArCoreTrackingEngine(
         val target = navigationPoints[activeRouteIndex]
         val dx = target.rightMeters - local.right
         val df = target.forwardMeters - local.forward
-        val nextDistance = sqrt(dx * dx + df * df)
+        val du = if (navigationHeightAware) target.upMeters - userUp else 0f
+        val nextDistance = sqrt(dx * dx + df * df + du * du)
 
         if (navigationRouteMismatch(
             local = local,
@@ -4630,9 +4652,7 @@ class ArCoreTrackingEngine(
         for (i in activeRouteIndex until navigationPoints.lastIndex) {
             val a = navigationPoints[i]
             val b = navigationPoints[i + 1]
-            val sx = b.rightMeters - a.rightMeters
-            val sf = b.forwardMeters - a.forwardMeters
-            remaining += sqrt(sx * sx + sf * sf)
+            remaining += routeDistance(a, b)
         }
 
         val nextLabel = if (target.semantic && target.label != "Recorded path") {
