@@ -1922,6 +1922,7 @@ class ArCoreTrackingEngine(
         session = null
         clearTrackingOrigin()
         clearNavigationFrame()
+        navigationHeightAware = false
         latestCameraPose = null
         cameraTextureId = 0
         lastEmitNanos = 0L
@@ -4252,7 +4253,8 @@ class ArCoreTrackingEngine(
         releaseNavigationAnchor()
         navigationRouteWorldY = null
         navigationStartCameraLocalUp = null
-        navigationHeightAware = false
+        // This also runs during startSession AFTER height-aware mode was
+        // selected. Do not disable 3D here: that flattened the stair route.
         navigationFloorVerified = false
         navigationForwardX = 0f
         navigationForwardZ = -1f
@@ -5456,6 +5458,7 @@ class ArCoreTrackingEngine(
         sessionResumed = false
         clearTrackingOrigin()
         clearNavigationFrame()
+        navigationHeightAware = false
         latestCameraPose = null
         cameraTextureId = 0
         lastEmitNanos = 0L
