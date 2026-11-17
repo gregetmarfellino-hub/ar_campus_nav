@@ -385,6 +385,7 @@ class ArCoreTrackingEngine(
 
     fun start(): String {
         navigationMode = false
+        navigationHeightAware = false
         clearVisualAnchorConfiguration()
         clearMappingVisualAnchorConfiguration()
         return startSession()
@@ -396,6 +397,7 @@ class ArCoreTrackingEngine(
         visualAnchorLabel: String,
     ): String {
         navigationMode = false
+        navigationHeightAware = false
         clearVisualAnchorConfiguration()
         clearMappingVisualAnchorConfiguration()
 
@@ -4683,9 +4685,18 @@ class ArCoreTrackingEngine(
 
         val heightHint = if (navigationHeightAware) {
             val vertical = target.upMeters - userUp
-            val level = if (target.floor < 0) {
-                "Basement ${-target.floor}"
-            } else "Floor ${target.floor}"
+            // Floor labels may be placed at the TOP of a staircase. Show
+            // the approaching floor, not "ASCEND TO Floor 1" while on stairs.
+            val currentLabelFloor = navigationPoints[
+                (activeRouteIndex - 1).coerceAtLeast(0)
+            ].floor
+            val nextLabelFloor = navigationPoints
+                .drop(activeRouteIndex)
+                .firstOrNull { it.floor != currentLabelFloor }?.floor
+                ?: target.floor
+            val level = if (nextLabelFloor < 0) {
+                "Basement ${-nextLabelFloor}"
+            } else "Floor $nextLabelFloor"
             when {
                 vertical > 0.65f ->
                     "ASCEND TO $level • ${"%.1f".format(vertical)} m higher"
