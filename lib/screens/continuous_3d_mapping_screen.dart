@@ -15,6 +15,7 @@ import '../services/continuous_3d_trace.dart';
 import '../services/loop_closure_diagnostics.dart';
 import '../services/mapping_path_simplifier.dart';
 import '../services/mapping_storage.dart';
+import '../services/route_endpoint_policy.dart';
 import '../services/visual_anchor_spec.dart';
 import '../widgets/mapping_landmark_dialog.dart';
 
@@ -715,12 +716,89 @@ class _Continuous3DMappingScreenState
       _paused = true;
     });
     try {
+      // A route is not a meaningful user destination until its last trusted
+      // sample is named. The user is asked ONCE at the end, never repeatedly
+      // during a walk or before placing virtual QR checkpoints.
+      final terminalIndex = _points.length - 1;
+      final alreadyNamed = _markers.any((marker) =>
+          marker.type == 'destination' && marker.pointIndex == terminalIndex);
+      final defaultName = _trackingInterrupted
+          ? 'Last trusted point - ${_floorName(_floor)}'
+          : 'Route End - ${_floorName(_floor)}';
+      String finishName = defaultName;
+      if (!alreadyNamed) {
+        final chosen = await showDialog<String>(
+          context: context,
+          builder: (dialogContext) {
+            var name = defaultName;
+            return AlertDialog(
+              title: const Text('Finish at this mapped location?'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _trackingInterrupted
+                        ? 'Tracking was interrupted. The endpoint will be '
+                          'the LAST TRUSTED measured point, not the phone\'s '
+                          'uncertain current position.'
+                        : 'This final measured XYZ point becomes a selectable '
+                          'destination and future connection endpoint.',
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    initialValue: defaultName,
+                    autofocus: true,
+                    maxLength: 80,
+                    decoration: const InputDecoration(
+                      labelText: 'Name this finish / location',
+                      helperText: 'A blank name uses the suggested default.',
+                    ),
+                    onChanged: (value) => name = value,
+                  ),
+                  const Text(
+                    'All corridor/stair samples are kept for accurate routing '
+                    'and later joining. Nothing is deleted.',
+                    style: TextStyle(color: Colors.white60, fontSize: 12),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Keep recording'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(name.trim()),
+                  child: const Text('END & SAVE'),
+                ),
+              ],
+            );
+          },
+        );
+        if (!mounted || !_recording) return;
+        if (chosen == null) {
+          setState(() => _paused = wasPaused);
+          return;
+        }
+        if (chosen.length >= 2 && chosen.length <= 80) {
+          finishName = chosen;
+        }
+      }
+
       // A background draft must finish writing BEFORE the final recording
       // overwrites the same file ID. Never save stale points over the final.
       await _pendingDraftSave;
-      final simplified = const MappingPathSimplifier().simplify(
+      final withEndpoint = const RouteEndpointPolicy().withFinishDestination(
         points: _points,
         markers: _markers,
+        floor: _floor,
+        label: finishName,
+        id: 'v16_end_${_recordingId ?? DateTime.now().microsecondsSinceEpoch}',
+      );
+      final simplified = const MappingPathSimplifier().simplify(
+        points: _points,
+        markers: withEndpoint,
         toleranceMeters: 0.10,
       );
       final analysis = Continuous3DTrace.analyze(
@@ -749,7 +827,7 @@ class _Continuous3DMappingScreenState
         _automaticRecoveryPending = false;
         _trackingInterrupted = false;
         _savedId = session.id;
-        _message = 'SAVED CONTINUOUS 3D ROUTE: '
+        _message = 'SAVED ROUTE WITH SELECTABLE ENDPOINT: '
             '${analysis.pathMeters.toStringAsFixed(1)} m path, '
             '${analysis.netHeightMeters.toStringAsFixed(1)} m height delta, '
             '${analysis.visitedFloors.length} labeled floor(s). '
@@ -1048,8 +1126,15 @@ class _Continuous3DMappingScreenState
                   ? null : _saveAndStop,
               icon: const Icon(Icons.save_rounded),
               label: Text(_trackingInterrupted
-                  ? 'SAVE TRUSTED ROUTE SO FAR'
-                  : 'FINISH & SAVE 3D ROUTE'),
+                  ? 'END AT LAST TRUSTED POINT & SAVE'
+                  : 'END ROUTE HERE & SAVE'),
+            ),
+            const SizedBox(height: 7),
+            const Text(
+              'The last trusted measured position becomes a named destination. '
+              'Earlier untagged lines stay intact for accurate corridors, '
+              'stairs and future section connections.',
+              style: TextStyle(color: Colors.white54, fontSize: 11),
             ),
             if (_trackingInterrupted) ...[
               const SizedBox(height: 7),

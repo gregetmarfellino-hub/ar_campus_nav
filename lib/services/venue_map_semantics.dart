@@ -45,4 +45,28 @@ class VenueMapSemantics {
           ),
     ];
   }
+  /// Saved V11–V15 recordings may already have a legitimate final XYZ node
+  /// but no semantic end marker. This is a display-only route target so
+  /// existing published routes don't require a new walk or re-publishing.
+  static List<Destination> recordedRouteEndTargets(Venue venue) {
+    if (venue.nodes.length < 2) return const [];
+    final end = venue.nodes.last;
+    if (venue.destinations.any((target) => target.nodeId == end.id)) {
+      return const [];
+    }
+    final floorLabel = end.floor < 0
+        ? 'Basement ${end.floor.abs()}'
+        : 'Floor ${end.floor}';
+    return [
+      Destination(
+        id: 'ui_route_end_${end.id}',
+        name: '$floorLabel - recorded route end',
+        nodeId: end.id,
+        category: 'route-end',
+        description: 'Last measured point of this saved recording. '
+            'A provisional endpoint, not a room tagged by the mapper.',
+      ),
+    ];
+  }
+
 }

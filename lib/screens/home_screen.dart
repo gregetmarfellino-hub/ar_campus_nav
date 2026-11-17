@@ -634,6 +634,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final navigableTargets = <Destination>[
       ...venue.destinations,
       if (_is3DGraph) ...VenueMapSemantics.floorEntryTargets(venue),
+      if (_is3DGraph) ...VenueMapSemantics.recordedRouteEndTargets(venue),
     ];
     final normalizedQuery = _query.trim().toLowerCase();
     final destinations = navigableTargets.where((destination) {
