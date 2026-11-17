@@ -4116,7 +4116,9 @@ class ArCoreTrackingEngine(
         val translation = currentPose.translation
         val dx = translation[0] - previous[0]
         val dz = translation[2] - previous[2]
-        val jump = sqrt(dx * dx + dz * dz)
+        val dy = if (navigationHeightAware)
+            translation[1] - previous[1] else 0f
+        val jump = sqrt(dx * dx + dy * dy + dz * dz)
 
         navigationTrackingLostAtNanos = 0L
 
@@ -4159,7 +4161,9 @@ class ArCoreTrackingEngine(
         val translation = currentPose.translation
         val dx = translation[0] - previous[0]
         val dz = translation[2] - previous[2]
-        val jump = sqrt(dx * dx + dz * dz)
+        val dy = if (navigationHeightAware)
+            translation[1] - previous[1] else 0f
+        val jump = sqrt(dx * dx + dy * dy + dz * dz)
 
         val allowed =
             (navigationJumpBaseMeters +
@@ -4668,8 +4672,22 @@ class ArCoreTrackingEngine(
             else -> "ahead"
         }
 
+        val heightHint = if (navigationHeightAware) {
+            val vertical = target.upMeters - userUp
+            val level = if (target.floor < 0) {
+                "Basement ${-target.floor}"
+            } else "Floor ${target.floor}"
+            when {
+                vertical > 0.65f ->
+                    "ASCEND TO $level • ${"%.1f".format(vertical)} m higher"
+                vertical < -0.65f ->
+                    "DESCEND TO $level • ${"%.1f".format(-vertical)} m lower"
+                else -> "Approaching $level"
+            }
+        } else ""
         setNavigationHud(
-            "Next: $nextLabel • ${"%.1f".format(nextDistance)} m • $direction\n" +
+            (if (navigationHeightAware) "$heightHint\n" else "") +
+                "Next: $nextLabel • ${"%.1f".format(nextDistance)} m • $direction\n" +
                 "Remaining: ${"%.1f".format(remaining)} m",
         )
     }
