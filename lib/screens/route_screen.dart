@@ -242,14 +242,20 @@ class _RouteScreenState extends State<RouteScreen> {
               child: Padding(
                 padding: EdgeInsets.all(15),
                 child: Text(
-                  widget.requireOfflineCheckpoint
-                      ? 'OFFLINE MAP READY — AR WAITING FOR A VISUAL START. '
-                        'Select a mapped visual checkpoint on Home, or scan '
-                        'a physically displayed location QR. Live AR starts '
-                        'only after the camera recognizes the saved scene. '
-                        'Cross-floor AR remains disabled while alignment '
-                        'between floors is unverified.'
-                      : 'AR localization is not available for this route.',
+                  route.crossesFloors && widget.requireOfflineCheckpoint
+                      ? '3D FLOOR-TO-FLOOR ROUTE PREVIEW READY. The recorded '
+                        'stairs and height are preserved in this map. '
+                        'Continuous live AR through the floor transition '
+                        'is NOT verified or enabled yet; do not mistake '
+                        'the path preview for physical camera alignment.'
+                      : widget.requireOfflineCheckpoint
+                          ? 'OFFLINE MAP READY — SELECT THE SAVED ENTRANCE. '
+                            'Choose a virtual QR checkpoint on Home. '
+                            'The AR camera must recognize that SAME real '
+                            'door/sign/wall scene before same-floor AR '
+                            'guidance can start. The virtual QR is not '
+                            'a printed physical marker to scan.'
+                          : 'AR localization is not available for this route.',
                 ),
               ),
             )

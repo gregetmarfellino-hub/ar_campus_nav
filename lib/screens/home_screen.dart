@@ -8,6 +8,7 @@ import '../models/venue.dart';
 import '../services/anchor_codec.dart';
 import '../services/route_engine.dart';
 import '../services/venue_loader.dart';
+import '../services/venue_map_semantics.dart';
 import '../services/venue_override_storage.dart';
 import '../widgets/venue_map.dart';
 import 'anchor_qr_screen.dart';
@@ -51,13 +52,28 @@ class _HomeScreenState extends State<HomeScreen> {
       final document = await _overrideStorage.load(venue.id);
       if (!mounted) return;
 
+      final is3D = document?.isContinuous3D ?? false;
+      // A fresh visual entrance is the useful AR starting reference;
+      // 'Recorded start' is merely the first ARCore sample, which might be
+      // several metres away and cannot localize a restarted phone.
+      var preferredStart = venue.defaultStartNodeId;
+      if (is3D) {
+        for (final anchor in venue.anchors) {
+          if (anchor.offlineCheckpointReady) {
+            preferredStart = anchor.nodeId;
+            break;
+          }
+        }
+      }
+
       setState(() {
         _venue = venue;
-        _is3DGraph = document?.isContinuous3D ?? false;
-        _startNodeId = venue.defaultStartNodeId;
+        _is3DGraph = is3D;
+        _startNodeId = preferredStart;
         if (!venue.floors.contains(_mapFloor)) {
-          _mapFloor = venue.nodeById(venue.defaultStartNodeId).floor;
+          _mapFloor = venue.nodeById(preferredStart).floor;
         }
+        // Selecting a target is NOT proof of physical camera localization.
         _activeAnchor = null;
         _error = null;
       });
@@ -612,8 +628,19 @@ class _HomeScreenState extends State<HomeScreen> {
                 node.id == venue.defaultStartNodeId))
         .toList(growable: false);
 
+    // The Floor chips must filter real named destinations AND the first
+    // measured point on each newly reached level. These UI-only floor entry
+    // targets let existing V14 graphs navigate upstairs without re-recording.
+    final navigableTargets = <Destination>[
+      ...venue.destinations,
+      if (_is3DGraph) ...VenueMapSemantics.floorEntryTargets(venue),
+    ];
     final normalizedQuery = _query.trim().toLowerCase();
-    final destinations = venue.destinations.where((destination) {
+    final destinations = navigableTargets.where((destination) {
+      if (_is3DGraph &&
+          venue.nodeById(destination.nodeId).floor != _mapFloor) {
+        return false;
+      }
       if (normalizedQuery.isEmpty) return true;
       return destination.name.toLowerCase().contains(normalizedQuery) ||
           destination.category.toLowerCase().contains(normalizedQuery);
@@ -691,6 +718,15 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
           ],
         ),
+        if (_is3DGraph) ...[
+          const SizedBox(height: 6),
+          Text(
+            'Floor $_mapFloor selected — map and destinations are filtered '
+            'to this floor. Internal 3D tracking samples are hidden, not '
+            'deleted. A floor entry target is not a tagged room.',
+            style: const TextStyle(color: Colors.white54, fontSize: 11),
+          ),
+        ],
         const SizedBox(height: 10),
         VenueMap(
           venue: venue,
@@ -838,9 +874,11 @@ class _HomeScreenState extends State<HomeScreen> {
           },
         ),
         const SizedBox(height: 22),
-        const Text(
-          'WHERE DO YOU WANT TO GO?',
-          style: TextStyle(
+        Text(
+          _is3DGraph
+              ? 'DESTINATIONS ON ${_mapFloor < 0 ? 'BASEMENT ${_mapFloor.abs()}' : 'FLOOR $_mapFloor'}'
+              : 'WHERE DO YOU WANT TO GO?',
+          style: const TextStyle(
             color: Colors.white54,
             fontSize: 11,
             fontWeight: FontWeight.w800,
@@ -861,7 +899,8 @@ class _HomeScreenState extends State<HomeScreen> {
             padding: EdgeInsets.symmetric(vertical: 28),
             child: Center(
               child: Text(
-                'No matching destinations.',
+                'No mapped destinations on this floor. '
+                'Tag a room in the 3D mapper for a permanent place.',
                 style: TextStyle(color: Color(0x73FFFFFF)),
               ),
             ),

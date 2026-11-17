@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models/nav_node.dart';
 import '../models/route_result.dart';
+import '../services/venue_map_semantics.dart';
 import '../models/venue.dart';
 
 class VenueMap extends StatelessWidget {
@@ -87,8 +88,7 @@ class VenueMap extends StatelessWidget {
         .toSet();
 
     bool isSemantic(NavNode node) {
-      final realWaypoint =
-          node.type == 'waypoint' && node.label != 'Recorded path';
+      final realWaypoint = VenueMapSemantics.isNamedWaypoint(node);
 
       return destinationNodeIds.contains(node.id) ||
           anchorNodeIds.contains(node.id) ||
@@ -265,10 +265,9 @@ class _VenueMapPainter extends CustomPainter {
         .toSet();
 
     bool isRealWaypoint(NavNode node) {
-      // Pass 5.2 used "waypoint" for both semantic waypoints and sampled
-      // path geometry. The "Recorded path" label lets us migrate old
-      // overrides visually without forcing the user to rebuild them first.
-      return node.type == 'waypoint' && node.label != 'Recorded path';
+      // V11/V14 3D waypoint-N labels are raw XYZ samples, not named places.
+      // Keep the measured edge line while hiding synthetic waypoint markers.
+      return VenueMapSemantics.isNamedWaypoint(node);
     }
 
     for (final node in nodes) {
