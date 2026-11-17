@@ -101,6 +101,8 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                         call.argument<Boolean>("anchor_localized") ?: false
                     val requireVerifiedOffline =
                         call.argument<Boolean>("require_verified_offline") ?: false
+                    val heightAware =
+                        call.argument<Boolean>("height_aware") ?: false
                     val visualAnchorPng =
                         call.argument<ByteArray>("visual_anchor_png")
                     val visualAnchorWidthMeters =
@@ -136,12 +138,17 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                     val points = rawPoints.mapNotNull { item ->
                         val right = (item["right"] as? Number)?.toFloat()
                         val forward = (item["forward"] as? Number)?.toFloat()
-                        if (right == null || forward == null) {
+                        val up = (item["up"] as? Number)?.toFloat()
+                        val floor = (item["floor"] as? Number)?.toInt() ?: 1
+                        if (right == null || forward == null ||
+                            (heightAware && up == null)) {
                             null
                         } else {
                             ArCoreTrackingEngine.RoutePoint(
                                 rightMeters = right,
                                 forwardMeters = forward,
+                                upMeters = up ?: 0f,
+                                floor = floor,
                                 label = item["label"]?.toString() ?: "Route point",
                                 semantic = item["semantic"] as? Boolean ?: false,
                             )
@@ -155,6 +162,8 @@ class MainActivity : FlutterActivity(), SensorEventListener {
                             startLabel = startLabel,
                             anchorLocalized = anchorLocalized,
                             requireVerifiedOffline = requireVerifiedOffline,
+                            heightAware = heightAware,
+                            expectedPointCount = rawPoints.size,
                             visualAnchorPng = visualAnchorPng,
                             visualAnchorWidthMeters = visualAnchorWidthMeters,
                             visualAnchorLabel = visualAnchorLabel,
