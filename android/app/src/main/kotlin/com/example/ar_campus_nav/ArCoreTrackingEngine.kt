@@ -67,6 +67,8 @@ class ArCoreTrackingEngine(
     data class RoutePoint(
         val rightMeters: Float,
         val forwardMeters: Float,
+        val upMeters: Float = 0f,
+        val floor: Int = 1,
         val label: String,
         val semantic: Boolean,
     )
@@ -176,6 +178,11 @@ class ArCoreTrackingEngine(
     // Fixed world height of the visible AR path. Estimated once at relocalization
     // from the actual phone pose; never tied to the floating QR's elevation.
     private var navigationRouteWorldY: Float? = null
+    // V17's 3D ribbon uses this ONE validated floor height as its base.
+    // Every saved point adds its own measured relative elevation. It is
+    // never re-flattened to newly detected planes while climbing stairs.
+    private var navigationHeightAware = false
+    private var navigationStartCameraLocalUp: Float? = null
     private var navigationFloorTargetY: Float? = null
     private var navigationFloorVerified = false
     private var navigationForwardX = 0f
@@ -413,6 +420,8 @@ class ArCoreTrackingEngine(
         startLabel: String = "Route start",
         anchorLocalized: Boolean = false,
         requireVerifiedOffline: Boolean = false,
+        heightAware: Boolean = false,
+        expectedPointCount: Int = points.size,
         visualAnchorPng: ByteArray? = null,
         visualAnchorWidthMeters: Float? = null,
         visualAnchorLabel: String? = null,
@@ -428,8 +437,22 @@ class ArCoreTrackingEngine(
         offlineExtraReferenceJson: String? = null,
     ): String {
         if (points.size < 2) return "ROUTE_TOO_SHORT"
+        if (points.size != expectedPointCount ||
+            points.any { !it.rightMeters.isFinite() ||
+                !it.forwardMeters.isFinite() || !it.upMeters.isFinite() }) {
+            return "INVALID_3D_ROUTE_POINTS"
+        }
+        if (heightAware && !requireVerifiedOffline) {
+            return "VERIFIED_3D_START_REQUIRED"
+        }
+        if (heightAware && points.first().floor != points.last().floor &&
+            points.maxOf { it.upMeters } - points.minOf { it.upMeters } < 0.60f) {
+            return "3D_HEIGHT_NOT_MEASURED"
+        }
 
         navigationMode = true
+        navigationHeightAware = heightAware
+        navigationStartCameraLocalUp = null
         navigationVerifiedOfflineRequired = requireVerifiedOffline
         navigationDestination = destination
         navigationStartLabel = startLabel
@@ -2243,7 +2266,8 @@ class ArCoreTrackingEngine(
                     drawOfflineNavigationStartMarker(camera)
                 }
 
-                if (navigationOfflineEnabled && !navigationFloorVerified) {
+                if (navigationOfflineEnabled && !navigationFloorVerified &&
+                    !navigationHeightAware) {
                     val floorY = findTrackedNavigationFloor(
                         activeSession = activeSession,
                         cameraPose = currentPose,
@@ -2256,7 +2280,8 @@ class ArCoreTrackingEngine(
                 // Ease the ribbon onto the measured pavement height.
                 val targetFloor = navigationFloorTargetY
                 val currentFloor = navigationRouteWorldY
-                if (targetFloor != null && currentFloor != null) {
+                if (!navigationHeightAware &&
+                    targetFloor != null && currentFloor != null) {
                     val delta = targetFloor - currentFloor
                     if (kotlin.math.abs(delta) <= 0.025f) {
                         navigationRouteWorldY = targetFloor
@@ -3361,6 +3386,11 @@ class ArCoreTrackingEngine(
         navigationFloorVerified = floorY != null
         navigationFloorTargetY = null
         navigationRouteWorldY = floorY ?: (currentCameraPose.ty() - 1.35f)
+        // Camera eye height is NOT the same as the virtual QR's physical
+        // height. Use the camera height AT RELOCALIZATION as the zero for
+        // subsequent measured stair ascent/descent.
+        navigationStartCameraLocalUp =
+            startPose.inverse().transformPoint(currentCameraPose.translation)[1]
 
         // startPose already encodes the recovered world heading. Route basis
         // below is anchor-local; keeping canonical local axes avoids applying
@@ -4210,6 +4240,8 @@ class ArCoreTrackingEngine(
     private fun clearNavigationFrame() {
         releaseNavigationAnchor()
         navigationRouteWorldY = null
+        navigationStartCameraLocalUp = null
+        navigationHeightAware = false
         navigationFloorVerified = false
         navigationForwardX = 0f
         navigationForwardZ = -1f
@@ -4279,15 +4311,26 @@ class ArCoreTrackingEngine(
         )
     }
 
+    // Pose height relative to the phone's successful entrance lock. This
+    // follows the user's ascent without requiring a new GPS/floor anchor.
+    private fun navigationUserMeasuredUp(local: LocalPosition): Float {
+        if (!navigationHeightAware || navigationPoints.isEmpty()) return 0f
+        val zero = navigationStartCameraLocalUp ?: local.up
+        return navigationPoints.first().upMeters + local.up - zero
+    }
+
     private fun navigationUserWorldPoint(local: LocalPosition): FloatArray {
         val anchor = navigationWorldAnchor
             ?: return floatArrayOf(0f, -1.10f, 0f)
         val routeLocalHeight = navigationRouteWorldY?.let { it - anchor.pose.ty() }
             ?: -1.10f
+        val userHeight = if (navigationHeightAware) {
+            navigationUserMeasuredUp(local) - navigationPoints.first().upMeters
+        } else 0f
         val anchorLocal = floatArrayOf(
             navigationRightX * local.right +
                 navigationForwardX * local.forward,
-            routeLocalHeight,
+            routeLocalHeight + userHeight,
             navigationRightZ * local.right +
                 navigationForwardZ * local.forward,
         )
@@ -4681,11 +4724,13 @@ class ArCoreTrackingEngine(
         val anchorPose = anchor.pose
         val routeLocalHeight = navigationRouteWorldY?.let { it - anchorPose.ty() }
             ?: -1.10f
+        val startUp = navigationPoints.firstOrNull()?.upMeters ?: 0f
         return navigationPoints.map { point ->
             val anchorLocal = floatArrayOf(
                 navigationRightX * point.rightMeters +
                     navigationForwardX * point.forwardMeters,
-                routeLocalHeight,
+                routeLocalHeight +
+                    if (navigationHeightAware) point.upMeters - startUp else 0f,
                 navigationRightZ * point.rightMeters +
                     navigationForwardZ * point.forwardMeters,
             )
