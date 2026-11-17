@@ -128,5 +128,16 @@ void main() {
     expect(progress, contains('routeDistance(a, b)'));
     expect(native, contains('VERIFIED_3D_START_REQUIRED'));
     expect(native, contains('OFFLINE_SCENE_REGISTRATION_FAILED'));
+    final frameClear = native.substring(
+      native.indexOf('private fun clearNavigationFrame()'),
+      native.indexOf('private data class NavigationWorldBasis('),
+    );
+    expect(frameClear, isNot(contains('navigationHeightAware = false')),
+        reason: 'startSession clears the frame AFTER selecting 3D mode; '
+            'it must not silently flatten the staircase.');
+    expect(native, contains('navigationHeightAware = heightAware'));
+    expect(native, contains('navigationHeightAware = false'));
+    expect(native, contains('routeLocalHeight +'));
+    expect(native, contains('navigationUserMeasuredUp(local)'));
   });
 }
