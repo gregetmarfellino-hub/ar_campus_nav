@@ -329,12 +329,17 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
 
   Future<bool> _startNavigation() async {
     if (!mounted) return false;
-    if (_route.crossesFloors) {
+    // A multi-floor path is safe to attempt ONLY when all edges carry
+    // measured XYZ from one 3D recording and a visual checkpoint can
+    // restore that recording's yaw and translation before AR is rendered.
+    if (_route.crossesFloors &&
+        (! _route.hasMeasured3DContinuity ||
+         _anchor?.offlineCheckpointReady != true ||
+         _route.nodes.first.id != _anchor!.nodeId)) {
       setState(() {
-        _status =
-            'This route changes floors. Floor-aware AR tracking is '
-            'not ready until V9. Return to Route Preview and use '
-            'the floor-specific map and stair/elevator instructions.';
+        _status = 'V17 SAFETY GATE: This cross-floor route needs continuously '
+            'measured XYZ, a saved offline start checkpoint and verified '
+            'camera relocalization. No manual alignment across floors.';
         _starting = false;
       });
       return false;
@@ -392,6 +397,8 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
         startLabel: _route.nodes.first.label,
         anchorLocalized: _anchor != null,
         requireVerifiedOffline: _anchor?.offlineCheckpointReady == true,
+        heightAware: _anchor?.offlineCheckpointReady == true &&
+            _route.hasMeasured3DContinuity,
         points: points,
         visualAnchorPng: visualPng,
         visualAnchorWidthMeters: visualAnchor == null
@@ -417,9 +424,14 @@ class _ArNavigationScreenState extends State<ArNavigationScreen> {
       setState(() {
         _status = switch (result) {
           'STARTED' => offlineAnchor != null
-              ? 'Finding saved start offline. Look around the mapped entrance '
-                  'and aim at the same detailed door/sign/wall area used when '
-                  'the route was recorded.'
+              ? _route.crossesFloors
+                  ? 'V17 LIVE 3D ROUTE: recognize the SAME saved entrance '
+                    'door/sign/wall offline. Only then will the ribbon climb '
+                    'along the measured stairs into the upper floor. '
+                    'Stay alert to real steps and tracking loss.'
+                  : 'Finding saved start offline. Look around the mapped entrance '
+                    'and aim at the same detailed door/sign/wall area used when '
+                    'the route was recorded.'
               : visualAnchor != null
                   ? 'Visual localization ready. Point the AR camera at the '
                       '16 cm ${visualAnchor.label} QR and hold it steady until '

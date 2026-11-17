@@ -44,8 +44,15 @@ class ArRouteCoordinates {
               (node.y - checkpointForwardMeters) * sine,
           'forward': (node.x - checkpointRightMeters) * sine +
               (node.y - checkpointForwardMeters) * cosine,
+          // Height is relative to the QR checkpoint itself, not the first
+          // horizontal floor. Native adds each point's elevation difference
+          // to the independently verified walkable ribbon height at start.
+          'up': node.upMeters,
+          'floor': node.floor,
           'label': node.label,
-          'semantic': node.type != 'path',
+          'semantic': node.type != 'path' &&
+              node.label != 'Recorded start' &&
+              !node.label.startsWith('3D waypoint '),
         },
     ];
   }

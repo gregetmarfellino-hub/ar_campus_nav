@@ -102,6 +102,7 @@ class RouteEngine {
           to: nodesById[to]!,
           distanceMeters: edge.distanceMeters,
           transitionType: edge.transitionType,
+          measured3D: edge.measured3D,
         ),
       );
     }

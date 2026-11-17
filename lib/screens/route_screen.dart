@@ -47,11 +47,20 @@ class _RouteScreenState extends State<RouteScreen> {
   late int _previewFloor;
   AnchorPoint? _anchor;
 
+  bool get _verified3DStart =>
+      widget.requireOfflineCheckpoint &&
+      _anchor?.offlineCheckpointReady == true &&
+      _route.nodes.first.id == _anchor!.nodeId &&
+      _route.hasMeasured3DContinuity;
+
+  bool get _continuousCrossFloorAr =>
+      _route.crossesFloors && _verified3DStart;
+
   bool get _liveArAllowed => widget.allowArGuidance &&
       (!widget.requireOfflineCheckpoint ||
           (_anchor?.offlineCheckpointReady == true &&
            _route.nodes.first.id == _anchor!.nodeId &&
-           !_route.crossesFloors));
+           (!_route.crossesFloors || _route.hasMeasured3DContinuity)));
 
   @override
   void initState() {
@@ -110,10 +119,11 @@ class _RouteScreenState extends State<RouteScreen> {
   }
 
   Future<void> _openArGuide() async {
-    // V8 is a complete multi-floor graph/preview. Native AR still assumes a
-    // single horizontal world basis: never feed cross-floor legs into it.
-    // V9 will split the route at portals and re-localize at the next floor.
-    if (_route.legs.isEmpty || _route.crossesFloors || !_liveArAllowed) return;
+    // V17 permits a single-session climb only when every leg is measured
+    // 3D and the start has a reusable OFFLINE visual checkpoint. Legacy
+    // floor layers and unaligned session merges are never force-connected.
+    if (_route.legs.isEmpty || !_liveArAllowed ||
+        (_route.crossesFloors && !_continuousCrossFloorAr)) return;
 
     final result = await Navigator.of(context).push<ArNavigationResult>(
       MaterialPageRoute<ArNavigationResult>(
@@ -243,11 +253,17 @@ class _RouteScreenState extends State<RouteScreen> {
                 padding: EdgeInsets.all(15),
                 child: Text(
                   route.crossesFloors && widget.requireOfflineCheckpoint
-                      ? '3D FLOOR-TO-FLOOR ROUTE PREVIEW READY. The recorded '
-                        'stairs and height are preserved in this map. '
-                        'Continuous live AR through the floor transition '
-                        'is NOT verified or enabled yet; do not mistake '
-                        'the path preview for physical camera alignment.'
+                      ? _continuousCrossFloorAr
+                          ? 'V17 ONE-CAMERA 3D CLIMB: all route edges have '
+                            'measured XYZ heights. Scan the saved entrance '
+                            'scene FIRST. Once verified, the same ARCore '
+                            'session follows the recorded stairs into the '
+                            'next floor without closing the camera. '
+                            'Keep eyes on the real steps and STOP on tracking loss.'
+                          : 'CROSS-FLOOR AR NOT VERIFIED. This route lacks '
+                            'a measured 3D connection or a saved start '
+                            'checkpoint. The offline floor map can still '
+                            'preview the path; never guess the alignment.'
                       : widget.requireOfflineCheckpoint
                           ? 'OFFLINE MAP READY — SELECT THE SAVED ENTRANCE. '
                             'Choose a virtual QR checkpoint on Home. '
@@ -293,17 +309,19 @@ class _RouteScreenState extends State<RouteScreen> {
             child: FilledButton.icon(
               onPressed: arrived || !_liveArAllowed
                   ? null
-                  : route.crossesFloors
+                  : route.crossesFloors && !_continuousCrossFloorAr
                       ? _openMultiFloorGuide
                       : _openArGuide,
               icon: const Icon(Icons.view_in_ar_rounded),
               label: Text(
                 !_liveArAllowed
                     ? widget.requireOfflineCheckpoint
-                        ? 'AR REQUIRES A SAVED VISUAL CHECKPOINT'
+                        ? 'AR REQUIRES VERIFIED 3D START + MEASURED HEIGHT'
                         : 'AR ALIGNMENT NOT AVAILABLE'
+                    : _continuousCrossFloorAr
+                    ? 'START CONTINUOUS 3D AR • FLOOR TO FLOOR'
                     : route.crossesFloors
-                    ? 'START FLOOR-BY-FLOOR AR NAVIGATION'
+                        ? 'START FLOOR-BY-FLOOR AR NAVIGATION'
                     : anchor == null
                     ? 'START AR MANUAL PREVIEW'
                     : anchor.offlineVisualReady

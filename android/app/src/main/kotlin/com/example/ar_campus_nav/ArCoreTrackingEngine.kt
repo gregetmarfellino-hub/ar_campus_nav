@@ -67,6 +67,8 @@ class ArCoreTrackingEngine(
     data class RoutePoint(
         val rightMeters: Float,
         val forwardMeters: Float,
+        val upMeters: Float = 0f,
+        val floor: Int = 1,
         val label: String,
         val semantic: Boolean,
     )
@@ -176,6 +178,11 @@ class ArCoreTrackingEngine(
     // Fixed world height of the visible AR path. Estimated once at relocalization
     // from the actual phone pose; never tied to the floating QR's elevation.
     private var navigationRouteWorldY: Float? = null
+    // V17's 3D ribbon uses this ONE validated floor height as its base.
+    // Every saved point adds its own measured relative elevation. It is
+    // never re-flattened to newly detected planes while climbing stairs.
+    private var navigationHeightAware = false
+    private var navigationStartCameraLocalUp: Float? = null
     private var navigationFloorTargetY: Float? = null
     private var navigationFloorVerified = false
     private var navigationForwardX = 0f
@@ -378,6 +385,7 @@ class ArCoreTrackingEngine(
 
     fun start(): String {
         navigationMode = false
+        navigationHeightAware = false
         clearVisualAnchorConfiguration()
         clearMappingVisualAnchorConfiguration()
         return startSession()
@@ -389,6 +397,7 @@ class ArCoreTrackingEngine(
         visualAnchorLabel: String,
     ): String {
         navigationMode = false
+        navigationHeightAware = false
         clearVisualAnchorConfiguration()
         clearMappingVisualAnchorConfiguration()
 
@@ -413,6 +422,8 @@ class ArCoreTrackingEngine(
         startLabel: String = "Route start",
         anchorLocalized: Boolean = false,
         requireVerifiedOffline: Boolean = false,
+        heightAware: Boolean = false,
+        expectedPointCount: Int = points.size,
         visualAnchorPng: ByteArray? = null,
         visualAnchorWidthMeters: Float? = null,
         visualAnchorLabel: String? = null,
@@ -428,8 +439,22 @@ class ArCoreTrackingEngine(
         offlineExtraReferenceJson: String? = null,
     ): String {
         if (points.size < 2) return "ROUTE_TOO_SHORT"
+        if (points.size != expectedPointCount ||
+            points.any { !it.rightMeters.isFinite() ||
+                !it.forwardMeters.isFinite() || !it.upMeters.isFinite() }) {
+            return "INVALID_3D_ROUTE_POINTS"
+        }
+        if (heightAware && !requireVerifiedOffline) {
+            return "VERIFIED_3D_START_REQUIRED"
+        }
+        if (heightAware && points.map { it.floor }.toSet().size > 1 &&
+            points.maxOf { it.upMeters } - points.minOf { it.upMeters } < 0.60f) {
+            return "3D_HEIGHT_NOT_MEASURED"
+        }
 
         navigationMode = true
+        navigationHeightAware = heightAware
+        navigationStartCameraLocalUp = null
         navigationVerifiedOfflineRequired = requireVerifiedOffline
         navigationDestination = destination
         navigationStartLabel = startLabel
@@ -541,6 +566,13 @@ class ArCoreTrackingEngine(
                 lightEstimationMode = Config.LightEstimationMode.DISABLED
             }
             configureVisualImageDatabase(newSession, config)
+            // Registration may fail even when PNG bytes were present. Never
+            // secretly fall back to an unverified manual start for 3D stairs.
+            if (navigationMode && navigationVerifiedOfflineRequired &&
+                !navigationOfflineEnabled) {
+                newSession.close()
+                return "OFFLINE_SCENE_REGISTRATION_FAILED"
+            }
             newSession.configure(config)
             session = newSession
 
@@ -1892,6 +1924,7 @@ class ArCoreTrackingEngine(
         session = null
         clearTrackingOrigin()
         clearNavigationFrame()
+        navigationHeightAware = false
         latestCameraPose = null
         cameraTextureId = 0
         lastEmitNanos = 0L
@@ -2243,7 +2276,8 @@ class ArCoreTrackingEngine(
                     drawOfflineNavigationStartMarker(camera)
                 }
 
-                if (navigationOfflineEnabled && !navigationFloorVerified) {
+                if (navigationOfflineEnabled && !navigationFloorVerified &&
+                    !navigationHeightAware) {
                     val floorY = findTrackedNavigationFloor(
                         activeSession = activeSession,
                         cameraPose = currentPose,
@@ -2256,7 +2290,8 @@ class ArCoreTrackingEngine(
                 // Ease the ribbon onto the measured pavement height.
                 val targetFloor = navigationFloorTargetY
                 val currentFloor = navigationRouteWorldY
-                if (targetFloor != null && currentFloor != null) {
+                if (!navigationHeightAware &&
+                    targetFloor != null && currentFloor != null) {
                     val delta = targetFloor - currentFloor
                     if (kotlin.math.abs(delta) <= 0.025f) {
                         navigationRouteWorldY = targetFloor
@@ -3361,6 +3396,11 @@ class ArCoreTrackingEngine(
         navigationFloorVerified = floorY != null
         navigationFloorTargetY = null
         navigationRouteWorldY = floorY ?: (currentCameraPose.ty() - 1.35f)
+        // Camera eye height is NOT the same as the virtual QR's physical
+        // height. Use the camera height AT RELOCALIZATION as the zero for
+        // subsequent measured stair ascent/descent.
+        navigationStartCameraLocalUp =
+            startPose.inverse().transformPoint(currentCameraPose.translation)[1]
 
         // startPose already encodes the recovered world heading. Route basis
         // below is anchor-local; keeping canonical local axes avoids applying
@@ -4086,7 +4126,9 @@ class ArCoreTrackingEngine(
         val translation = currentPose.translation
         val dx = translation[0] - previous[0]
         val dz = translation[2] - previous[2]
-        val jump = sqrt(dx * dx + dz * dz)
+        val dy = if (navigationHeightAware)
+            translation[1] - previous[1] else 0f
+        val jump = sqrt(dx * dx + dy * dy + dz * dz)
 
         navigationTrackingLostAtNanos = 0L
 
@@ -4129,7 +4171,9 @@ class ArCoreTrackingEngine(
         val translation = currentPose.translation
         val dx = translation[0] - previous[0]
         val dz = translation[2] - previous[2]
-        val jump = sqrt(dx * dx + dz * dz)
+        val dy = if (navigationHeightAware)
+            translation[1] - previous[1] else 0f
+        val jump = sqrt(dx * dx + dy * dy + dz * dz)
 
         val allowed =
             (navigationJumpBaseMeters +
@@ -4210,6 +4254,9 @@ class ArCoreTrackingEngine(
     private fun clearNavigationFrame() {
         releaseNavigationAnchor()
         navigationRouteWorldY = null
+        navigationStartCameraLocalUp = null
+        // This also runs during startSession AFTER height-aware mode was
+        // selected. Do not disable 3D here: that flattened the stair route.
         navigationFloorVerified = false
         navigationForwardX = 0f
         navigationForwardZ = -1f
@@ -4279,15 +4326,26 @@ class ArCoreTrackingEngine(
         )
     }
 
+    // Pose height relative to the phone's successful entrance lock. This
+    // follows the user's ascent without requiring a new GPS/floor anchor.
+    private fun navigationUserMeasuredUp(local: LocalPosition): Float {
+        if (!navigationHeightAware || navigationPoints.isEmpty()) return 0f
+        val zero = navigationStartCameraLocalUp ?: local.up
+        return navigationPoints.first().upMeters + local.up - zero
+    }
+
     private fun navigationUserWorldPoint(local: LocalPosition): FloatArray {
         val anchor = navigationWorldAnchor
             ?: return floatArrayOf(0f, -1.10f, 0f)
         val routeLocalHeight = navigationRouteWorldY?.let { it - anchor.pose.ty() }
             ?: -1.10f
+        val userHeight = if (navigationHeightAware) {
+            navigationUserMeasuredUp(local) - navigationPoints.first().upMeters
+        } else 0f
         val anchorLocal = floatArrayOf(
             navigationRightX * local.right +
                 navigationForwardX * local.forward,
-            routeLocalHeight,
+            routeLocalHeight + userHeight,
             navigationRightZ * local.right +
                 navigationForwardZ * local.forward,
         )
@@ -4409,24 +4467,32 @@ class ArCoreTrackingEngine(
     private fun routeSegmentDistance(
         right: Float,
         forward: Float,
+        userUp: Float,
         from: RoutePoint,
         to: RoutePoint,
     ): Float {
         val dx = to.rightMeters - from.rightMeters
         val df = to.forwardMeters - from.forwardMeters
-        val squared = dx * dx + df * df
+        val du = if (navigationHeightAware) to.upMeters - from.upMeters else 0f
+        val squared = dx * dx + df * df + du * du
+        val ux = right - from.rightMeters
+        val uf = forward - from.forwardMeters
+        val uu = if (navigationHeightAware) userUp - from.upMeters else 0f
         if (squared < 0.000001f) {
-            val ux = right - from.rightMeters
-            val uf = forward - from.forwardMeters
-            return sqrt(ux * ux + uf * uf)
+            return sqrt(ux * ux + uf * uf + uu * uu)
         }
-        val t = (
-            ((right - from.rightMeters) * dx +
-                (forward - from.forwardMeters) * df) / squared
-        ).coerceIn(0f, 1f)
-        val ex = right - (from.rightMeters + t * dx)
-        val ef = forward - (from.forwardMeters + t * df)
-        return sqrt(ex * ex + ef * ef)
+        val t = ((ux * dx + uf * df + uu * du) / squared).coerceIn(0f, 1f)
+        val ex = ux - t * dx
+        val ef = uf - t * df
+        val eu = uu - t * du
+        return sqrt(ex * ex + ef * ef + eu * eu)
+    }
+
+    private fun routeDistance(a: RoutePoint, b: RoutePoint): Float {
+        val dx = b.rightMeters - a.rightMeters
+        val df = b.forwardMeters - a.forwardMeters
+        val du = if (navigationHeightAware) b.upMeters - a.upMeters else 0f
+        return sqrt(dx * dx + df * df + du * du)
     }
 
     /**
@@ -4444,9 +4510,11 @@ class ArCoreTrackingEngine(
         if (navigationPoints.size < 2) return false
         val currentIndex = activeRouteIndex.coerceIn(
             1, navigationPoints.lastIndex)
+        val userUp = navigationUserMeasuredUp(local)
         val currentSegmentDistance = routeSegmentDistance(
             local.right,
             local.forward,
+            userUp,
             navigationPoints[currentIndex - 1],
             navigationPoints[currentIndex],
         )
@@ -4455,6 +4523,7 @@ class ArCoreTrackingEngine(
             val distance = routeSegmentDistance(
                 local.right,
                 local.forward,
+                userUp,
                 navigationPoints[i - 1],
                 navigationPoints[i],
             )
@@ -4514,13 +4583,16 @@ class ArCoreTrackingEngine(
         // On switchbacks, short steps and corridor turns, the old 1.15 m
         // radius could skip several future nodes and point the guide sideways.
         // Progress along the CURRENT segment, preserving the recorded order.
+        val userUp = navigationUserMeasuredUp(local)
         var advanced = 0
         while (activeRouteIndex < navigationPoints.lastIndex && advanced < 6) {
             val previous = navigationPoints[activeRouteIndex - 1]
             val target = navigationPoints[activeRouteIndex]
             val sx = target.rightMeters - previous.rightMeters
             val sf = target.forwardMeters - previous.forwardMeters
-            val squaredLength = sx * sx + sf * sf
+            val su = if (navigationHeightAware)
+                target.upMeters - previous.upMeters else 0f
+            val squaredLength = sx * sx + sf * sf + su * su
             if (squaredLength < 0.0001f) {
                 activeRouteIndex++
                 advanced++
@@ -4529,14 +4601,21 @@ class ArCoreTrackingEngine(
 
             val ux = local.right - previous.rightMeters
             val uf = local.forward - previous.forwardMeters
-            val along = (ux * sx + uf * sf) / squaredLength
+            val uu = if (navigationHeightAware)
+                userUp - previous.upMeters else 0f
+            val along = (ux * sx + uf * sf + uu * su) / squaredLength
             val clamped = along.coerceIn(0f, 1f)
             val lateralX = ux - clamped * sx
             val lateralF = uf - clamped * sf
-            val lateral = sqrt(lateralX * lateralX + lateralF * lateralF)
+            val lateralU = uu - clamped * su
+            val lateral = sqrt(
+                lateralX * lateralX + lateralF * lateralF +
+                    lateralU * lateralU,
+            )
 
-            // Do not skip turns simply because the next point is nearby.
-            if (along < 0.85f || lateral > 0.65f) break
+            // Do not confuse overlapping staircase turns on two levels.
+            val tolerance = if (navigationHeightAware) 0.85f else 0.65f
+            if (along < 0.85f || lateral > tolerance) break
             activeRouteIndex++
             advanced++
         }
@@ -4545,12 +4624,12 @@ class ArCoreTrackingEngine(
         // do not claim arrival just because an earlier nearby node was passed.
         if (activeRouteIndex == navigationPoints.lastIndex) {
             val end = navigationPoints.last()
-            val distanceToEnd = sqrt(
-                (end.rightMeters - local.right) * (end.rightMeters - local.right) +
-                    (end.forwardMeters - local.forward) *
-                    (end.forwardMeters - local.forward),
-            )
-            if (distanceToEnd <= 0.65f) {
+            val endX = end.rightMeters - local.right
+            val endF = end.forwardMeters - local.forward
+            val endU = if (navigationHeightAware) end.upMeters - userUp else 0f
+            val distanceToEnd = sqrt(endX * endX + endF * endF + endU * endU)
+            val threshold = if (navigationHeightAware) 0.85f else 0.65f
+            if (distanceToEnd <= threshold) {
                 if (!navigationArrivalShown) {
                     navigationArrivalShown = true
                     setNavigationArrivalUi()
@@ -4573,7 +4652,8 @@ class ArCoreTrackingEngine(
         val target = navigationPoints[activeRouteIndex]
         val dx = target.rightMeters - local.right
         val df = target.forwardMeters - local.forward
-        val nextDistance = sqrt(dx * dx + df * df)
+        val du = if (navigationHeightAware) target.upMeters - userUp else 0f
+        val nextDistance = sqrt(dx * dx + df * df + du * du)
 
         if (navigationRouteMismatch(
             local = local,
@@ -4587,9 +4667,7 @@ class ArCoreTrackingEngine(
         for (i in activeRouteIndex until navigationPoints.lastIndex) {
             val a = navigationPoints[i]
             val b = navigationPoints[i + 1]
-            val sx = b.rightMeters - a.rightMeters
-            val sf = b.forwardMeters - a.forwardMeters
-            remaining += sqrt(sx * sx + sf * sf)
+            remaining += routeDistance(a, b)
         }
 
         val nextLabel = if (target.semantic && target.label != "Recorded path") {
@@ -4605,8 +4683,31 @@ class ArCoreTrackingEngine(
             else -> "ahead"
         }
 
+        val heightHint = if (navigationHeightAware) {
+            val vertical = target.upMeters - userUp
+            // Floor labels may be placed at the TOP of a staircase. Show
+            // the approaching floor, not "ASCEND TO Floor 1" while on stairs.
+            val currentLabelFloor = navigationPoints[
+                (activeRouteIndex - 1).coerceAtLeast(0)
+            ].floor
+            val nextLabelFloor = navigationPoints
+                .drop(activeRouteIndex)
+                .firstOrNull { it.floor != currentLabelFloor }?.floor
+                ?: target.floor
+            val level = if (nextLabelFloor < 0) {
+                "Basement ${-nextLabelFloor}"
+            } else "Floor $nextLabelFloor"
+            when {
+                vertical > 0.65f ->
+                    "ASCEND TO $level • ${"%.1f".format(vertical)} m higher"
+                vertical < -0.65f ->
+                    "DESCEND TO $level • ${"%.1f".format(-vertical)} m lower"
+                else -> "Approaching $level"
+            }
+        } else ""
         setNavigationHud(
-            "Next: $nextLabel • ${"%.1f".format(nextDistance)} m • $direction\n" +
+            (if (navigationHeightAware) "$heightHint\n" else "") +
+                "Next: $nextLabel • ${"%.1f".format(nextDistance)} m • $direction\n" +
                 "Remaining: ${"%.1f".format(remaining)} m",
         )
     }
@@ -4681,11 +4782,13 @@ class ArCoreTrackingEngine(
         val anchorPose = anchor.pose
         val routeLocalHeight = navigationRouteWorldY?.let { it - anchorPose.ty() }
             ?: -1.10f
+        val startUp = navigationPoints.firstOrNull()?.upMeters ?: 0f
         return navigationPoints.map { point ->
             val anchorLocal = floatArrayOf(
                 navigationRightX * point.rightMeters +
                     navigationForwardX * point.forwardMeters,
-                routeLocalHeight,
+                routeLocalHeight +
+                    (if (navigationHeightAware) point.upMeters - startUp else 0f),
                 navigationRightZ * point.rightMeters +
                     navigationForwardZ * point.forwardMeters,
             )
@@ -5366,6 +5469,7 @@ class ArCoreTrackingEngine(
         sessionResumed = false
         clearTrackingOrigin()
         clearNavigationFrame()
+        navigationHeightAware = false
         latestCameraPose = null
         cameraTextureId = 0
         lastEmitNanos = 0L
